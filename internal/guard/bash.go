@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"os"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -36,8 +37,9 @@ func checkBash(call core.ToolCall, gc core.GuardContext) core.Verdict {
 		r.add(unrecognised(why, gc))
 	}
 	for _, c := range a.cmds {
-		r.add(checkCommand(c, e, gc))
-		if !c.passthrough {
+		v := checkCommand(c, e, gc)
+		r.add(v)
+		if !c.passthrough && v.Decision != core.Deny { // a denied command cannot get stricter
 			checkArgs(&r, c, call, e, gc)
 		}
 	}
@@ -97,8 +99,20 @@ func checkCommand(c cmd, e core.EnforcementSpec, gc core.GuardContext) core.Verd
 	return core.Verdict{Decision: d, Reason: "command not in any list: " + text(last), Rule: "enforcement.commands.unlisted"}
 }
 
+// noFileSemantics: commands whose arguments are not files to read or write.
+var noFileSemantics = opts("echo", "printf", "true", "false", ":", "sleep", "wait", "exit", "return", "cd", "pushd", "popd", "test", "[", "pwd")
+
+type pathKind int
+
+const (
+	pathRead pathKind = iota
+	pathWrite
+	pathEither // flag values: read rules plus deny-type write rules
+)
+
 // checkArgs checks file arguments, network hosts and pushes of the innermost
-// command. Every argument and flag value is a potential path.
+// command. Every argument and flag value is a potential path; an argument that
+// is an existing directory is a recursive read target.
 func checkArgs(r *result, c cmd, call core.ToolCall, e core.EnforcementSpec, gc core.GuardContext) {
 	argv := c.last()
 	name := argv[0].s
@@ -124,42 +138,42 @@ func checkArgs(r *result, c cmd, call core.ToolCall, e core.EnforcementSpec, gc 
 	if name == "git" {
 		r.add(checkPush(argv, gc))
 	}
-	flagW, flagR, pos := splitArgs(argv)
+	outW, flagVals, pos := splitArgs(argv, call, gc)
 	writes, reads := fileRoles(name, argv, pos)
-	writes, reads = append(writes, flagW...), append(reads, flagR...)
+	writes = append(writes, outW...)
+	dirs := !noFileSemantics[name]
 	for _, w := range writes {
-		r.add(pathArg(w, true, call, gc))
+		r.add(pathArg(w, pathWrite, dirs, call, gc))
 	}
 	for _, w := range reads {
 		if !w.dyn && strings.ContainsAny(w.s, " \t") {
 			continue // prose such as a commit message, not a path
 		}
-		r.add(pathArg(w, false, call, gc))
+		r.add(pathArg(w, pathRead, dirs, call, gc))
+	}
+	for _, w := range flagVals {
+		r.add(pathArg(w, pathEither, dirs, call, gc))
 	}
 }
 
-// writeFlag reports whether a long option names an output file.
-func writeFlag(opt string) bool {
-	n := strings.ToLower(strings.TrimLeft(opt, "-"))
-	for _, no := range []string{"level", "format", "driver", "verbosity", "colo"} {
-		if strings.Contains(n, no) {
-			return false
-		}
+// pathLike: a token that plausibly names a file (contains "/", starts with "."
+// or "~", or exists relative to the working directory).
+func pathLike(s string, call core.ToolCall, gc core.GuardContext) bool {
+	if s == "" || len(s) > 1024 || strings.ContainsAny(s, "\n") || schemeRe.MatchString(s) {
+		return false
 	}
-	if n == "out" || n == "output" || n == "outfile" || strings.HasPrefix(n, "log") {
+	if strings.Contains(s, "/") || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "~") {
 		return true
 	}
-	for _, k := range []string{"output", "coverage", "report", "junit", "dump", "save", "write", "dest"} {
-		if strings.Contains(n, k) {
-			return true
-		}
-	}
-	return false
+	_, err := os.Lstat(resolve(s, call.Cwd, gc).abs)
+	return err == nil
 }
 
-// splitArgs separates flag values (writes for output-style flags, reads
-// otherwise) from positional arguments.
-func splitArgs(argv []word) (flagW, flagR, pos []word) {
+// splitArgs separates positional arguments from flag values. A flag value is
+// the part after "=" of any option, or the next token after a "--long" option
+// when that token is path-like. (The token also stays positional.) outW holds
+// the value of `-o` for commands where it names an output file.
+func splitArgs(argv []word, call core.ToolCall, gc core.GuardContext) (outW, flagVals, pos []word) {
 	for i := 1; i < len(argv); i++ {
 		w := argv[i]
 		if !strings.HasPrefix(w.s, "-") || w.s == "-" {
@@ -167,18 +181,18 @@ func splitArgs(argv []word) (flagW, flagR, pos []word) {
 			continue
 		}
 		val := func(s string) word { return word{s: s, dyn: w.dyn, glob: w.glob} }
-		switch name, v, eq := strings.Cut(w.s, "="); {
+		_, v, eq := strings.Cut(w.s, "=")
+		short := !strings.HasPrefix(w.s, "--")
+		switch {
 		case eq && v != "":
-			if writeFlag(name) {
-				flagW = append(flagW, val(v))
-			} else {
-				flagR = append(flagR, val(v))
-			}
-		case !strings.HasPrefix(w.s, "--") && len(w.s) > 2 && w.s[1] == 'o' && shortOutput[argv[0].s]:
-			flagW = append(flagW, val(w.s[2:]))
-		case (writeFlag(w.s) || (w.s == "-o" && shortOutput[argv[0].s])) && !eq && i+1 < len(argv) && !strings.HasPrefix(argv[i+1].s, "-"):
-			flagW = append(flagW, argv[i+1])
+			flagVals = append(flagVals, val(v))
+		case short && len(w.s) > 2 && w.s[1] == 'o' && shortOutput[argv[0].s]:
+			outW = append(outW, val(w.s[2:]))
+		case w.s == "-o" && shortOutput[argv[0].s] && i+1 < len(argv):
+			outW = append(outW, argv[i+1])
 			i++
+		case !short && !eq && i+1 < len(argv) && !strings.HasPrefix(argv[i+1].s, "-") && !argv[i+1].dyn && pathLike(argv[i+1].s, call, gc):
+			flagVals = append(flagVals, argv[i+1])
 		}
 	}
 	return
@@ -205,7 +219,7 @@ func checkPush(argv []word, gc core.GuardContext) core.Verdict {
 			ref = ref[i+1:]
 		}
 		ref = strings.TrimPrefix(ref, "refs/heads/")
-		if ref == def {
+		if strings.EqualFold(ref, def) {
 			return core.Verdict{Decision: core.Deny, Reason: "push to default branch " + def, Rule: "guard.push_default_branch"}
 		}
 	}
@@ -223,18 +237,29 @@ func hasFlag(argv []word, names ...string) bool {
 	return false
 }
 
-func pathArg(w word, write bool, call core.ToolCall, gc core.GuardContext) core.Verdict {
+func pathArg(w word, kind pathKind, dirs bool, call core.ToolCall, gc core.GuardContext) core.Verdict {
 	if w.dyn {
 		return core.Verdict{} // already reported as unrecognised
 	}
+	paths := []string{w.s}
 	if w.glob {
-		var r result
-		for _, p := range globTargets(w.s, call.Cwd, gc) {
-			r.add(checkPath(p, write, call, gc, true))
-		}
-		return r.done()
+		paths = globTargets(w.s, call.Cwd, gc)
 	}
-	return checkPath(w.s, write, call, gc, true)
+	var r result
+	for _, p := range paths {
+		switch kind {
+		case pathRead:
+			r.add(checkPath(p, false, call, gc, true))
+		case pathWrite:
+			r.add(checkPath(p, true, call, gc, true))
+		default:
+			r.add(checkEither(p, call, gc, true))
+		}
+		if dirs {
+			r.add(checkDir(p, call, gc))
+		}
+	}
+	return r.done()
 }
 
 // fileRoles says which positional arguments of a command are written and which are read.

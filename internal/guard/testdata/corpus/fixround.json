@@ -139,7 +139,7 @@
   "name": "git diff --stat --output ../outside.txt",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
+  "fixture": "allow",
   "strict": "ask",
   "command": "git diff --stat --output ../outside.txt"
  },

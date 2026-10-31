@@ -136,15 +136,29 @@ func checkPath(p string, write bool, call core.ToolCall, gc core.GuardContext, v
 	if ignoredDevices[p] || strings.HasPrefix(p, "/dev/fd/") {
 		return core.Verdict{Decision: core.Allow}
 	}
-	e := gc.Policy.Policy.Enforcement
 	t := resolve(p, call.Cwd, gc)
 	if !write {
-		list := append(append([]string{}, e.SecretReads...), expandRefs(e.Sandbox.NoRead, e)...)
-		if pat, ok := matchesRule(list, t, gc); ok {
+		if pat, ok := matchesRule(secretList(gc), t, gc); ok {
 			return core.Verdict{Decision: core.Deny, Reason: "read of secret path " + p, Rule: "enforcement.secret_reads: " + pat}
 		}
 		return core.Verdict{Decision: core.Allow}
 	}
+	if v := protectedWrite(t, p, gc, viaShell); v.Decision != "" {
+		return v
+	}
+	if !t.inside {
+		return core.Verdict{Decision: askOrDeny(gc), Reason: "write outside the repository: " + p, Rule: "enforcement.sandbox.outside_root"}
+	}
+	if gc.StepFiles != nil && !inStepFiles(gc.StepFiles, t.rel, gc) {
+		return core.Verdict{Decision: core.Deny, Reason: "scope guard: " + t.rel + " is not a file of the current step", Rule: "scope_guard"}
+	}
+	return core.Verdict{Decision: core.Allow}
+}
+
+// protectedWrite denies writes to paths no step may touch: the policy file (via
+// shell), core.AlwaysProtected, protected_paths, sandbox.readonly/no_write.
+func protectedWrite(t target, p string, gc core.GuardContext, viaShell bool) core.Verdict {
+	e := gc.Policy.Policy.Enforcement
 	if viaShell && isPolicyFile(t) {
 		return core.Verdict{Decision: core.Deny, Reason: policyFile + " may only change through an Edit/Write that is policy-diffed", Rule: "enforcement.protected_paths: " + policyFile}
 	}
@@ -155,13 +169,45 @@ func checkPath(p string, write bool, call core.ToolCall, gc core.GuardContext, v
 	if pat, ok := matchesRule(list, t, gc); ok {
 		return core.Verdict{Decision: core.Deny, Reason: "write to protected path " + p, Rule: "enforcement.protected_paths: " + pat}
 	}
+	return core.Verdict{}
+}
+
+// checkEither is for values that may be read or written (flag values, paths of
+// unknown tools): the read rules plus every deny-type write rule. It does not
+// apply the scope guard or the outside-root ask, which need a real write.
+func checkEither(p string, call core.ToolCall, gc core.GuardContext, viaShell bool) core.Verdict {
+	if ignoredDevices[p] || strings.HasPrefix(p, "/dev/fd/") {
+		return core.Verdict{}
+	}
+	var r result
+	r.add(checkPath(p, false, call, gc, viaShell))
+	r.add(protectedWrite(resolve(p, call.Cwd, gc), p, gc, viaShell))
+	return r.done()
+}
+
+// secretList is every pattern a read must not touch.
+func secretList(gc core.GuardContext) []string {
+	e := gc.Policy.Policy.Enforcement
+	return append(append([]string{}, e.SecretReads...), expandRefs(e.Sandbox.NoRead, e)...)
+}
+
+// checkDir treats an existing directory used as an argument as a recursive read
+// of everything below it (same rule as a Grep/Glob search root); a directory
+// outside the repository asks (denies at L2+).
+func checkDir(p string, call core.ToolCall, gc core.GuardContext) core.Verdict {
+	if ignoredDevices[p] || strings.HasPrefix(p, "/dev/fd/") {
+		return core.Verdict{}
+	}
+	t := resolve(p, call.Cwd, gc)
+	if fi, err := os.Stat(t.abs); err != nil || !fi.IsDir() {
+		return core.Verdict{}
+	}
+	var r result
 	if !t.inside {
-		return core.Verdict{Decision: askOrDeny(gc), Reason: "write outside the repository: " + p, Rule: "enforcement.sandbox.outside_root"}
+		r.add(core.Verdict{Decision: askOrDeny(gc), Reason: "directory outside the repository used as argument: " + p, Rule: "enforcement.sandbox.outside_root"})
 	}
-	if gc.StepFiles != nil && !inStepFiles(gc.StepFiles, t.rel, gc) {
-		return core.Verdict{Decision: core.Deny, Reason: "scope guard: " + t.rel + " is not a file of the current step", Rule: "scope_guard"}
-	}
-	return core.Verdict{Decision: core.Allow}
+	r.add(searchSecrets(t, secretList(gc), nil, gc))
+	return r.done()
 }
 
 func inStepFiles(files []string, rel string, gc core.GuardContext) bool {

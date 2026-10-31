@@ -5,17 +5,38 @@
 // best effort. The OS sandbox compiled by `rr sync` is the boundary; this
 // package makes the common bypass classes loud and fails closed on the rest.
 //
-// Evaluation order for one call:
-//  1. riskrails.yaml writes by file tools: the policy diff decides (before
-//     protected_paths, which normally lists the same file) — LOOSEN denies,
-//     TIGHTEN allows ("policy tightened; task becomes full").
-//  2. Agent/Task with an explicit model outside the effective tiers: deny.
-//  3. Bash: every command (deny > ask > allow, unlisted, unrecognised), then
-//     the paths and hosts those commands touch.
-//  4. File tools: path rules, scope guard, outside-root writes.
-//  5. URL tools: egress.
+// The rules, in the order they are applied (strictest verdict wins; at L>=2
+// every ask becomes deny; any panic, error or timeout is deny):
 //
-// The strictest verdict wins; at L>=2 every ask becomes deny.
+//  1. riskrails.yaml via Edit/Write: the policy diff decides, before
+//     protected_paths. Loader/Differ nil, parse/diff error, empty content,
+//     several paths in one call, or LOOSEN/MIXED => deny; TIGHTEN => allow.
+//  2. Shell text is parsed with mvdan/sh. Every simple command at any depth
+//     (substitutions, subshells, loops, `bash -c` strings, heredoc bodies,
+//     `find -exec`) is checked. Wrappers (env, sudo, xargs, timeout, ...) are
+//     unwrapped; `git -C dir` is a cd for that command; every other git global
+//     option except --no-pager/--no-optional-locks is unrecognised.
+//  3. UNRECOGNISED => ask (deny at L>=2): eval/source/alias/trap, a command name
+//     or argument that is not a literal, a non-static cd, shell reading stdin,
+//     function definitions, env assignments before a command, risky globals.
+//  4. Commands: deny > ask > allow, else commands.unlisted. Deny/ask patterns
+//     match every wrapper level and may be interleaved with option tokens;
+//     allow patterns are strict (`cmd*` never extends `cmd` itself) and match
+//     only the innermost command.
+//  5. Every argument is a path: reads are checked against secret_reads/no_read;
+//     writes against core.AlwaysProtected, protected_paths, sandbox.*, the scope
+//     guard and the repo root. Flag values (`--x=v`, or the path-like token after
+//     `--x`) get the read rules AND the deny-type write rules. An argument that
+//     is an existing directory is a recursive read: denied if a secret lies below.
+//  6. Hosts of known network commands and URL tools must be in egress.allow
+//     when deny_default is set (a tripwire, not a boundary).
+//  7. Grep/Glob: the search root must not contain secret files unless ONE plain
+//     positive glob excludes them all.
+//  8. Unknown (MCP) tools: every string in the raw input is classified as path,
+//     URL, shell text (keys command/cmd/script/code/shell/sh) or model, and the
+//     matching rules apply.
+//  9. Agent/Task with an explicit model must match an effective tier (alias aware);
+//     with no tiers wired it asks.
 package guard
 
 import (

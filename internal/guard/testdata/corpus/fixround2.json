@@ -1,0 +1,978 @@
+[
+ {
+  "name": "git -C .github/workflows diff --output=ci.yml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C .github/workflows diff --output=ci.yml"
+ },
+ {
+  "name": "git -C ~/.ssh diff --no-index /dev/null id_rsa",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C ~/.ssh diff --no-index /dev/null id_rsa"
+ },
+ {
+  "name": "git -C config/secrets diff --no-index /dev/null key",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "git -C config/secrets diff --no-index /dev/null key"
+ },
+ {
+  "name": "git --work-tree=config diff --no-index /dev/null secrets/key",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git --work-tree=config diff --no-index /dev/null secrets/key"
+ },
+ {
+  "name": "git -C src status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git -C src status"
+ },
+ {
+  "name": "git -C $X status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git -C $X status"
+ },
+ {
+  "name": "git -c core.pager=x log",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git -c core.pager=x log"
+ },
+ {
+  "name": "git --no-pager -C src diff",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git --no-pager -C src diff"
+ },
+ {
+  "name": "git -C .. status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git -C .. status"
+ },
+ {
+  "name": "git -C src push --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C src push --force"
+ },
+ {
+  "name": "git -C src -c a=b push origin HEAD:main",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C src -c a=b push origin HEAD:main"
+ },
+ {
+  "name": "git -C a -C b status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git -C a -C b status"
+ },
+ {
+  "name": "git --no-optional-locks status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git --no-optional-locks status"
+ },
+ {
+  "name": "git -p status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git -p status"
+ },
+ {
+  "name": "git --bare status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git --bare status"
+ },
+ {
+  "name": "git -C .github diff --output=workflows/ci.yml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C .github diff --output=workflows/ci.yml"
+ },
+ {
+  "name": "git -C .github -C workflows diff --output=ci.yml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C .github -C workflows diff --output=ci.yml"
+ },
+ {
+  "name": "git -C /etc diff --no-index /dev/null passwd",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git -C /etc diff --no-index /dev/null passwd"
+ },
+ {
+  "name": "git -C $X status @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -C $X status"
+ },
+ {
+  "name": "git diff --no-index empty .",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git diff --no-index empty .",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "git diff --no-index empty ..",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git diff --no-index empty ..",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "git diff --no-index empty ~/",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git diff --no-index empty ~/",
+  "files": [
+   "{home}/.ssh/id_rsa"
+  ]
+ },
+ {
+  "name": "git diff --no-index empty config",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "git diff --no-index empty config",
+  "files": [
+   "{root}/config/secrets/k"
+  ]
+ },
+ {
+  "name": "git diff --no-index empty src",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git diff --no-index empty src",
+  "files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "ls .",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ls .",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "ls src",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "ls src",
+  "files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "ls {home}",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "ls {home}"
+ },
+ {
+  "name": "cd {home}",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "cd {home}"
+ },
+ {
+  "name": "cd . && ls",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "cd . && ls",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "php bin/phpunit tests/",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit tests/",
+  "files": [
+   "{root}/tests/a.php"
+  ]
+ },
+ {
+  "name": "echo .",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo .",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "git add .",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git add .",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "git add .",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git add .",
+  "files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "cp -r . /tmp/x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cp -r . /tmp/x",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "tar cf x.tar config",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "tar cf x.tar config",
+  "files": [
+   "{root}/config/secrets/k"
+  ]
+ },
+ {
+  "name": "ls {home} @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ls {home}"
+ },
+ {
+  "name": "php bin/phpunit --testdox-text .env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --testdox-text .env"
+ },
+ {
+  "name": "php bin/phpunit --cache-result-file=.env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --cache-result-file=.env"
+ },
+ {
+  "name": "php bin/phpunit --cache-directory .github/workflows",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --cache-directory .github/workflows"
+ },
+ {
+  "name": "php bin/phpunit --cache-directory=.github/workflows",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --cache-directory=.github/workflows"
+ },
+ {
+  "name": "php bin/phpunit --colors",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit --colors"
+ },
+ {
+  "name": "php bin/phpunit --filter FooTest",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit --filter FooTest"
+ },
+ {
+  "name": "php bin/phpunit --bootstrap tests/bootstrap.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit --bootstrap tests/bootstrap.php"
+ },
+ {
+  "name": "php bin/phpunit --log-junit .claude/settings.json",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --log-junit .claude/settings.json"
+ },
+ {
+  "name": "php bin/phpunit --configuration .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --configuration .env.local"
+ },
+ {
+  "name": "git log --format=%H",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git log --format=%H"
+ },
+ {
+  "name": "composer install --working-dir=../x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "composer install --working-dir=../x"
+ },
+ {
+  "name": "php bin/phpunit --x=.codex/config.toml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --x=.codex/config.toml"
+ },
+ {
+  "name": "php bin/phpunit --testdox-html ~/.ssh/known",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "php bin/phpunit --testdox-html ~/.ssh/known"
+ },
+ {
+  "name": "Grep glob !*.php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "!*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob !**/*.php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "!**/*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob .env.local,*.php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": ".env.local,*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob {*.php,.env*}",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "{*.php,.env*}",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob with space",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "*.php .env*",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob *.php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob *.php, secrets dir without php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/config/secrets/key.pem",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Grep glob *.php, secrets dir with php",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "allow",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "glob": "*.php",
+    "pattern": "x"
+   }
+  },
+  "files": [
+   "{root}/config/secrets/db.php",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Glob secrets/* under config",
+  "level": "L1",
+  "tool": "Glob",
+  "fixture": "deny",
+  "strict": "allow",
+  "paths": [
+   "{root}/config"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "secrets/*"
+   }
+  },
+  "files": [
+   "{root}/config/secrets/key"
+  ]
+ },
+ {
+  "name": "Glob !x",
+  "level": "L1",
+  "tool": "Glob",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "!x"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "mcp__fs__move_file {\"tool_input\": {\"source\": \".env.local\", \"dest\": \"{root}/x\"}}",
+  "level": "L1",
+  "tool": "mcp__fs__move_file",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "source": ".env.local",
+    "dest": "{root}/x"
+   }
+  }
+ },
+ {
+  "name": "mcp__fs__read_it {\"tool_input\": {\"src\": \"config/secrets/k\"}}",
+  "level": "L1",
+  "tool": "mcp__fs__read_it",
+  "fixture": "deny",
+  "strict": "allow",
+  "raw": {
+   "tool_input": {
+    "src": "config/secrets/k"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__fetch_thing {\"tool_input\": {\"location\": \"{root}/.claude/settings.json\"}}",
+  "level": "L1",
+  "tool": "mcp__x__fetch_thing",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "location": "{root}/.claude/settings.json"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__exec {\"tool_input\": {\"script\": \"rm -rf /\"}}",
+  "level": "L1",
+  "tool": "mcp__x__exec",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "script": "rm -rf /"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__exec {\"tool_input\": {\"code\": \"git status\"}}",
+  "level": "L1",
+  "tool": "mcp__x__exec",
+  "fixture": "allow",
+  "strict": "ask",
+  "raw": {
+   "tool_input": {
+    "code": "git status"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__go {\"tool_input\": {\"endpoint\": \"https://evil.com\"}}",
+  "level": "L1",
+  "tool": "mcp__x__go",
+  "fixture": "ask",
+  "strict": "ask",
+  "raw": {
+   "tool_input": {
+    "endpoint": "https://evil.com"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__go {\"tool_input\": {\"link\": \"//evil.com/x\"}}",
+  "level": "L1",
+  "tool": "mcp__x__go",
+  "fixture": "ask",
+  "strict": "ask",
+  "raw": {
+   "tool_input": {
+    "link": "//evil.com/x"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__go {\"tool_input\": {\"endpoint\": \"https://packagist.org/x\"}}",
+  "level": "L1",
+  "tool": "mcp__x__go",
+  "fixture": "allow",
+  "strict": "ask",
+  "raw": {
+   "tool_input": {
+    "endpoint": "https://packagist.org/x"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__get {\"tool_input\": {\"anything\": \"Makefile\"}}",
+  "level": "L1",
+  "tool": "mcp__x__get",
+  "fixture": "allow",
+  "strict": "allow",
+  "raw": {
+   "tool_input": {
+    "anything": "Makefile"
+   }
+  },
+  "files": [
+   "{root}/Makefile"
+  ]
+ },
+ {
+  "name": "mcp__x__get {\"tool_input\": {\"x\": \".env.local\"}}",
+  "level": "L1",
+  "tool": "mcp__x__get",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "x": ".env.local"
+   }
+  }
+ },
+ {
+  "name": "mcp__x__create_note {\"tool_input\": {\"content\": \"hello world\"}}",
+  "level": "L1",
+  "tool": "mcp__x__create_note",
+  "fixture": "ask",
+  "strict": "ask",
+  "raw": {
+   "tool_input": {
+    "content": "hello world"
+   }
+  }
+ },
+ {
+  "name": "mcp__fs__list_dir {\"tool_input\": {\"x\": \"./\"}}",
+  "level": "L1",
+  "tool": "mcp__fs__list_dir",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "x": "./"
+   }
+  },
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "mcp__x__get {\"tool_input\": {\"a\": {\"b\": [\".env.local\"]}}}",
+  "level": "L1",
+  "tool": "mcp__x__get",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "a": {
+     "b": [
+      ".env.local"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "name": "mcp__x__get {\"cwd\": \"{root}\", \"session_id\": \"abc\", \"tool_input\": {\"q\": \"",
+  "level": "L1",
+  "tool": "mcp__x__get",
+  "fixture": "allow",
+  "strict": "allow",
+  "raw": {
+   "cwd": "{root}",
+   "session_id": "abc",
+   "tool_input": {
+    "q": "hello"
+   }
+  }
+ },
+ {
+  "name": "mcp__fs__write_it {\"tool_input\": {\"target\": \"{root}/.mcp.json\"}}",
+  "level": "L1",
+  "tool": "mcp__fs__write_it",
+  "fixture": "deny",
+  "strict": "deny",
+  "raw": {
+   "tool_input": {
+    "target": "{root}/.mcp.json"
+   }
+  }
+ },
+ {
+  "name": "rm -Rf /",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -Rf /"
+ },
+ {
+  "name": "rm -rf ~",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf ~"
+ },
+ {
+  "name": "rm -rf ~/",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf ~/"
+ },
+ {
+  "name": "rm -rf $HOME",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf $HOME"
+ },
+ {
+  "name": "rm -Rf $HOME",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -Rf $HOME"
+ },
+ {
+  "name": "php -d x=1 bin/console doctrine:schema:drop --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "php -d x=1 bin/console doctrine:schema:drop --force"
+ },
+ {
+  "name": "php bin/console --env=prod doctrine:schema:drop --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "php bin/console --env=prod doctrine:schema:drop --force"
+ },
+ {
+  "name": "git push origin HEAD:Main",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push origin HEAD:Main"
+ },
+ {
+  "name": "composer --no-interaction global require x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "composer --no-interaction global require x"
+ },
+ {
+  "name": "git --no-pager push --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git --no-pager push --force"
+ },
+ {
+  "name": "php -d memory_limit=-1 bin/console doctrine:migrations:migrate",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "php -d memory_limit=-1 bin/console doctrine:migrations:migrate"
+ },
+ {
+  "name": "COMPOSER=evil.json composer install",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "COMPOSER=evil.json composer install"
+ },
+ {
+  "name": "FOO=bar",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "FOO=bar"
+ },
+ {
+  "name": "FOO=bar echo hi",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "FOO=bar echo hi"
+ },
+ {
+  "name": "env COMPOSER=x composer install",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "env COMPOSER=x composer install"
+ },
+ {
+  "name": "sudo FOO=1 composer install",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "sudo FOO=1 composer install"
+ },
+ {
+  "name": "A=1 B=2 git status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "A=1 B=2 git status"
+ },
+ {
+  "name": "COMPOSER=evil.json composer install @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "COMPOSER=evil.json composer install"
+ }
+]
