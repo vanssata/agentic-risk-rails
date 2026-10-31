@@ -20,6 +20,7 @@ type Summary struct {
 	Last   time.Time       `json:"last"`
 	Total  int             `json:"events"`
 	Counts map[string]int  `json:"counts"`
+	Head   string          `json:"head,omitempty"`   // sha256 of the last line, set at close
 	Closed json.RawMessage `json:"closed,omitempty"` // data of task_closed, if present
 }
 
@@ -96,6 +97,9 @@ func TaskMD(s Summary) string {
 	fmt.Fprintf(&b, "- mode: %s\n", s.Mode)
 	fmt.Fprintf(&b, "- first event: %s\n", s.First.UTC().Format(time.RFC3339Nano))
 	fmt.Fprintf(&b, "- last event: %s\n", s.Last.UTC().Format(time.RFC3339Nano))
+	if s.Head != "" {
+		fmt.Fprintf(&b, "- head: %s\n", s.Head)
+	}
 	fmt.Fprintf(&b, "- events: %d\n\n## Events by type\n\n", s.Total)
 	types := make([]string, 0, len(s.Counts))
 	for t := range s.Counts {
