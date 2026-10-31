@@ -118,7 +118,7 @@ wave-0 ───┼── W1-B journal ─┤
 - **Acceptance:** таблично тестване на всяко поле в двете посоки; `src/Payment/**` → `src/Payment/*.php` е LOOSEN; MIXED = LOOSEN; поле без посока → всяка промяна LOOSEN; property тест: `Tighten(a, b)` никога не е по-слабо от `a` или `b`.
 
 ### W1-B — `journal` + `status` / `doctor` / `rebuild`
-- **OWNS:** `internal/journal/**` (без `registry.go` от вълна 0 — само го имплементира), `internal/projection/**`, `cmd/rr/cmd_status.go`, `cmd/rr/cmd_doctor.go`
+- **OWNS:** `internal/journal/**` (без `registry.go`, `events_core.go` от вълна 0), `internal/projection/**`, `cmd/rr/cmd_status.go`, `cmd/rr/cmd_doctor.go`, `cmd/rr/cmd_rebuild.go`
 - **Research:** atomic append + fsync на Linux/macOS; file locking (`flock`) при паралелни hook процеси; как AI-DLC прави event registry (DES §8.4 цитира 131 събития).
 - **Код:** hash-chained JSONL (`prev_sha256`), audit-first API (`Append` преди state промяна, връща грешка → извикващият не прави промяната); `.rr/run/<task>.jsonl` и `.rr/tasks/`; `REFUSE {TASK_IN_FLIGHT}`; проекции `status`, `risks`; `rr doctor` (chain + `task.md`), `rr rebuild`; тест за задължителните събития от DES §16.1.
 - **Acceptance:** подмяна на ред в средата се хваща; 50 паралелни `Append` от отделни процеси не губят и не чупят chain-а; непознато поле в стар event се пропуска.
@@ -130,16 +130,18 @@ wave-0 ───┼── W1-B journal ─┤
 - **Acceptance:** корпус ≥ 150 команди (allow/ask/deny по очакване) като golden; fuzz тест (`go test -fuzz`) без panic; p99 < 5 ms на команда (benchmark).
 
 ### W1-D — адаптер **Claude Code** (hooks + генератори + sandbox)
-- **OWNS:** `internal/adapters/claude/**`, `docs/research/verified/claude-code.md`
+- **OWNS:** `internal/adapters/claude/**`, `cmd/rr/link_claude.go` (`import _`), `docs/research/verified/claude-code.md`; регистрира се с `runtimes.Register`
 - **Research (живи docs + `claude --version`):** точен формат на PreToolUse stdin/stdout JSON и exit 2; `onFailure: block` и timeout; `permissions` allow/ask/deny синтаксис; sandbox секцията в settings (`failIfUnavailable`, filesystem read/write deny); дали PreToolUse input за `Agent`/`Task` носи `model` (DES §4.5 [U]); subagent `model:` поведение при блокиран alias.
 - **Код:** `ParseHookInput` / `RenderHookOutput` → `core.ToolCall`/`core.Verdict`; генератори: `.claude/settings.json` (permissions, hooks към `rr guard`, sandbox от `enforcement.sandbox`), `.claude/agents/*.md` с `model:` само от effective tiers (вход от fake resolver), `AGENTS.md` секция.
-- **Acceptance:** golden за fixture-а; contract тест: реален `claude -p` в temp repo с генерираните hooks отказва `Write riskrails.yaml` (пуска се с `RR_CONTRACT=1`, иначе skip); тест под `bwrap`: процес, който пише `riskrails.yaml`, получава EACCES.
+- **Acceptance:** golden за fixture-а (с `fakes.StrictPolicy()`); contract тест за формата на hook I/O срещу `claude` 2.1.316 (`RR_CONTRACT=1`); тест под `bwrap`: процес, който пише `riskrails.yaml`, получава EACCES. E2E „реален `claude -p` е отказан“ изисква W1-A+C+D → пуска го оркестраторът след merge (Gate 1).
 
 ### W1-E — адаптер **Codex** (hooks + config.toml + sandbox)
-- **OWNS:** `internal/adapters/codex/**`, `docs/research/verified/codex.md`
+- **OWNS:** `internal/adapters/codex/**`, `cmd/rr/link_codex.go` (`import _`), `docs/research/verified/codex.md`; регистрира се с `runtimes.Register`
 - **Research:** `codex --version`; формат на hooks (`permissionDecision: deny`, exit 2), покриване на MCP tools; `config.toml`: `sandbox_mode`, `[sandbox_workspace_write]`, `approval_policy`, `[agents]` (`default_subagent_model`, `max_concurrent_threads_per_session`); trusted project изискване; `--full-auto` статус; MCP в sandbox ([U] DES §14.7).
 - **Код:** същият интерфейс като W1-D; генератори `.codex/config.toml`, `.codex/hooks.json`, `.agents/skills/` разположение.
 - **Acceptance:** golden; contract тест с `codex exec --sandbox workspace-write` в temp repo (opt-in); `sync --check` зелен.
+
+**Wiring след merge (оркестратор):** `wiring.GuardContext` ← реален policy resolver/loader/differ; `sync.InputProvider` ← реален resolver.
 
 **Gate 1 (= P0 критериите от DES §13):** LOOSEN edit от агент отказан в тест; EACCES под sandbox; `rr sync --check` зелен за Claude + Codex в CI; `rr status` върху fixture-а. Review по §6.
 
