@@ -38,12 +38,14 @@ type hookOutput struct {
 
 // RenderHookOutput: PreToolUse allow/ask are JSON on stdout with exit 0; every
 // other decision is a block: reason on stderr and exit 2 (exit 2 wins over any
-// JSON, so a deny can never be read as allow). Other events are a silent no-op.
+// JSON, so a deny can never be read as allow). Other events have no decision
+// schema: Allow/Ask are a silent exit 0, anything else blocks via stderr and exit 2.
 func (Adapter) RenderHookOutput(event string, v core.Verdict, stdout, stderr io.Writer) (int, error) {
-	if event != "PreToolUse" {
+	passes := v.Decision == core.Allow || v.Decision == core.Ask
+	if passes && event != "PreToolUse" {
 		return 0, nil
 	}
-	if v.Decision == core.Allow || v.Decision == core.Ask {
+	if passes {
 		var o hookOutput
 		o.HookSpecificOutput.HookEventName = event
 		o.HookSpecificOutput.PermissionDecision = string(v.Decision)

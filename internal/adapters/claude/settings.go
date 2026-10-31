@@ -64,11 +64,17 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 	sb := e.Sandbox
 
 	var deny, ask []string
-	for _, p := range e.ProtectedPaths {
-		deny = append(deny, "Edit("+permPath(p)+")")
+	writeDeny := dedupe(concat(core.AlwaysProtected, e.ProtectedPaths, sb.Readonly, sb.NoWrite))
+	readDeny := dedupe(expandRefs(concat(e.SecretReads, sb.NoRead), e.SecretReads))
+	for _, p := range writeDeny {
+		for _, r := range depthForms(p) {
+			deny = append(deny, "Edit("+permPath(r)+")")
+		}
 	}
-	for _, p := range expandRefs(append(append([]string{}, e.SecretReads...), sb.NoRead...), e.SecretReads) {
-		deny = append(deny, "Read("+permPath(p)+")")
+	for _, p := range readDeny {
+		for _, r := range depthForms(p) {
+			deny = append(deny, "Read("+permPath(r)+")")
+		}
 	}
 	deny = append(deny, wrap("Bash", e.Commands.Deny)...)
 	asks := wrap("Bash", e.Commands.Ask)
@@ -79,8 +85,8 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 	}
 
 	fs := sandboxFSDoc{
-		DenyRead:  sandboxPaths(in.Home, expandRefs(sb.NoRead, e.SecretReads)),
-		DenyWrite: sandboxPaths(in.Home, append(append([]string{}, sb.Readonly...), sb.NoWrite...)),
+		DenyRead:  sandboxPaths(in.Home, readDeny),
+		DenyWrite: sandboxPaths(in.Home, writeDeny),
 	}
 	required := in.Level >= core.L2
 	if sb.RequiredFrom != nil {
@@ -112,6 +118,24 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 	return []core.File{{Path: ".claude/settings.json", Content: buf.Bytes()}}, nil
 }
 
+// depthForms returns the forms a policy glob needs in Claude's syntax. A
+// slash-less pattern (".env*") matches at any depth under internal/globs, so it
+// is emitted both as written (project root) and as "**/<p>" (any depth).
+func depthForms(p string) []string {
+	if strings.Contains(p, "/") {
+		return []string{p}
+	}
+	return []string{p, "**/" + p}
+}
+
+func concat(lists ...[]string) []string {
+	var out []string
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	return out
+}
+
 // permPath turns a policy glob into a Read/Edit rule path: "~/x" stays,
 // everything else is anchored at the project root ("/x").
 func permPath(p string) string {
@@ -128,10 +152,12 @@ func permPath(p string) string {
 func sandboxPaths(home string, paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if p == "~" || strings.HasPrefix(p, "~/") {
-			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		for _, r := range depthForms(p) {
+			if r == "~" || strings.HasPrefix(r, "~/") {
+				r = filepath.Join(home, strings.TrimPrefix(r, "~"))
+			}
+			out = append(out, r)
 		}
-		out = append(out, p)
 	}
 	return dedupe(out)
 }

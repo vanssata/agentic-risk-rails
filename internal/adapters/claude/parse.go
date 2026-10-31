@@ -63,18 +63,19 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 	}
 	var ti toolInput
 	if len(in.ToolInput) > 0 && string(in.ToolInput) != "null" {
-		if err := json.Unmarshal(in.ToolInput, &ti); err != nil {
+		// MCP and unknown tools have their own schemas: only fillGeneric reads them.
+		if err := json.Unmarshal(in.ToolInput, &ti); err != nil && builtinTools[in.ToolName] {
 			return core.ToolCall{}, fmt.Errorf("decode tool_input of %s: %w", in.ToolName, err)
 		}
 	}
-	if err := fillTool(&call, ti); err != nil {
+	if err := fillTool(&call, ti, in.ToolInput); err != nil {
 		return core.ToolCall{}, err
 	}
 	return call, nil
 }
 
 // fillTool sets the tool-specific fields of call from ti.
-func fillTool(call *core.ToolCall, ti toolInput) error {
+func fillTool(call *core.ToolCall, ti toolInput, rawInput json.RawMessage) error {
 	path := func(p string) error {
 		if p == "" {
 			return fmt.Errorf("%s: empty path", call.Tool)
@@ -121,6 +122,8 @@ func fillTool(call *core.ToolCall, ti toolInput) error {
 		call.URL = ti.URL
 	case "Agent", "Task":
 		call.Model = ti.Model
+	default:
+		err = fillGeneric(call, rawInput, path)
 	}
 	return err
 }

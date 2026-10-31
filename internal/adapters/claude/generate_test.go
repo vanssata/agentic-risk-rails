@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -58,6 +59,41 @@ func TestGoldens(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Every protected path and secret read must be backed by BOTH a permission rule
+// and the OS sandbox, and slash-less patterns must cover any depth.
+func TestProtectedPathsBackedBySandboxAndRules(t *testing.T) {
+	pol := fixturePolicy(t)
+	in := core.SyncInput{Root: "/repo", Home: "/home/test", Policy: pol, Level: core.L1}
+	var doc struct {
+		Permissions struct{ Deny []string }
+		Sandbox     struct {
+			Filesystem struct{ DenyRead, DenyWrite []string }
+		}
+	}
+	require.NoError(t, json.Unmarshal(render(t, in)[0].Content, &doc))
+	e := pol.Policy.Enforcement
+	write := append(append(append([]string{}, core.AlwaysProtected...), e.ProtectedPaths...), e.Sandbox.Readonly...)
+	for _, p := range write {
+		want := p
+		if !strings.Contains(p, "/") {
+			assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, "**/"+p, p)
+			assert.Contains(t, doc.Permissions.Deny, "Edit(/**/"+p+")", p)
+			want = p
+		}
+		assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, want, p)
+		assert.Contains(t, doc.Permissions.Deny, "Edit(/"+p+")", p)
+	}
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, ".claude/**")
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, ".git/hooks/**")
+	for _, p := range []string{".env.local", "config/secrets/**"} {
+		assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, p)
+		assert.Contains(t, doc.Permissions.Deny, "Read(/"+p+")")
+	}
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, "**/.env.local")
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, "/home/test/.ssh/**")
+	assert.Contains(t, doc.Permissions.Deny, "Read(~/.ssh/**)")
 }
 
 func TestDeterministic(t *testing.T) {
