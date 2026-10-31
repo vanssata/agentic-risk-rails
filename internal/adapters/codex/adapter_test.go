@@ -111,7 +111,6 @@ func TestParseApplyPatchUpdate(t *testing.T) {
 			[]string{"src/x.go", "src/y.go"}, "one\n2\nthree\n", false},
 		{"hunk does not apply", "*** Begin Patch\n*** Update File: riskrails.yaml\n@@\n-zzz\n+y\n*** End Patch", nil, "", true},
 		{"missing file", "*** Begin Patch\n*** Update File: nope.txt\n@@\n-a\n+b\n*** End Patch", nil, "", true},
-		{"two files", "*** Begin Patch\n*** Add File: a.txt\n+1\n*** Add File: b.txt\n+2\n*** End Patch", nil, "", true},
 		{"bad add line", "*** Begin Patch\n*** Add File: a.txt\nnoplus\n*** End Patch", nil, "", true},
 		{"absolute path", "*** Begin Patch\n*** Add File: /etc/x/../y\n+1\n*** End Patch", []string{"/etc/y"}, "1\n", false},
 		{"dot dot", "*** Begin Patch\n*** Add File: ../out.txt\n+1\n*** End Patch", []string{filepath.Join(filepath.Dir(dir), "out.txt")}, "1\n", false},
@@ -135,6 +134,47 @@ func TestParseApplyPatchUpdate(t *testing.T) {
 			assert.Equal(t, tc.content, c.Content)
 		})
 	}
+}
+
+func TestParseMultiFilePatch(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "riskrails.yaml"), []byte("a: 1\nb: 2\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "old.txt"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mv.txt"), []byte("one\ntwo\n"), 0o644))
+	j := func(p string) string { return filepath.Join(dir, p) }
+
+	c, err := parse(t, patchPayload(dir, "*** Begin Patch\n*** Update File: riskrails.yaml\n@@\n-b: 2\n+b: 3\n*** Add File: new/a.txt\n+hi\n*** End Patch"))
+	require.NoError(t, err)
+	assert.Equal(t, "Edit", c.Tool)
+	assert.Empty(t, c.Content)
+	assert.Equal(t, []string{j("riskrails.yaml"), j("new/a.txt")}, c.Paths)
+	assert.Equal(t, []core.FileEdit{
+		{Path: j("riskrails.yaml"), Content: "a: 1\nb: 3\n"},
+		{Path: j("new/a.txt"), Content: "hi\n"},
+	}, c.Edits)
+
+	c, err = parse(t, patchPayload(dir, "*** Begin Patch\n*** Add File: b.txt\n+2\n*** Delete File: old.txt\n*** End Patch"))
+	require.NoError(t, err)
+	assert.Equal(t, []core.FileEdit{
+		{Path: j("b.txt"), Content: "2\n"},
+		{Path: j("old.txt"), Delete: true},
+	}, c.Edits)
+
+	c, err = parse(t, patchPayload(dir, "*** Begin Patch\n*** Update File: mv.txt\n*** Move to: moved.txt\n@@\n-two\n+2\n*** Update File: riskrails.yaml\n@@\n-a: 1\n+a: 9\n*** End Patch"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{j("mv.txt"), j("moved.txt"), j("riskrails.yaml")}, c.Paths)
+	assert.Equal(t, core.FileEdit{Path: j("moved.txt"), From: j("mv.txt"), Content: "one\n2\n"}, c.Edits[0])
+	assert.Equal(t, "a: 9\nb: 2\n", c.Edits[1].Content)
+
+	// one unresolvable hunk anywhere => error (caller denies)
+	_, err = parse(t, patchPayload(dir, "*** Begin Patch\n*** Add File: ok.txt\n+1\n*** Update File: riskrails.yaml\n@@\n-nope\n+x\n*** End Patch"))
+	assert.Error(t, err)
+
+	// single-file patches keep the old shape
+	c, err = parse(t, patchPayload(dir, "*** Begin Patch\n*** Add File: s.txt\n+1\n*** End Patch"))
+	require.NoError(t, err)
+	assert.Nil(t, c.Edits)
+	assert.Equal(t, "1\n", c.Content)
 }
 
 func TestParseMCPArgs(t *testing.T) {
