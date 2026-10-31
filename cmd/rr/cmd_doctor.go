@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,11 +24,11 @@ func init() {
 				var problems []string
 				for _, p := range taskFiles(journal.RunDir(root)) {
 					if repair {
-						fixed, err := journal.Repair(p)
+						removed, err := journal.Repair(root, p)
 						if err != nil {
 							problems = append(problems, err.Error())
-						} else if fixed {
-							fmt.Fprintln(out, "repaired:", p)
+						} else if removed != nil {
+							fmt.Fprintf(out, "repaired: %s: removed %d bytes (saved as %s.torn.*)\n", p, len(removed), p)
 						}
 					}
 					if err := journal.Verify(p); err != nil {
@@ -62,6 +63,7 @@ func init() {
 						}
 					}
 				}
+				problems = append(problems, orphanProblems(root)...)
 				for _, p := range problems {
 					fmt.Fprintln(out, "problem:", p)
 				}
@@ -77,4 +79,36 @@ func init() {
 		c.Flags().StringVar(&root, "root", wd, "repository root")
 		return c
 	})
+}
+
+// orphanProblems finds task.md files without a journal and index.json entries whose files are gone.
+func orphanProblems(root string) []string {
+	var out []string
+	dirs, _ := filepath.Glob(filepath.Join(journal.TasksDir(root), "*", "task.md"))
+	for _, md := range dirs {
+		task := filepath.Base(filepath.Dir(md))
+		if _, err := os.Stat(filepath.Join(journal.TasksDir(root), task+".jsonl")); err != nil {
+			out = append(out, fmt.Sprintf("%s: task.md without journal", task))
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".rr", "index.json"))
+	if err != nil {
+		return out
+	}
+	var idx struct {
+		Tasks []struct {
+			Task string `json:"task"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(b, &idx); err != nil {
+		return append(out, "index.json: "+err.Error())
+	}
+	for _, t := range idx.Tasks {
+		for _, f := range []string{t.Task + ".jsonl", filepath.Join(t.Task, "task.md")} {
+			if _, err := os.Stat(filepath.Join(journal.TasksDir(root), f)); err != nil {
+				out = append(out, fmt.Sprintf("%s: listed in index.json but %s is missing", t.Task, f))
+			}
+		}
+	}
+	return out
 }

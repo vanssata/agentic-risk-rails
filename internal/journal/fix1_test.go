@@ -29,9 +29,13 @@ func TestTornTailRefusesAppendAndRepairs(t *testing.T) {
 	assert.Equal(t, before, after)
 	assert.Error(t, journal.Verify(p))
 
-	fixed, err := journal.Repair(p)
+	removed, err := journal.Repair(root, p)
 	require.NoError(t, err)
-	assert.True(t, fixed)
+	assert.Equal(t, `{"schema":1,"type":"verif`, string(removed))
+	saved, _ := filepath.Glob(p + ".torn.*")
+	require.Len(t, saved, 1)
+	b, _ := os.ReadFile(saved[0])
+	assert.Equal(t, string(removed), string(b))
 	require.NoError(t, journal.Verify(p))
 	_, err = j.Append(ctx, ev("verify_run", "t1"))
 	require.NoError(t, err)
@@ -45,9 +49,9 @@ func TestRepairKeepsValidJSONTail(t *testing.T) {
 	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
 	_, _ = f.WriteString(`{"schema":1}`)
 	f.Close()
-	fixed, err := journal.Repair(p)
+	removed, err := journal.Repair(root, p)
 	require.Error(t, err)
-	assert.False(t, fixed)
+	assert.Nil(t, removed)
 }
 
 func TestCloseVerifiesFirst(t *testing.T) {
