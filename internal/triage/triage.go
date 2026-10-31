@@ -22,8 +22,13 @@ type Input struct {
 	Refs     map[string]int    // reference count of each EXISTING file; a file absent here is new
 	Tree     []string          // every repo file, to look up tests
 	Content  map[string]string // text of files, or added diff lines (rescore)
-	Spec     bool              // a spec drives the task (programme trigger)
-	Sessions int               // sessions the task spans (programme trigger)
+	// Unreadable files exist but could not be read in full (binary, over the cap, symlink,
+	// outside the root): they score upward. Deleted files are removed by the change
+	// (caller: git diff --name-status); they are not "new".
+	Unreadable map[string]bool
+	Deleted    map[string]bool
+	Spec       bool // a spec drives the task (programme trigger)
+	Sessions   int  // sessions the task spans (programme trigger)
 }
 
 const policyFile = "riskrails.yaml"
@@ -80,7 +85,7 @@ func Score(pol core.Policy, in Input) core.Weight {
 		if anyMatch(s.tests, f) == "" {
 			s.testsOnly = false
 		}
-		if _, ok := in.Refs[f]; ok {
+		if _, ok := in.Refs[f]; ok || in.Deleted[f] {
 			s.allNew = false
 		}
 	}
@@ -112,14 +117,8 @@ func Score(pol core.Policy, in Input) core.Weight {
 		w.Axes[a] = x.v
 		w.Reasons = append(w.Reasons, fmt.Sprintf("%s=%d: %s", a, x.v, x.why))
 	}
-	for _, f := range in.Files {
-		if path.Base(f) == policyFile {
-			for a, v := range s.r.PolicyFileWeight {
-				w.Axes[a] = max(w.Axes[a], v)
-			}
-			w.Reasons = append(w.Reasons, policyFile+" changed: policy_file_weight applied")
-			break
-		}
+	if applyPolicyFileWeight(s.r, in, w.Axes) {
+		w.Reasons = append(w.Reasons, policyFile+" changed: policy_file_weight applied")
 	}
 	w.Mode, w.Reasons = modeFor(pol, w.Axes, in, w.Reasons)
 	return w
@@ -163,6 +162,11 @@ func (s scorer) behaviour() *measure {
 			}
 		}
 	}
+	for _, f := range s.in.Files {
+		if s.in.Unreadable[f] || s.in.Deleted[f] {
+			m.set(1, f+" is unreadable or deleted")
+		}
+	}
 	if !m.ok && (s.testsOnly || s.allNew) {
 		m.set(0, "tests only or every file is new")
 	}
@@ -182,7 +186,9 @@ func (s scorer) reversibility() *measure {
 			m.set(1, f+" matches needs_step "+step)
 		}
 		if (irr != "" || step != "") && anyMatch(s.tests, f) == "" {
-			if p := contentHit(rev.IrreversibleContent, s.in.Content[f]); p != "" {
+			if s.in.Unreadable[f] {
+				m.set(2, f+" is unreadable")
+			} else if p := contentHit(rev.IrreversibleContent, s.in.Content[f]); p != "" {
 				m.set(2, fmt.Sprintf("%s contains %q", f, p))
 			}
 		}
@@ -239,8 +245,9 @@ func (s scorer) coverage() *measure {
 			continue
 		}
 		code++
+		word := regexp.MustCompile(`(?:^|[^A-Za-z0-9])` + regexp.QuoteMeta(ident(f)) + `(?:$|[^A-Za-z0-9]|[Tt]est|[Ss]pec)`)
 		for _, t := range testNames {
-			if strings.Contains(t, ident(f)) {
+			if word.MatchString(t) {
 				covered++
 				break
 			}
@@ -258,9 +265,22 @@ func (s scorer) coverage() *measure {
 	return m
 }
 
+// applyPolicyFileWeight raises axes to policy_file_weight when the policy file is among the files.
+func applyPolicyFileWeight(r core.RiskSpec, in Input, axes map[core.Axis]int) bool {
+	for _, f := range in.Files {
+		if path.Base(f) == policyFile {
+			for a, v := range r.PolicyFileWeight {
+				axes[a] = max(axes[a], v)
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func contentHit(patterns []string, text string) string {
 	for _, p := range patterns {
-		rx, err := regexp.Compile(p)
+		rx, err := regexp.Compile("(?i)" + p)
 		if err != nil || rx.MatchString(text) { // an unreadable pattern errs upward
 			return p
 		}
@@ -354,6 +374,9 @@ func raise(pol core.Policy, prev core.Weight, in Input, axes []core.Axis) core.W
 			out.Reasons = append(out.Reasons, fmt.Sprintf("rescore %s %d -> %d", a, out.Axes[a], cur.Axes[a]))
 			out.Axes[a] = cur.Axes[a]
 		}
+	}
+	if applyPolicyFileWeight(pol.Risk, in, out.Axes) {
+		out.Reasons = append(out.Reasons, policyFile+" changed: policy_file_weight applied")
 	}
 	out.Mode, out.Reasons = modeFor(pol, out.Axes, in, out.Reasons)
 	if prev.Mode.Rank() > out.Mode.Rank() {

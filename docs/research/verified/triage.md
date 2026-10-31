@@ -28,3 +28,8 @@ Method: local reading of the claude-agentic prototype (paths below, repo `/Store
 
 ## COST
 tokens=n/a calls=n/a (local reading only)
+
+## Decisions (fix round 1)
+- irreversible_content is scanned (case-insensitive regex) only in non-test files that match needs_step or irreversible, as in claude-agentic weight.md; other files are not scanned, so a DROP in plain source does not raise reversibility. Test files are exempt even when their path matches needs_step.
+- Unreadable files (binary, over 1 MB, symlink, outside root, I/O error) and deleted files err upward: behaviour >=1; unreadable needs_step/irreversible files get reversibility 2.
+- Not fixed: unreadable files in the tree are skipped for reference counting, so they can only under-count scope.

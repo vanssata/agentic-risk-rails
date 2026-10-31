@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,7 @@ func init() {
 		var (
 			root, file, goal string
 			files, declare   []string
+			deleted          []string
 			spec, asJSON     bool
 			sessions         int
 		)
@@ -51,12 +53,19 @@ func init() {
 					}
 					declared[core.Axis(k)] = n
 				}
+				del := map[string]bool{}
+				for _, d := range deleted {
+					del[d] = true
+					if !slices.Contains(files, d) {
+						files = append(files, d)
+					}
+				}
 				tree, err := policy.ListFiles(cmd.Context(), root)
 				if err != nil {
 					return err
 				}
-				refs, content := triage.Load(root, files, tree, pol.Risk.Axes[core.AxisCoverage].TestGlobs)
-				w := triage.Score(pol, triage.Input{Files: files, Goal: goal, Declared: declared, Refs: refs,
+				refs, content, unreadable := triage.Load(root, files, tree, pol.Risk.Axes[core.AxisCoverage].TestGlobs)
+				w := triage.Score(pol, triage.Input{Files: files, Goal: goal, Declared: declared, Refs: refs, Unreadable: unreadable, Deleted: del,
 					Tree: tree, Content: content, Spec: spec, Sessions: sessions})
 				out := cmd.OutOrStdout()
 				if asJSON {
@@ -75,6 +84,7 @@ func init() {
 		c.Flags().StringVar(&root, "root", wd, "repository root")
 		c.Flags().StringVar(&file, "file", "riskrails.yaml", "policy file, relative to --root")
 		c.Flags().StringSliceVar(&files, "files", nil, "repo-relative files the task touches")
+		c.Flags().StringSliceVar(&deleted, "deleted", nil, "files the change deletes (name-status D)")
 		c.Flags().StringVar(&goal, "goal", "", "task goal (scanned for behaviour keywords)")
 		c.Flags().StringSliceVar(&declare, "declare", nil, "raise an axis: axis=0..2 (never lowers a measurement)")
 		c.Flags().BoolVar(&spec, "spec", false, "a spec drives the task (programme trigger)")

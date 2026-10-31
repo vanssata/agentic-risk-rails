@@ -28,7 +28,7 @@ func TestLoadCountsReferences(t *testing.T) {
 		assert.NoError(t, os.WriteFile(filepath.Join(root, p), []byte(c), 0o644))
 		tree = append(tree, p)
 	}
-	refs, content := Load(root, []string{"src/Foo.php", "templates/x.html.twig", "src/Missing.php"}, tree, []string{"tests/**"})
+	refs, content, _ := Load(root, []string{"src/Foo.php", "templates/x.html.twig", "src/Missing.php"}, tree, []string{"tests/**"})
 	assert.Equal(t, map[string]int{"src/Foo.php": 2, "templates/x.html.twig": 1}, refs) // Bar.php, services.yaml; UsesTemplate.php
 	assert.Contains(t, content["src/Foo.php"], "class Foo")
 }
