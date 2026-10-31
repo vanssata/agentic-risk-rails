@@ -146,6 +146,31 @@
   "step_files": []
  },
  {
+  "name": "Edit riskrails.yaml deletion (empty content)",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "Edit move riskrails.yaml (old,new)",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/old.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "TIGHTEN"
+ },
+ {
   "name": "RiskRails.yaml case variant LOOSEN",
   "level": "L1",
   "tool": "Write",

@@ -98,11 +98,11 @@ func matchesRule(list []string, t target, gc core.GuardContext) (string, bool) {
 	for _, pat := range list {
 		switch {
 		case pat == "~" || strings.HasPrefix(pat, "~/"):
-			if matchSegs(splitAbs(filepath.Join(gc.Home, strings.TrimPrefix(pat, "~"))), splitAbs(t.abs)) {
+			if matchPath(quoteMeta(filepath.ToSlash(gc.Home))+strings.TrimPrefix(pat, "~"), filepath.ToSlash(t.abs)) {
 				return pat, true
 			}
 		case filepath.IsAbs(pat):
-			if matchSegs(splitAbs(pat), splitAbs(t.abs)) {
+			if matchPath(filepath.ToSlash(pat), filepath.ToSlash(t.abs)) {
 				return pat, true
 			}
 		case t.inside && matchPath(pat, t.rel):
@@ -110,10 +110,6 @@ func matchesRule(list []string, t target, gc core.GuardContext) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func splitAbs(p string) []string {
-	return strings.Split(strings.Trim(filepath.ToSlash(filepath.Clean(p)), "/"), "/")
 }
 
 func isPolicyFile(t target) bool {
@@ -185,4 +181,16 @@ func globTargets(p string, cwd string, gc core.GuardContext) []string {
 	}
 	m = append(m, pat)
 	return m
+}
+
+// quoteMeta escapes glob metacharacters of a literal path prefix (home dirs may contain braces).
+func quoteMeta(s string) string {
+	var sb strings.Builder
+	for _, c := range s {
+		if strings.ContainsRune(`\*?[]{}`, c) {
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
 }

@@ -212,6 +212,9 @@ func checkPolicyFile(call core.ToolCall, gc core.GuardContext) (core.Verdict, bo
 	if len(call.Paths) != 1 {
 		return d("riskrails.yaml edited together with other files")
 	}
+	if call.Content == "" {
+		return d("riskrails.yaml deletion or empty content denied")
+	}
 	if gc.Loader == nil || gc.Differ == nil {
 		return d("riskrails.yaml edit denied: no policy loader/differ available")
 	}

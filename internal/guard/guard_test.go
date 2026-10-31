@@ -47,6 +47,7 @@ type corpusCase struct {
 	StepFiles []string          `json:"step_files"`
 	Symlinks  map[string]string `json:"symlinks"`
 	Files     []string          `json:"files"`
+	Protected []string          `json:"protected"` // extra protected_paths for this case
 	Policy    string            `json:"policy"` // riskrails.yaml diff: LOOSEN | TIGHTEN | MIXED | ERROR | PARSE_ERROR | NIL
 	Fixture   core.Decision     `json:"fixture"`
 	Strict    core.Decision     `json:"strict"`
@@ -73,6 +74,7 @@ func (c corpusCase) run(t *testing.T, name string, p core.Policy, want core.Deci
 	for _, p := range c.Paths {
 		call.Paths = append(call.Paths, sub.Replace(p))
 	}
+	p.Enforcement.ProtectedPaths = append(append([]string{}, p.Enforcement.ProtectedPaths...), c.Protected...)
 	gc := core.GuardContext{Policy: effective(p), Level: c.Level, Root: root, Home: home,
 		Tiers: core.EffectiveTiers{Models: map[core.Tier]string{core.TierFast: "claude-haiku-4-5", core.TierBalanced: "sonnet", core.TierStrong: "claude-opus-5-5"}}}
 	if c.StepFiles != nil {
@@ -139,7 +141,7 @@ func TestCheckFailClosed(t *testing.T) {
 		// a Differ that panics, reached through a policy-file edit
 		gc := gc
 		gc.Loader, gc.Differ = fakes.Loader{}, panicDiffer{}
-		call := core.ToolCall{Tool: "Write", Paths: []string{filepath.Join(gc.Root, "riskrails.yaml")}}
+		call := core.ToolCall{Tool: "Write", Content: "x", Paths: []string{filepath.Join(gc.Root, "riskrails.yaml")}}
 		v := New().Check(context.Background(), call, gc)
 		assert.Equal(t, core.Deny, v.Decision)
 		assert.Contains(t, v.Reason, "internal error")
@@ -192,12 +194,12 @@ func TestMatchPath(t *testing.T) {
 		want     bool
 	}{
 		{".env*", ".env.local", true},
-		{".env*", "app/.env", true},
+		{".env*", "app/.env", false},
 		{"config/secrets/**", "config/secrets/a/b", true},
 		{"config/secrets/**", "config/other", false},
 		{".github/**", ".github/workflows/ci.yml", true},
 		{"riskrails.yaml", "riskrails.yaml", true},
-		{"riskrails.yaml", "sub/riskrails.yaml", true},
+		{"riskrails.yaml", "sub/riskrails.yaml", false},
 		{"src/*.php", "src/a/b.php", false},
 	} {
 		assert.Equal(t, c.want, matchPath(c.pat, c.rel), "%q vs %q", c.pat, c.rel)

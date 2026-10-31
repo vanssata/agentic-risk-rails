@@ -1,9 +1,10 @@
 package guard
 
 import (
-	"path"
 	"sort"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // word is one statically analysed shell word. dyn means the value depends on
@@ -161,39 +162,11 @@ func matchFlagsAnywhere(pw, av []string, dyn []bool) bool {
 	return true
 }
 
-// matchPath matches a root-relative slash path against a policy glob. A pattern
-// without "/" matches any path component name (gitignore style); otherwise it is
-// anchored at the root, and ** spans zero or more segments.
+// matchPath matches a root-relative slash path against a policy glob with
+// doublestar.Match, exactly as internal/policy does (`*` stops at "/", `**`
+// spans directories), so a narrowing the differ calls LOOSEN is enforced the
+// same way here.
 func matchPath(pat, rel string) bool {
-	pat = strings.TrimPrefix(path.Clean(pat), "./")
-	if !strings.Contains(pat, "/") {
-		for _, seg := range strings.Split(rel, "/") {
-			if ok, _ := path.Match(pat, seg); ok {
-				return true
-			}
-		}
-		return false
-	}
-	return matchSegs(strings.Split(pat, "/"), strings.Split(rel, "/"))
-}
-
-func matchSegs(ps, ss []string) bool {
-	if len(ps) == 0 {
-		return len(ss) == 0
-	}
-	if ps[0] == "**" {
-		for k := 0; k <= len(ss); k++ {
-			if matchSegs(ps[1:], ss[k:]) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(ss) == 0 {
-		return false
-	}
-	if ok, _ := path.Match(ps[0], ss[0]); !ok {
-		return false
-	}
-	return matchSegs(ps[1:], ss[1:])
+	ok, err := doublestar.Match(pat, rel)
+	return err == nil && ok
 }
