@@ -121,6 +121,7 @@ func Score(pol core.Policy, in Input) core.Weight {
 		w.Reasons = append(w.Reasons, policyFile+" changed: policy_file_weight applied")
 	}
 	w.Mode, w.Reasons = modeFor(pol, w.Axes, in, w.Reasons)
+	w.Irreversible = irreversible(pol.Risk, w.Axes)
 	return w
 }
 
@@ -314,14 +315,7 @@ func modeFor(pol core.Policy, axes map[core.Axis]int, in Input, reasons []string
 		reasons = append(reasons, why)
 	}
 	for _, h := range r.HardFloors {
-		hit := h.Axis != "" && axes[h.Axis] >= h.Value
-		if len(h.Both) > 0 {
-			hit = true
-			for _, a := range h.Both {
-				hit = hit && axes[a] >= h.Value
-			}
-		}
-		if hit {
+		if floorHit(h, axes) {
 			label := string(h.Axis)
 			if len(h.Both) > 0 {
 				label = fmt.Sprint(h.Both)
@@ -352,6 +346,27 @@ func modeFor(pol core.Policy, axes map[core.Axis]int, in Input, reasons []string
 	return mode, reasons
 }
 
+func floorHit(h core.HardFloor, axes map[core.Axis]int) bool {
+	hit := h.Axis != "" && axes[h.Axis] >= h.Value
+	if len(h.Both) > 0 {
+		hit = true
+		for _, a := range h.Both {
+			hit = hit && axes[a] >= h.Value
+		}
+	}
+	return hit
+}
+
+// irreversible reports whether a full_irreversible hard floor holds.
+func irreversible(r core.RiskSpec, axes map[core.Axis]int) bool {
+	for _, h := range r.HardFloors {
+		if h.Mode == core.ModeFullIrreversible && floorHit(h, axes) {
+			return true
+		}
+	}
+	return false
+}
+
 // Rescore re-measures against the real diff and raises only the axes in
 // risk.rescore.axes. The result never has a lower axis or mode than prev.
 func Rescore(pol core.Policy, prev core.Weight, in Input) core.Weight {
@@ -379,6 +394,7 @@ func raise(pol core.Policy, prev core.Weight, in Input, axes []core.Axis) core.W
 		out.Reasons = append(out.Reasons, policyFile+" changed: policy_file_weight applied")
 	}
 	out.Mode, out.Reasons = modeFor(pol, out.Axes, in, out.Reasons)
+	out.Irreversible = prev.Irreversible || irreversible(pol.Risk, out.Axes)
 	if prev.Mode.Rank() > out.Mode.Rank() {
 		out.Mode = prev.Mode
 	}

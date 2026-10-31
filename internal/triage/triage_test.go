@@ -239,3 +239,18 @@ func TestRescoreNeverLowers(t *testing.T) {
 		}
 	}
 }
+
+// A programme task that also holds a full_irreversible floor keeps the
+// Irreversible flag (autonomy forces L0), and Rescore never clears it.
+func TestIrreversibleFlagSurvivesProgramme(t *testing.T) {
+	pol := sq1Policy()
+	pol.Risk.HardFloors = []core.HardFloor{{Both: []core.Axis{rv, dm}, Value: 2, Mode: core.ModeFullIrreversible}}
+	pol.Risk.Modes[core.ModeProgramme] = core.ModeBand{Trigger: []string{"spec"}}
+	in := Input{Files: []string{"deploy/x.sh"}, Declared: decl(bh, 0, dm, 2, nv, 0), Spec: true}
+	w := Score(pol, in)
+	assert.Equal(t, core.ModeProgramme, w.Mode)
+	assert.True(t, w.Irreversible)
+	r := Rescore(pol, w, Input{Files: []string{"a.txt"}, Declared: decl(bh, 0, dm, 0, nv, 0)})
+	assert.True(t, r.Irreversible, "rescore never clears the flag")
+	assert.False(t, Score(pol, Input{Files: []string{"a.txt"}, Declared: decl(bh, 0, dm, 0, nv, 0)}).Irreversible)
+}
