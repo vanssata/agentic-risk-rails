@@ -1,0 +1,494 @@
+[
+ {
+  "name": "all safe",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   }
+  ],
+  "fixture": "allow",
+  "strict": "allow"
+ },
+ {
+  "name": "one protected .env",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.env",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/.env",
+    "content": "S=1"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "one protected workflow",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.github/workflows/ci.yml",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/.github/workflows/ci.yml",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "one AlwaysProtected hook config",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.claude/settings.json",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/.claude/settings.json",
+    "content": "{}"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "riskrails.yaml loosen inside",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/riskrails.yaml",
+    "content": "schema: 1\n"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "LOOSEN"
+ },
+ {
+  "name": "riskrails.yaml tighten inside plus safe file",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/riskrails.yaml",
+    "content": "schema: 1\n"
+   }
+  ],
+  "fixture": "allow",
+  "strict": "allow",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "riskrails.yaml no differ",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   },
+   {
+    "path": "{root}/riskrails.yaml",
+    "content": "schema: 1\n"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "NIL"
+ },
+ {
+  "name": "riskrails.yaml tighten plus protected",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.env",
+   "{root}/riskrails.yaml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/riskrails.yaml",
+    "content": "schema: 1\n"
+   },
+   {
+    "path": "{root}/.env",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "riskrails.yaml empty content",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/riskrails.yaml",
+    "content": ""
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "delete riskrails.yaml",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/riskrails.yaml",
+    "delete": true,
+    "content": ""
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "move riskrails.yaml away",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/old.yaml",
+   "{root}/riskrails.yaml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/old.yaml",
+    "from": "{root}/riskrails.yaml",
+    "content": "schema: 1\n"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "move onto riskrails.yaml",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/tmp.yaml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/riskrails.yaml",
+    "from": "{root}/tmp.yaml",
+    "content": "schema: 1\n"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "move of a protected file",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.github/workflows/ci.yml",
+   "{root}/src/ci.yml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/ci.yml",
+    "from": "{root}/.github/workflows/ci.yml",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "move into a protected path",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.github/workflows/ci.yml",
+   "{root}/src/ci.yml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/.github/workflows/ci.yml",
+    "from": "{root}/src/ci.yml",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "delete workflow",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/.github/workflows/ci.yml"
+  ],
+  "edits": [
+   {
+    "path": "{root}/.github/workflows/ci.yml",
+    "delete": true
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "delete a safe file",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/old.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/old.php",
+    "delete": true
+   }
+  ],
+  "fixture": "allow",
+  "strict": "allow"
+ },
+ {
+  "name": "move a safe file",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/a.php",
+   "{root}/src/b.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/b.php",
+    "from": "{root}/src/a.php",
+    "content": "x"
+   }
+  ],
+  "fixture": "allow",
+  "strict": "allow"
+ },
+ {
+  "name": "write outside root asks",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "/etc/rr-x"
+  ],
+  "edits": [
+   {
+    "path": "/etc/rr-x",
+    "content": "x"
+   }
+  ],
+  "fixture": "ask",
+  "strict": "ask"
+ },
+ {
+  "name": "write outside root denies at L2",
+  "level": "L2",
+  "tool": "Edit",
+  "paths": [
+   "/etc/rr-x"
+  ],
+  "edits": [
+   {
+    "path": "/etc/rr-x",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "Paths missing an edit path",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/a.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "Paths with an extra path",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/a.php",
+   "{root}/tests/ATest.php",
+   "{root}/other.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "Paths empty",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [],
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/tests/ATest.php",
+    "content": "y"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "Paths lack the move source",
+  "level": "L1",
+  "tool": "Edit",
+  "paths": [
+   "{root}/src/b.php"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/b.php",
+    "from": "{root}/src/a.php",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "first denied path is named",
+  "level": "L1",
+  "tool": "Edit",
+  "edits": [
+   {
+    "path": "{root}/src/a.php",
+    "content": "x"
+   },
+   {
+    "path": "{root}/.env",
+    "content": "x"
+   }
+  ],
+  "paths": [
+   "{root}/src/a.php",
+   "{root}/.env"
+  ],
+  "fixture": "deny",
+  "strict": "deny",
+  "rule": "protected_paths"
+ }
+]
