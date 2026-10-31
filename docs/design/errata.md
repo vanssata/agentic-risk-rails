@@ -8,3 +8,7 @@
 | 2 | §3.2 `research.tech_docs` | няма поле за решението по §14.4 (Context7 зад флаг) | добавено `context7: false` (default off) в `core.TechDocsSpec` | вълна 0 |
 | 3 | §3.3 | „празен файл = най-строго“ и „ceiling затяга“ не казват какво значи липсващо поле в ceiling | ceiling: липса = без ограничение; project: липса = `core.StrictDefaults()` | ревю на вълна 0 |
 | 4 | §3.2 | няма поле за remote, „закован в ceiling.yaml“ (§3.4.3) | `remote: owner/repo`, само в ceiling | ревю на вълна 0 |
+| 5 | §10 Claude, ADR-9 | hook `onFailure` по подразбиране е `continue`, не `block` | генераторът задава изрично `onFailure: "block"` (Claude Code ≥ 2.1.295) | W1-D, [V] |
+| 6 | §3.4 стъпка 0 | sandbox-ът на Claude Code покрива само Bash; Edit/Write/Read, hooks и MCP са извън него | за Claude „границата“ е sandbox (Bash) + permission deny правила `Edit(...)`/`Read(...)` + hook; DES надценява стъпка 0 | W1-D, [V] |
+| 7 | §3.2 → Claude rules | `Write(path)`, `NotebookEdit(path)`, `MultiEdit(path)` правила не съвпадат никога | генерира се `Edit(path)` | W1-D, [V] |
+| 8 | §4.5(c) | PreToolUse за Agent носи `model` — потвърдено [V], но като alias (`sonnet`) | guard сравнява alias ↔ ID | W1-D contract тест |

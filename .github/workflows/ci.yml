@@ -16,4 +16,4 @@ jobs:
       - run: make fmt
       - run: go vet ./...
       - run: go test ./... -race
-      - run: go run ./cmd/rr sync --check
+      # rr sync --check on this repo is enabled in wave 4, when the repo has its own riskrails.yaml (dogfooding).
