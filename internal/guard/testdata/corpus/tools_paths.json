@@ -1,0 +1,446 @@
+[
+ {
+  "name": "Write {root}/src/a.php",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Edit {root}/src/a.php",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "MultiEdit {root}/src/a.php",
+  "level": "L1",
+  "tool": "MultiEdit",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "NotebookEdit {root}/src/n.ipynb",
+  "level": "L1",
+  "tool": "NotebookEdit",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/n.ipynb"
+  ]
+ },
+ {
+  "name": "Write {root}/.env",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env"
+  ]
+ },
+ {
+  "name": "Write {root}/.github/workflows/ci.yml",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.github/workflows/ci.yml"
+  ]
+ },
+ {
+  "name": "Write {root}/config/secrets/a.yaml",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "allow",
+  "paths": [
+   "{root}/config/secrets/a.yaml"
+  ]
+ },
+ {
+  "name": "Write {root}/.github/x.md",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.github/x.md"
+  ]
+ },
+ {
+  "name": "Write /etc/passwd",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "ask",
+  "strict": "ask",
+  "paths": [
+   "/etc/passwd"
+  ]
+ },
+ {
+  "name": "Write {home}/x",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "ask",
+  "strict": "ask",
+  "paths": [
+   "{home}/x"
+  ]
+ },
+ {
+  "name": "Edit {root}/src/../../etc/x",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "ask",
+  "strict": "ask",
+  "paths": [
+   "{root}/src/../../etc/x"
+  ]
+ },
+ {
+  "name": "Read {root}/.env.local",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env.local"
+  ]
+ },
+ {
+  "name": "Read {root}/.env.prod",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env.prod"
+  ]
+ },
+ {
+  "name": "Read {root}/README.md",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/README.md"
+  ]
+ },
+ {
+  "name": "Read {home}/.ssh/id_rsa",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{home}/.ssh/id_rsa"
+  ]
+ },
+ {
+  "name": "Read {home}/.aws/credentials",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{home}/.aws/credentials"
+  ]
+ },
+ {
+  "name": "Grep {root}/.env.local",
+  "level": "L1",
+  "tool": "Grep",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env.local"
+  ]
+ },
+ {
+  "name": "Glob {root}/config/secrets/db.yaml",
+  "level": "L1",
+  "tool": "Glob",
+  "fixture": "deny",
+  "strict": "allow",
+  "paths": [
+   "{root}/config/secrets/db.yaml"
+  ]
+ },
+ {
+  "name": "Read {root}/.env.example",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "allow",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env.example"
+  ]
+ },
+ {
+  "name": "Read {root}/app/.env.local",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/app/.env.local"
+  ]
+ },
+ {
+  "name": "Read {home}/.config/riskrails/x",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{home}/.config/riskrails/x"
+  ]
+ },
+ {
+  "name": "Write {home}/.cache/riskrails/x",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{home}/.cache/riskrails/x"
+  ]
+ },
+ {
+  "name": "Read /etc/hostname",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "/etc/hostname"
+  ]
+ },
+ {
+  "name": "Write {root}/sub/riskrails.yaml",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/sub/riskrails.yaml"
+  ]
+ },
+ {
+  "name": "Write {root}/.git/config",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.git/config"
+  ]
+ },
+ {
+  "name": "Edit {root}/.git/refs/remotes/origin/main",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.git/refs/remotes/origin/main"
+  ]
+ },
+ {
+  "name": "Write /etc/passwd @L2",
+  "level": "L2",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "/etc/passwd"
+  ]
+ },
+ {
+  "name": "Write {home}/x @L4",
+  "level": "L4",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{home}/x"
+  ]
+ },
+ {
+  "name": "Write {root}/src/a.php @L2",
+  "level": "L2",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/a.php"
+  ],
+  "step_files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Write {root}/src/b.php",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/src/b.php"
+  ],
+  "step_files": [
+   "{root}/src/a.php"
+  ],
+  "rule": "scope_guard"
+ },
+ {
+  "name": "Edit {root}/src/b.php",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/src/b.php"
+  ],
+  "step_files": []
+ },
+ {
+  "name": "Read {root}/src/b.php",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/src/b.php"
+  ],
+  "step_files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Write /tmp/y",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "ask",
+  "strict": "ask",
+  "paths": [
+   "/tmp/y"
+  ],
+  "step_files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Read innocent.txt",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "innocent.txt"
+  ],
+  "symlinks": {
+   "innocent.txt": "{root}/.env.local"
+  }
+ },
+ {
+  "name": "Write {root}/docs/x",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "ask",
+  "strict": "ask",
+  "paths": [
+   "{root}/docs/x"
+  ],
+  "symlinks": {
+   "docs": "{home}"
+  }
+ },
+ {
+  "name": "Write {root}/ln/ci.yml",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/ln/ci.yml"
+  ],
+  "symlinks": {
+   "ln": "{root}/.github/workflows"
+  }
+ },
+ {
+  "name": "Write {root}/link.yaml",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/link.yaml"
+  ],
+  "symlinks": {
+   "link.yaml": "{root}/riskrails.yaml"
+  }
+ },
+ {
+  "name": "unknown tool",
+  "level": "L1",
+  "tool": "mcp__x__y",
+  "fixture": "allow",
+  "strict": "allow"
+ },
+ {
+  "name": "empty tool and command",
+  "level": "L1",
+  "tool": "",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "tool-less command",
+  "level": "L1",
+  "tool": "",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status"
+ },
+ {
+  "name": "empty bash command",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": ""
+ },
+ {
+  "name": "whitespace bash command",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "   "
+ },
+ {
+  "name": "unknown tool with secret path",
+  "level": "L1",
+  "tool": "mcp__fs__read",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/.env.local"
+  ]
+ }
+]

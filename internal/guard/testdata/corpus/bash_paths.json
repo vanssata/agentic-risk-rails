@@ -1,0 +1,378 @@
+[
+ {
+  "name": "cat .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat .env.local"
+ },
+ {
+  "name": "cat .env.example",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "deny",
+  "command": "cat .env.example"
+ },
+ {
+  "name": "cat ~/.ssh/id_rsa",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat ~/.ssh/id_rsa"
+ },
+ {
+  "name": "head -n1 ~/.aws/credentials",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "head -n1 ~/.aws/credentials"
+ },
+ {
+  "name": "cat .env*",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat .env*",
+  "files": [
+   "{root}/.env.local"
+  ]
+ },
+ {
+  "name": "cat {home}/.ssh/id_rsa",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat {home}/.ssh/id_rsa"
+ },
+ {
+  "name": "cat < .env.prod",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat < .env.prod"
+ },
+ {
+  "name": "cat $F",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "cat $F"
+ },
+ {
+  "name": "echo x > riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > riskrails.yaml"
+ },
+ {
+  "name": "echo x >> .env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x >> .env"
+ },
+ {
+  "name": "tee riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "tee riskrails.yaml"
+ },
+ {
+  "name": "sed -i s/a/b/ riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "sed -i s/a/b/ riskrails.yaml"
+ },
+ {
+  "name": "cp x riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cp x riskrails.yaml"
+ },
+ {
+  "name": "mv a .github/workflows/ci.yml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "mv a .github/workflows/ci.yml"
+ },
+ {
+  "name": "echo x > src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo x > src/a.php"
+ },
+ {
+  "name": "echo x > /tmp/out",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "echo x > /tmp/out"
+ },
+ {
+  "name": "echo x > /dev/null",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo x > /dev/null"
+ },
+ {
+  "name": "ls 2>&1",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "ls 2>&1"
+ },
+ {
+  "name": "git status > out.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status > out.txt"
+ },
+ {
+  "name": "echo x > $F",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "echo x > $F"
+ },
+ {
+  "name": "touch ../outside",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "touch ../outside"
+ },
+ {
+  "name": "echo > ~/.config/riskrails/x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo > ~/.config/riskrails/x"
+ },
+ {
+  "name": "cat ~/.config/riskrails/policy",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat ~/.config/riskrails/policy"
+ },
+ {
+  "name": "sed -i s/a/b/ src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "sed -i s/a/b/ src/a.php"
+ },
+ {
+  "name": "sed -n 1p .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "sed -n 1p .env.local"
+ },
+ {
+  "name": "cp .env.local /tmp/x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cp .env.local /tmp/x"
+ },
+ {
+  "name": "cp a.txt .env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cp a.txt .env"
+ },
+ {
+  "name": "git add .env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "deny",
+  "command": "git add .env"
+ },
+ {
+  "name": "cat > riskrails.yaml <<EOF\\nx\\nEOF",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat > riskrails.yaml <<EOF\nx\nEOF"
+ },
+ {
+  "name": "tee >(cat > riskrails.yaml)",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "tee >(cat > riskrails.yaml)"
+ },
+ {
+  "name": "echo x > config/secrets/a",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "allow",
+  "command": "echo x > config/secrets/a"
+ },
+ {
+  "name": "rm -rf /*",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "rm -rf /*"
+ },
+ {
+  "name": "dd if=/dev/zero of=riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "dd if=/dev/zero of=riskrails.yaml"
+ },
+ {
+  "name": "echo x > ./src/../riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > ./src/../riskrails.yaml"
+ },
+ {
+  "name": "echo x > RiskRails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > RiskRails.yaml"
+ },
+ {
+  "name": "ln -s a riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ln -s a riskrails.yaml"
+ },
+ {
+  "name": "truncate -s0 .env",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "truncate -s0 .env"
+ },
+ {
+  "name": "php bin/phpunit tests/FooTest.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit tests/FooTest.php"
+ },
+ {
+  "name": "echo hi > src/x.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo hi > src/x.php",
+  "step_files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "echo hi > src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo hi > src/a.php",
+  "step_files": [
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "cat src/b.php",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "cat src/b.php",
+  "step_files": []
+ },
+ {
+  "name": "echo x > docs/x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "echo x > docs/x",
+  "symlinks": {
+   "docs": "{home}"
+  }
+ },
+ {
+  "name": "cat innocent.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "cat innocent.txt",
+  "symlinks": {
+   "innocent.txt": "{root}/.env.local"
+  }
+ },
+ {
+  "name": "echo x > /tmp/out @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > /tmp/out"
+ },
+ {
+  "name": "echo x > ../o @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > ../o"
+ }
+]
