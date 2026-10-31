@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/riskrails.yaml)",
+      "Edit(/.env*)",
+      "Edit(/.github/workflows/**)",
+      "Read(/.env*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/riskrails/**)",
+      "Read(~/.cache/riskrails/**)",
+      "Bash(git push --force*)",
+      "Bash(rm -rf /)"
+    ],
+    "ask": [],
+    "allow": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rr guard --runtime claude --event PreToolUse",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        ".env*",
+        "/home/test/.ssh/**",
+        "/home/test/.aws/**",
+        "/home/test/.config/riskrails/**",
+        "/home/test/.cache/riskrails/**"
+      ],
+      "denyWrite": [
+        "riskrails.yaml",
+        ".git/config",
+        ".git/refs/remotes/**",
+        ".github/**",
+        "/home/test/.config/riskrails/**",
+        "/home/test/.cache/riskrails/**"
+      ]
+    }
+  }
+}
