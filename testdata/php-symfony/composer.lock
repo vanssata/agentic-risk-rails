@@ -1,0 +1,1 @@
+{ "content-hash": "fixture", "packages": [ { "name": "symfony/framework-bundle", "version": "v7.3.4" }, { "name": "doctrine/orm", "version": "3.3.2" } ], "packages-dev": [ { "name": "phpunit/phpunit", "version": "11.5.20" } ] }

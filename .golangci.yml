@@ -1,0 +1,40 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard            # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nakedret
+    - nilerr
+    - revive
+    - unconvert
+    - unparam
+    - gocyclo
+  settings:
+    gocyclo:
+      min-complexity: 20
+    revive:
+      rules:
+        - name: exported
+          disabled: true       # core types document themselves by package doc; keep noise low
+    gosec:
+      excludes:
+        - G204                 # rr runs configured subprocesses by design (verify, probe)
+        - G301
+        - G304                 # rr reads repo files by path by design; path escapes are tested explicitly
+        - G306
+  exclusions:
+    presets: [comments, std-error-handling]
+    rules:
+      - path: (_test\.go|internal/testutil/)
+        linters: [gosec, unparam, gocyclo]
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/vanssata/agentic-risk-rails]

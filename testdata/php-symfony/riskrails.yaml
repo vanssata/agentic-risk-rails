@@ -1,0 +1,119 @@
+# riskrails.yaml — RiskRails v4, schema 1
+schema: 1
+project:
+  name: shop-backend
+  stack: [php, symfony, doctrine, phpunit]
+  default_branch: main             # политиката „в сила“ се чете оттук (§3.4)
+
+risk:
+  axes:                            # 0..2 всяка; измерените са под, декларацията само вдига
+    scope:        { measured: refs, bands: [0, 5] }          # 0 refs→0, 1–5→1, >5 или hot_path→2
+    behaviour:    { declared: true, keywords: [transaction, lock, queue, async, cron, state, flush] }
+    reversibility: { measured: paths }
+    domain:       { measured: paths, declared: true }
+    novelty:      { declared: true, manifest_floor: 1 }      # composer.json в diff → ≥1
+    coverage:     { measured: tests, test_globs: ["tests/**/*Test.php"] }
+  modes:                           # сумата W избира режима
+    light:     { max: 2 }
+    guarded:   { min: 3, max: 7 }
+    full:      { min: 8 }
+    programme: { trigger: [spec, ">1 session", "files > 25"] }
+  hard_floors:                     # независимо от W
+    - { axis: reversibility, value: 2, mode: full }
+    - { axis: domain,        value: 2, mode: full, review: security }
+    - { both: [reversibility, domain], value: 2, mode: full_irreversible }
+  hot_paths: ["src/Payment/**", "src/Security/**", "config/packages/security.yaml", "migrations/**"]
+  domain:
+    money:    ["src/Payment/**", "src/Invoice/**", "src/Tax/**"]
+    identity: ["src/Security/**", "src/User/**", "templates/security/**"]
+    personal: ["src/Customer/**", "src/Gdpr/**"]
+    customer_visible: ["templates/**", "assets/**", "translations/**"]
+  reversibility:
+    needs_step:   ["config/**", "assets/**", ".env*"]                     # cache clear, deploy
+    irreversible: ["migrations/**", "src/Command/*Migrate*", "infra/**"]  # данни, схема, infra
+    irreversible_content: ["DROP ", "TRUNCATE", "DELETE FROM", "ALTER TABLE .* DROP"]
+  rescore: { axes: [reversibility, domain], when: [verify, close], direction: up_only }
+  policy_file_weight: { behaviour: 2, domain: 2 }   # промяна на този файл е винаги full (§3.4)
+
+models:
+  tiers_allowed: [FAST, BALANCED, STRONG]          # EXPERT липсва → никога не се иска
+  by_runtime:                                      # tier → кандидати по предпочитание
+    claude:  { FAST: [haiku], BALANCED: [sonnet], STRONG: [opus], EXPERT: [fable] }
+    codex:   { FAST: [gpt-5-nano, gpt-5-mini], BALANCED: [gpt-5-mini], STRONG: [gpt-5.3-codex, gpt-5] }
+    gemini:  { FAST: [gemini-2.5-flash], BALANCED: [gemini-2.5-flash], STRONG: [gemini-2.5-pro] }
+    openrouter: { FAST: [meta-llama/llama-3.3-70b-instruct], BALANCED: [anthropic/claude-sonnet-4.5] }
+  ladder:
+    missing: { EXPERT: STRONG, STRONG: BALANCED, FAST: BALANCED }   # липсващ tier → съсед
+    on_error: { rate_limit: wait_then_same, permission: mark_unavailable, not_found: mark_unavailable }
+    never_downgrade_thinking: true                 # провалена мисловна задача не се повтаря на по-евтин tier
+  effort: { FAST: low, BALANCED: medium, STRONG: high }
+  budgets:                                         # токени на задача по режим ≈ 1.5× worst case от §7.1; превишение = REFUSE + въпрос
+    light: 150k
+    guarded: 900k
+    full: 3M
+    programme: 10M
+  probe: { ttl_hours: 24, on_4xx: refresh, cache: "~/.cache/riskrails/models.json" }
+
+autonomy:
+  ceiling: L2                      # най-високото ниво, което repo-то допуска; effective = min(тук, ceiling.yaml)
+  by_mode: { light: L2, guarded: L3, full: L4, full_irreversible: L0 }   # таван по режим; задача = min(ceiling, by_mode[mode])
+                                   # Ln покрива unattended за режими до: L2 light, L3 guarded, L4 full (§8.1);
+                                   # ако нивото на задачата не покрива режима ѝ, тя върви интерактивно (L1)
+  output: pr_only                  # L≥2 завършва само с PR (draft), никога merge/push към default
+  kill_switch:
+    remote_file: ".rr/HALT"        # на default branch, четен през hosting API от runner-а (агентът не може да го push-не)
+    poll_seconds: 60               # runner-ът (извън sandbox-а) проверява на 60 s и преди всеки tool call през hook-а
+    on_read_error: halt            # грешка при четене = стоп
+  unattended:
+    container: required            # L≥2 работи само в контейнер/sandbox
+    max_wall_minutes: 90
+    max_tasks_per_day: 10
+
+enforcement:
+  protected_paths:                 # deny за write, независимо от стъпката
+    - ".env*"
+    - "config/secrets/**"
+    - ".github/workflows/**"       # workflow е release/verify повърхност; промяна = full
+    - "riskrails.yaml"             # едит само от човек или с full mode (§3.4)
+  secret_reads: [".env.local", ".env.prod", "config/secrets/**", "~/.ssh/**", "~/.aws/**"]
+  commands:
+    deny:  ["git push --force*", "git push * main", "rm -rf /", "composer global *", "php bin/console doctrine:schema:drop*"]
+    ask:   ["git push*", "git commit*", "php bin/console doctrine:migrations:migrate*", "composer require*"]
+    allow: ["composer install", "php bin/phpunit*", "php bin/console cache:clear", "git status", "git diff*"]
+    parser: ast                    # mvdan/sh; неразпознат възел → ask при L0/L1, deny при L≥2
+    unlisted: ask                  # команда извън трите списъка; при L≥2 и в auto mode е deny
+  egress:
+    allow: ["packagist.org", "repo.packagist.org", "api.github.com", "symfony.com", "context7.com"]
+    deny_default: true
+  fail_closed: true                # hook crash/timeout = deny
+  sandbox:                         # ОС-ниво; границата е тук, hook-ът е tripwire (§3.4 стъпка 0)
+    required_from: L2              # без ОС sandbox autonomy се капва на L1
+    readonly: ["riskrails.yaml", ".git/config", ".git/refs/remotes/**", ".github/**"]
+    no_read:  ["$secret_reads", "~/.config/riskrails/**", "~/.cache/riskrails/**"]
+    no_write: ["~/.config/riskrails/**", "~/.cache/riskrails/**"]
+
+verify:
+  adapters:
+    - { name: phpunit, cmd: "php bin/phpunit", affected: "rr affected --phpunit" }
+    - { name: lint,    cmd: "vendor/bin/php-cs-fixer fix --dry-run" }
+  full_run_when: [lockfile, "config/**", ".github/**", "migrations/**", "uncovered_file", "mode>=full", close]
+  suite_budget: 2                  # пълни run-а на задача; третият е на човека
+  nightly_full: true
+  selection_misses_metric: true    # journal: affected_run → full_run показа червено
+
+release:
+  ecosystem: composer              # composer | npm | pypi | cargo | go | docker | helm
+  channel: tag                     # tag → CI публикува; агентът не държи credentials
+  preflight: ["composer validate --strict", "composer audit", "rr changelog --check"]
+  publish_via: ci_oidc             # Packagist: webhook on tag; Docker: GHCR през GITHUB_TOKEN
+
+research:
+  by_mode:
+    light:     []
+    guarded:   [code, test]
+    full:      [code, project-docs, tech-docs, prior-art, history]
+    programme: [code, project-docs, tech-docs, prior-art, history, test]
+  tier: FAST
+  budget_per_scout: 80k
+  cache: { key: [commit_sha, role, question_hash], dir: "~/.cache/riskrails/research/<repo-hash>" }  # извън write-set-а на агента
+  tech_docs: { sources: [vendor, llms_txt, context7], pin_from: composer.lock, context7: false }

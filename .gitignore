@@ -1,0 +1,6 @@
+/dist/
+/rr
+.rr/run/
+.rr/index.json
+*.test
+*.out
