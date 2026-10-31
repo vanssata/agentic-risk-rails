@@ -132,13 +132,13 @@ wave-0 ───┼── W1-B journal ─┤
 ### W1-D — адаптер **Claude Code** (hooks + генератори + sandbox)
 - **OWNS:** `internal/adapters/claude/**`, `cmd/rr/link_claude.go` (`import _`), `docs/research/verified/claude-code.md`; регистрира се с `runtimes.Register`
 - **Research (живи docs + `claude --version`):** точен формат на PreToolUse stdin/stdout JSON и exit 2; `onFailure: block` и timeout; `permissions` allow/ask/deny синтаксис; sandbox секцията в settings (`failIfUnavailable`, filesystem read/write deny); дали PreToolUse input за `Agent`/`Task` носи `model` (DES §4.5 [U]); subagent `model:` поведение при блокиран alias.
-- **Код:** `ParseHookInput` / `RenderHookOutput` → `core.ToolCall`/`core.Verdict`; генератори: `.claude/settings.json` (permissions, hooks към `rr guard`, sandbox от `enforcement.sandbox`), `.claude/agents/*.md` с `model:` само от effective tiers (вход от fake resolver), `AGENTS.md` секция.
+- **Код:** `ParseHookInput` / `RenderHookOutput` → `core.ToolCall`/`core.Verdict`; генератори: `.claude/settings.json` (permissions, hooks към `rr guard`, sandbox от `enforcement.sandbox`), `.claude/agents/*.md` с `model:` само от effective tiers (вход от fake resolver). `AGENTS.md` и `.agents/skills` не се генерират във вълна 1 (→ W3-D).
 - **Acceptance:** golden за fixture-а (с `fakes.StrictPolicy()`); contract тест за формата на hook I/O срещу `claude` 2.1.316 (`RR_CONTRACT=1`); тест под `bwrap`: процес, който пише `riskrails.yaml`, получава EACCES. E2E „реален `claude -p` е отказан“ изисква W1-A+C+D → пуска го оркестраторът след merge (Gate 1).
 
 ### W1-E — адаптер **Codex** (hooks + config.toml + sandbox)
 - **OWNS:** `internal/adapters/codex/**`, `cmd/rr/link_codex.go` (`import _`), `docs/research/verified/codex.md`; регистрира се с `runtimes.Register`
 - **Research:** `codex --version`; формат на hooks (`permissionDecision: deny`, exit 2), покриване на MCP tools; `config.toml`: `sandbox_mode`, `[sandbox_workspace_write]`, `approval_policy`, `[agents]` (`default_subagent_model`, `max_concurrent_threads_per_session`); trusted project изискване; `--full-auto` статус; MCP в sandbox ([U] DES §14.7).
-- **Код:** същият интерфейс като W1-D; генератори `.codex/config.toml`, `.codex/hooks.json`, `.agents/skills/` разположение.
+- **Код:** същият интерфейс като W1-D; генератори `.codex/config.toml`, `.codex/hooks.json` (`.agents/skills/` → W3-D).
 - **Acceptance:** golden; contract тест с `codex exec --sandbox workspace-write` в temp repo (opt-in); `sync --check` зелен.
 
 **Wiring след merge (оркестратор):** `wiring.GuardContext` ← реален policy resolver/loader/differ; `sync.InputProvider` ← реален resolver.

@@ -1,5 +1,26 @@
 package core
 
+// AlwaysProtected are paths no policy can unprotect: rr's own control files,
+// runtime hook configs and git internals an agent could use to disable or
+// re-point enforcement. Guard denies agent writes to them and generators add
+// them to every runtime's sandbox write-deny list, whatever the policy says.
+var AlwaysProtected = []string{
+	"riskrails.yaml",
+	".rr/**",
+	".claude/**",
+	".codex/**",
+	".gemini/**",
+	".cursor/**",
+	".kiro/**",
+	".mcp.json",
+	".git/config",
+	".git/HEAD",
+	".git/packed-refs",
+	".git/refs/**",
+	".git/hooks/**",
+	".github/workflows/**",
+}
+
 // StrictDefaults is the single source of default values: an empty
 // riskrails.yaml resolves to exactly this (DES §3.1 "empty file = strictest").
 // internal/policy fills every absent project field from here; its tests assert
