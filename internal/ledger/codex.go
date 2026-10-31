@@ -1,9 +1,6 @@
 package ledger
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
 	"io"
 	"time"
 
@@ -39,13 +36,7 @@ func (codexParser) Parse(r io.Reader) ([]core.Usage, error) {
 	var out []core.Usage
 	var session, model string
 	seen := map[string]bool{}
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1<<20), 64<<20)
-	for n := 1; sc.Scan(); n++ {
-		var l codexLine
-		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
-			return nil, fmt.Errorf("codex transcript line %d: %w", n, err)
-		}
+	err := eachLine(r, func(l *codexLine) {
 		switch l.Type {
 		case "session_meta":
 			session = l.Payload.ID
@@ -54,19 +45,19 @@ func (codexParser) Parse(r io.Reader) ([]core.Usage, error) {
 		case "token_usage_record":
 			if id := l.Payload.ResponseID; id != "" {
 				if seen[id] {
-					continue
+					return
 				}
 				seen[id] = true
 			}
 			u := l.Payload.Usage
 			out = append(out, core.Usage{
 				Runtime: "codex", Session: session, Model: model,
-				Input: u.Input - u.Cached - u.CacheWrite, Output: u.Output,
+				Input: max(0, u.Input-u.Cached-u.CacheWrite), Output: u.Output,
 				CacheRead: u.Cached, CacheWrite: u.CacheWrite, Time: l.Timestamp,
 			})
 		}
-	}
-	return out, sc.Err()
+	})
+	return out, err
 }
 
 // Parsers returns the parser for each supported runtime.

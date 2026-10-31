@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,8 +19,15 @@ func TestCostCommand(t *testing.T) {
 	root := t.TempDir()
 	j := journal.New(root)
 	ctx := context.Background()
-	tr, err := filepath.Abs("../../internal/ledger/testdata/claude/s1.jsonl")
-	require.NoError(t, err)
+	// transcripts must live under <root>/.rr (or the home transcript dirs)
+	tdir := filepath.Join(root, ".rr", "transcripts")
+	require.NoError(t, os.MkdirAll(filepath.Join(tdir, "s1", "subagents"), 0o755))
+	for _, f := range []string{"s1.jsonl", "s1/subagents/agent-a.jsonl"} {
+		b, err := os.ReadFile(filepath.Join("../../internal/ledger/testdata/claude", f))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(tdir, f), b, 0o644))
+	}
+	tr := filepath.Join(tdir, "s1.jsonl")
 	d, _ := json.Marshal(ledger.SessionData{Runtime: "claude", Session: "s1", Phase: "implement", Path: tr})
 	for _, e := range []core.Event{
 		{Type: "task_started", Task: "t1", Actor: core.ActorAgent, TiersEffective: map[core.Tier]string{core.TierStrong: "claude-opus-5-5", core.TierBalanced: "claude-sonnet-5-5"}},
@@ -38,4 +46,8 @@ func TestCostCommand(t *testing.T) {
 
 	_, err = runRR("cost", "--task", "nope", "--root", root)
 	assert.Error(t, err)
+	for _, bad := range []string{"../x", "a..b", "a/b", " "} {
+		_, err = runRR("cost", "--task", bad, "--root", root)
+		assert.ErrorContains(t, err, "invalid --task", bad)
+	}
 }

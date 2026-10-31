@@ -5,7 +5,7 @@ Structure only was read from local transcripts (keys and types via jq); no conte
 ## FACTS
 claim | source | [V]/[U]
 --- | --- | ---
-Claude session file is JSONL, one record per line; `type` values include assistant, user, system, attachment, api-request, ai-title, ... Only `type=="assistant"` carries usage | local ~/.claude-clean/projects/<proj>/<session>.jsonl | [V]
+Claude session file is JSONL, one record per line; `type` values include assistant, user, system, attachment, api-request, ai-title, ... Only `type=="assistant"` carries usage | local ~/.claude*/projects/<proj>/<session>.jsonl | [V]
 Assistant usage path: `.message.usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}` (numbers); also `cache_creation.{ephemeral_1h_input_tokens, ephemeral_5m_input_tokens}`, `iterations[]`, `service_tier`, `speed` | local transcripts | [V]
 `input_tokens` excludes cache tokens (cache read/write are separate fields) | local: input_tokens=2 beside cache_read=28889 | [V]
 One API message is written several times while streaming (same `message.id`, same `requestId`; 1-8 records per id). In the sample all duplicates carried identical usage; dedupe by `message.id`, last wins | local transcripts | [V]
@@ -23,14 +23,14 @@ Cache hit = 0.025x base for Fable 5.1, 0.05x for Opus 5.5 and Sonnet 5.5; 5m wri
 gpt-6.1-sol: $2.00 input, $0.10 cached input, $10.00 output per MTok (<=272K input); long-context higher | https://developers.openai.com/api/docs/pricing (platform.openai.com/docs/pricing 301s here) | [V]
 
 ## READ
-~/.claude-clean/projects/-Store-ProjectToBuild-agentic-risk-rails (one session + its subagents dir, keys only); ~/.codex/sessions/2026/10/* (keys only); the two pricing pages above.
+~/.claude*/projects/<proj> (one session + its subagents dir, keys only); ~/.codex/sessions/<yyyy>/<mm>/* (keys only); the two pricing pages above.
 
 ## GAPS
 - `cache_write_input_tokens` in Codex was 0 in every sampled record: whether it is a subset of `input_tokens` is unproven. The parser assumes subset (same as cached); OpenAI publishes no write price, so it is priced at the input rate. [U]
 - Claude `core.Usage` has one CacheWrite field; the table prices it at the 1h rate (all samples were 1h). 5m writes would be overpriced by 60%. Needs a core change to split (see report).
 - Haiku 5.5 doubles all prices for prompts over 100K tokens; gpt-* are higher over 272K. Not modelled (needs per-request prompt size; Usage has it as input+cache sum).
 - Fast mode / batch / priority multipliers not modelled (transcripts have `speed`, `service_tier` but Usage drops them).
-- ~/.claude/projects was not present; layout assumed identical to ~/.claude-clean.
+- One of the .claude*/projects dirs was not present; layout assumed identical to the other .claude* dir.
 - Task-to-session link: no existing event carries it; ledger registers `ledger_session` (runtime, session, phase, path). Nothing writes it yet (hook/runner owner must).
 
 ## COST

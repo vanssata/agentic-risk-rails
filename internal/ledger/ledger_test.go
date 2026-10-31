@@ -2,8 +2,10 @@ package ledger
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,17 +50,16 @@ func TestParsers(t *testing.T) {
 }
 
 func TestCollectAndCost(t *testing.T) {
-	sess := func(rt, phase, path string) core.Event {
-		d, _ := json.Marshal(SessionData{Runtime: rt, Session: "x", Phase: phase, Path: path})
-		return core.Event{Type: EventSession, Data: d}
-	}
+	td, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	sess := sessEvent
 	events := []core.Event{
 		{Type: "task_started", TiersEffective: map[core.Tier]string{
 			core.TierStrong: "claude-opus-5-5", core.TierBalanced: "claude-sonnet-5-5"}},
-		sess("claude", "implement", filepath.Join("testdata", "claude", "s1.jsonl")), // + subagents/agent-a
-		sess("codex", "review", filepath.Join("testdata", "codex.jsonl")),
+		sess("claude", "implement", filepath.Join(td, "claude", "s1.jsonl")), // + subagents/agent-a
+		sess("codex", "review", filepath.Join(td, "codex.jsonl")),
 	}
-	items, err := Collect(events)
+	items, err := Collect(events, []string{td})
 	require.NoError(t, err)
 	p, err := DefaultPrices()
 	require.NoError(t, err)
@@ -99,4 +100,85 @@ func TestUnpricedModel(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].Unpriced)
 	assert.Zero(t, rows[0].USD)
+}
+
+func sessEvent(rt, phase, path string) core.Event {
+	d, _ := json.Marshal(SessionData{Runtime: rt, Session: "x", Phase: phase, Path: path})
+	return core.Event{Type: EventSession, Data: d}
+}
+
+func TestCollectRefusesPaths(t *testing.T) {
+	td, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	for _, p := range []string{
+		"", "testdata/codex.jsonl", // not absolute
+		td + "/../testdata/codex.jsonl",             // not clean
+		"/etc/passwd",                               // outside roots, not jsonl
+		"/etc/hosts.jsonl",                          // outside roots
+		td + "/codex.json",                          // wrong suffix
+		filepath.Dir(td) + "/testdata-evil/x.jsonl", // sibling sharing a prefix
+	} {
+		_, err := Collect([]core.Event{sessEvent("codex", "x", p)}, []string{td})
+		require.Error(t, err, p)
+	}
+}
+
+func write(t *testing.T, dir, name, body string) string {
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	return p
+}
+
+func TestParseLines(t *testing.T) {
+	good := `{"type":"assistant","message":{"id":"a","model":"m","usage":{"input_tokens":1}}}` + "\n"
+	cx := func(in, cached int) string {
+		return fmt.Sprintf(`{"type":"token_usage_record","payload":{"usage":{"input_tokens":%d,"cached_input_tokens":%d}}}`+"\n", in, cached)
+	}
+	tests := []struct {
+		name, runtime, body string
+		wantIn              int64
+		wantN               int
+		wantErr             bool
+	}{
+		{"unterminated last line skipped", "claude", good + `{"type":"assist`, 1, 1, false},
+		{"corrupt middle line errors", "claude", good + "SECRET-CONTENT\n" + good, 0, 0, true},
+		{"corrupt terminated last line errors", "claude", good + "SECRET-CONTENT\n", 0, 0, true},
+		{"codex input clamped at zero", "codex", cx(100, 300), 0, 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			us, err := Parsers()[tt.runtime].Parse(strings.NewReader(tt.body))
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "SECRET")
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, us, tt.wantN)
+			assert.Equal(t, tt.wantIn, us[0].Input)
+		})
+	}
+}
+
+func TestCollectNoDoubleCount(t *testing.T) {
+	dir := t.TempDir()
+	line := func(id string, out int) string {
+		return fmt.Sprintf(`{"type":"assistant","sessionId":"s","message":{"id":"%s","model":"claude-opus-5-5","usage":{"output_tokens":%d}}}`+"\n", id, out)
+	}
+	a := write(t, dir, "a.jsonl", line("m1", 10)+line("m2", 5))
+	// second transcript repeats m1 (e.g. a resumed session replaying history)
+	b := write(t, dir, "b.jsonl", line("m1", 10))
+	events := []core.Event{
+		sessEvent("claude", "plan", a), sessEvent("claude", "plan", a), // same path twice
+		sessEvent("claude", "implement", b),
+	}
+	items, err := Collect(events, []string{dir})
+	require.NoError(t, err)
+	var out int64
+	for _, it := range items {
+		out += it.Output
+	}
+	assert.EqualValues(t, 15, out)
+	assert.Len(t, items, 2)
 }

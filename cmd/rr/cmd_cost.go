@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/ledger"
 )
+
+var validCostTask = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func init() {
 	cli.Register(func() *cobra.Command {
@@ -22,6 +26,9 @@ func init() {
 			Short: "Token usage and list-price cost of a task, from runtime transcripts",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
+				if !validCostTask.MatchString(task) || strings.Contains(task, "..") {
+					return fmt.Errorf("invalid --task %q", task)
+				}
 				path := filepath.Join(journal.RunDir(root), task+".jsonl")
 				if _, err := os.Stat(path); err != nil {
 					path = filepath.Join(journal.TasksDir(root), task+".jsonl")
@@ -30,7 +37,15 @@ func init() {
 				if err != nil {
 					return err
 				}
-				items, err := ledger.Collect(events)
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				absRoot, err := filepath.Abs(root)
+				if err != nil {
+					return err
+				}
+				items, err := ledger.Collect(events, ledger.TranscriptRoots(home, absRoot))
 				if err != nil {
 					return err
 				}
