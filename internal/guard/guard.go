@@ -134,6 +134,9 @@ func evaluate(call core.ToolCall, gc core.GuardContext) core.Verdict {
 	if call.Tool == "" && call.Command == "" {
 		return deny("malformed tool call: no tool")
 	}
+	if len(call.Edits) > 0 {
+		return checkEdits(call, gc)
+	}
 	var r result
 	tool := strings.ToLower(call.Tool)
 	enf := gc.Policy.Policy.Enforcement

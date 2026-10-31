@@ -47,6 +47,7 @@ type corpusCase struct {
 	StepFiles []string          `json:"step_files"`
 	Symlinks  map[string]string `json:"symlinks"`
 	Files     []string          `json:"files"`
+	Edits     []core.FileEdit   `json:"edits"`
 	Protected []string          `json:"protected"` // extra protected_paths for this case
 	Raw       json.RawMessage   `json:"raw"`       // raw hook payload (Grep/Glob, MCP tools)
 	NoTiers   bool              `json:"no_tiers"`  // empty Tiers.Models (tiers not wired)
@@ -85,6 +86,10 @@ func (c corpusCase) eval(t *testing.T, p core.Policy) core.Verdict {
 		Content: c.Content, URL: c.URL, Model: c.Model, Cwd: sub.Replace(c.Cwd), Raw: json.RawMessage(sub.Replace(string(c.Raw)))}
 	for _, p := range c.Paths {
 		call.Paths = append(call.Paths, sub.Replace(p))
+	}
+	for _, e := range c.Edits {
+		e.Path, e.From = sub.Replace(e.Path), sub.Replace(e.From)
+		call.Edits = append(call.Edits, e)
 	}
 	p.Enforcement.ProtectedPaths = append(append([]string{}, p.Enforcement.ProtectedPaths...), c.Protected...)
 	gc := core.GuardContext{Policy: effective(p), Level: c.Level, Root: root, Home: home,
