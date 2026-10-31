@@ -95,6 +95,26 @@ func TestParseTools(t *testing.T) {
 	}
 }
 
+func TestParseGenericTools(t *testing.T) {
+	dir := t.TempDir()
+	call, err := parse(t, sample("mcp__fs__write", dir, map[string]any{
+		"path": "a/../b.txt", "filePath": "/abs/./c.txt", "paths": []any{"d.txt", 5, "e/"},
+		"url": "https://x.example/y", "command": "ls", "offset": map[string]any{"weird": true},
+	}))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		filepath.Join(dir, "b.txt"), "/abs/c.txt", filepath.Join(dir, "d.txt"), filepath.Join(dir, "e"),
+	}, call.Paths)
+	assert.Equal(t, "https://x.example/y", call.URL)
+	assert.Equal(t, "ls", call.Command)
+	assert.Contains(t, string(call.Raw), `"filePath"`)
+
+	// An unknown tool whose input does not match any built-in schema still parses.
+	call, err = parse(t, sample("FutureTool", dir, map[string]any{"file": "f", "edits": "not-a-list", "model": 3}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join(dir, "f")}, call.Paths)
+}
+
 func TestParseErrors(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.txt")
@@ -133,7 +153,9 @@ func TestRenderHookOutput(t *testing.T) {
 		{"deny", "PreToolUse", core.Deny, 2, "", "because"},
 		{"unknown", "PreToolUse", core.Decision("weird"), 2, "", "because"},
 		{"zero", "PreToolUse", "", 2, "", "because"},
-		{"other event", "SessionStart", core.Deny, 0, "", ""},
+		{"other event allow", "SessionStart", core.Allow, 0, "", ""},
+		{"other event deny blocks", "SessionStart", core.Deny, 2, "", "because"},
+		{"other event unknown blocks", "Stop", core.Decision("weird"), 2, "", "because"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
