@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,12 +27,27 @@ type entry struct {
 	ProbedAt    time.Time       `json:"probed_at"`
 }
 
-// ExpandPath resolves a leading ~/ against home.
-func ExpandPath(p, home string) string {
-	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		return filepath.Join(home, rest)
+// Account keys: CLI results and install-profile results never overwrite each other.
+const (
+	LocalAccount   = "local"
+	ProfileAccount = "local-profile"
+)
+
+// CachePath expands a leading ~/ and accepts only a path under
+// <home>/.cache/riskrails/ without ".." segments: the repo policy must not
+// choose where rr writes.
+func CachePath(p, home string) (string, error) {
+	if slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "..") {
+		return "", fmt.Errorf("models.probe.cache %q: .. is not allowed", p)
 	}
-	return p
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		p = filepath.Join(home, rest)
+	}
+	p = filepath.Clean(p)
+	if !strings.HasPrefix(p, filepath.Join(home, ".cache", "riskrails")+string(filepath.Separator)) {
+		return "", fmt.Errorf("models.probe.cache %q must be under %s", p, filepath.Join(home, ".cache", "riskrails"))
+	}
+	return p, nil
 }
 
 func (c Cache) load() ([]entry, error) {

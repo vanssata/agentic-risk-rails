@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -44,7 +45,8 @@ func (p HTTPProber) Runtime() string { return p.Kind }
 func (p HTTPProber) Probe(ctx context.Context, candidates []string) ([]core.ProbeResult, error) {
 	cl := p.Client
 	if cl == nil {
-		cl = &http.Client{Timeout: 30 * time.Second}
+		// Never follow redirects: x-api-key / Authorization must not reach another host.
+		cl = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	now := time.Now
 	if p.Now != nil {
@@ -88,14 +90,27 @@ func (p HTTPProber) one(ctx context.Context, cl *http.Client, model string) (cor
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	return Classify(resp.StatusCode, raw)
+	st, typ := Classify(p.Kind, resp.StatusCode, raw)
+	if len(typ) > 128 {
+		typ = typ[:128] // the type comes from the remote body
+	}
+	return st, typ
 }
 
 // Classify maps an HTTP answer to a state by error type, falling back to the
 // status only when the type is absent or unknown (DES §4.3.2). Anything not
 // recognised as success or unavailability is UNKNOWN, never PASS.
-func Classify(status int, body []byte) (core.ModelState, string) {
+func Classify(kind string, status int, body []byte) (core.ModelState, string) {
 	if status >= 200 && status < 300 {
+		// PASS needs a real completion: valid JSON, no top-level error, and the provider's completion field.
+		var o map[string]json.RawMessage
+		field := "choices"
+		if kind == Anthropic {
+			field = "content"
+		}
+		if json.Unmarshal(body, &o) != nil || o["error"] != nil || o[field] == nil {
+			return core.ModelUnknown, "bad_success_body"
+		}
 		return core.ModelPass, ""
 	}
 	var e struct {
@@ -141,10 +156,29 @@ func (p CLIProber) Probe(ctx context.Context, candidates []string) ([]core.Probe
 	if p.Now != nil {
 		now = p.Now
 	}
+	// `-p` means "print" only for claude; for codex it selects a profile.
+	if p.Name != "claude" {
+		return nil, fmt.Errorf("cli probe supports only runtime claude, not %q", p.Name)
+	}
+	if strings.HasPrefix(p.Bin, "-") {
+		return nil, fmt.Errorf("invalid binary %q", p.Bin)
+	}
+	for _, m := range candidates {
+		if strings.HasPrefix(m, "-") {
+			return nil, fmt.Errorf("invalid model %q", m)
+		}
+	}
+	dir, err := os.MkdirTemp("", "rr-probe-") // a repo-local .claude/settings must not apply
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
 	var out []core.ProbeResult
 	for _, m := range candidates {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		o, err := exec.CommandContext(cctx, p.Bin, "-p", "ok", "--model", m, "--max-turns", "1").CombinedOutput()
+		c := exec.CommandContext(cctx, p.Bin, "-p", "ok", "--model", m, "--max-turns", "1")
+		c.Dir = dir
+		o, err := c.CombinedOutput()
 		cancel()
 		r := core.ProbeResult{Model: m, ProbedAt: now()}
 		low := strings.ToLower(string(o))

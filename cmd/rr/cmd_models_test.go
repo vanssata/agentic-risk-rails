@@ -43,3 +43,23 @@ func TestModelsProbeShow(t *testing.T) {
 		assert.Error(t, err)
 	}
 }
+
+func TestModelsProbeRejectsCachePathFromPolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	evil := filepath.Join(t.TempDir(), "evil.json")
+	repo := testutil.GitRepo(t, map[string]string{"riskrails.yaml": modelsPolicy + "  probe: { cache: \"" + evil + "\" }\n"})
+	_, err := runPolicyRR(t, "models", "probe", "--root", repo, "--via", "profile")
+	require.Error(t, err)
+	assert.NoFileExists(t, evil)
+}
+
+func TestModelsProbeWritesLock(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := testutil.GitRepo(t, map[string]string{"riskrails.yaml": modelsPolicy})
+	_, err := runPolicyRR(t, "models", "probe", "--root", repo, "--via", "profile", "--exclude", "fable")
+	require.NoError(t, err)
+	b, err := os.ReadFile(filepath.Join(repo, ".rr", "tiers.lock"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"BALANCED": "sonnet"`)
+	assert.NotContains(t, string(b), "fable")
+}

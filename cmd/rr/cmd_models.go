@@ -30,16 +30,12 @@ func init() {
 	})
 }
 
-func modelsInput(cmd *cobra.Command, dir, runtime string) (models.Input, error) {
+func modelsInput(cmd *cobra.Command, dir, runtime string) (models.Input, resolved, error) {
 	r, err := resolve(cmd.Context(), dir)
 	if err != nil {
-		return models.Input{}, err
+		return models.Input{}, r, err
 	}
-	spec := r.eff.Policy.Models
-	return models.Input{
-		Spec: spec, Runtime: runtime, Account: models.LocalAccount,
-		Cache: models.Cache{Path: models.ExpandPath(spec.Probe.Cache, r.home)}, Now: time.Now(),
-	}, nil
+	return models.Input{Spec: r.eff.Policy.Models, Runtime: runtime, Account: models.LocalAccount, Now: time.Now()}, r, nil
 }
 
 func modelsProbe() *cobra.Command {
@@ -47,20 +43,27 @@ func modelsProbe() *cobra.Command {
 	var exclude []string
 	c := &cobra.Command{
 		Use:   "probe",
-		Short: "Probe the candidates of a runtime and refresh the cache (costs tokens)",
+		Short: "Probe the candidates of a runtime and refresh the cache and .rr/tiers.lock (costs tokens)",
 		Long: "--via cli runs `<runtime> -p ok --model <m>` (~100 tokens per model); profile trusts the install " +
 			"profile (every candidate PASS except --exclude); anthropic|openai|openrouter send one max_tokens:1 " +
 			"request per candidate using ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			in, err := modelsInput(cmd, dir, runtime)
+			in, r, err := modelsInput(cmd, dir, runtime)
 			if err != nil {
 				return err
 			}
+			// The cache location comes from the repo policy: it must stay under ~/.cache/riskrails.
+			cp, err := models.CachePath(in.Spec.Probe.Cache, r.home)
+			if err != nil {
+				return err
+			}
+			in.Cache = models.Cache{Path: cp}
 			switch via {
 			case "cli":
 				in.Prober = models.CLIProber{Name: runtime, Bin: runtime}
 			case "profile":
 				in.Prober = models.ProfileProber{Name: runtime, Exclude: exclude}
+				in.Account = models.ProfileAccount
 			case models.Anthropic, models.OpenAI, models.OpenRouter:
 				key := os.Getenv(apiKeyEnv[via])
 				if key == "" {
@@ -72,7 +75,15 @@ func modelsProbe() *cobra.Command {
 				return fmt.Errorf("unknown --via %q", via)
 			}
 			in.Refresh = true
-			return report(cmd, in, false)
+			et, err := models.Resolve(cmd.Context(), in)
+			var ref *core.Refusal
+			if err != nil && !errors.As(err, &ref) {
+				return err
+			}
+			if werr := models.WriteLock(r.root, et); werr != nil {
+				return werr
+			}
+			return printTiers(cmd, et, err, false)
 		},
 	}
 	c.Flags().StringVar(&runtime, "runtime", "claude", "runtime name in models.by_runtime")
@@ -88,13 +99,14 @@ func modelsShow() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "show",
-		Short: "Show effective tiers from the cache (no network)",
+		Short: "Show the tiers in .rr/tiers.lock (what sync and the guard use)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			in, err := modelsInput(cmd, dir, runtime)
+			in, r, err := modelsInput(cmd, dir, runtime)
 			if err != nil {
 				return err
 			}
-			return report(cmd, in, asJSON)
+			et, err := models.FromLock(in.Spec, r.root, runtime)
+			return printTiers(cmd, et, err, asJSON)
 		},
 	}
 	c.Flags().StringVar(&runtime, "runtime", "claude", "runtime name in models.by_runtime")
@@ -104,14 +116,9 @@ func modelsShow() *cobra.Command {
 	return c
 }
 
-// report resolves and prints; a NO_TIER refusal is printed and returned as an error.
-func report(cmd *cobra.Command, in models.Input, asJSON bool) error {
+// printTiers prints et; a NO_TIER refusal is printed and returned as an error.
+func printTiers(cmd *cobra.Command, et core.EffectiveTiers, err error, asJSON bool) error {
 	out := cmd.OutOrStdout()
-	et, err := models.Resolve(cmd.Context(), in)
-	var ref *core.Refusal
-	if err != nil && !errors.As(err, &ref) {
-		return err
-	}
 	if asJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

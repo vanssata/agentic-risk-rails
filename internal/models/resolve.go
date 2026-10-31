@@ -31,6 +31,11 @@ func ttl(s core.ModelsSpec) time.Duration {
 	return time.Duration(h) * time.Hour
 }
 
+func fresh(in Input, r core.ProbeResult) bool {
+	// A result stamped slightly after Now is the probe we just ran; further ahead is a forged or skewed clock.
+	return !r.ProbedAt.After(in.Now.Add(time.Minute)) && in.Now.Sub(r.ProbedAt) <= ttl(in.Spec)
+}
+
 // Resolve implements DES §4.2. The result holds only PASS models. A missing
 // BALANCED yields *core.Refusal{NO_TIER}; the partial result is still returned.
 func Resolve(ctx context.Context, in Input) (core.EffectiveTiers, error) {
@@ -52,7 +57,7 @@ func Resolve(ctx context.Context, in Input) (core.EffectiveTiers, error) {
 		if ok {
 			state[m] = r
 		}
-		if !ok || in.Refresh || in.Now.Sub(r.ProbedAt) > ttl(in.Spec) {
+		if !ok || in.Refresh || !fresh(in, r) {
 			stale = append(stale, m)
 		}
 	}
@@ -73,8 +78,9 @@ func Resolve(ctx context.Context, in Input) (core.EffectiveTiers, error) {
 				_ = in.Cache.Put(in.Runtime, in.Account, r) // a cache write failure is not an availability fact
 			}
 		}
-	} else {
-		for _, m := range stale { // offline: expired or missing is not PASS
+	}
+	for m, r := range state { // an expired or future-dated result never counts, even if the new probe was UNKNOWN
+		if !fresh(in, r) {
 			delete(state, m)
 		}
 	}
@@ -111,17 +117,24 @@ func build(in Input, cands map[core.Tier][]string, state map[string]core.ProbeRe
 	sort.Strings(lines)
 	sum := sha256.Sum256([]byte(fmt.Sprint(lines)))
 	et.CatalogueSHA = hex.EncodeToString(sum[:8])
+	et.Ladder = ladderOf(in.Spec, et.Models)
+	return et
+}
+
+// ladderOf maps each tier without a model to the nearest tier with one (transitive, bounded walk).
+func ladderOf(spec core.ModelsSpec, models map[core.Tier]string) map[core.Tier]core.Tier {
+	ladder := map[core.Tier]core.Tier{}
 	for _, t := range core.Tiers {
-		if et.Models[t] != "" {
+		if models[t] != "" {
 			continue
 		}
-		next := in.Spec.Ladder.Missing[t] // transitive, bounded walk
-		for i := 0; i < len(core.Tiers) && next != "" && et.Models[next] == ""; i++ {
-			next = in.Spec.Ladder.Missing[next]
+		next := spec.Ladder.Missing[t]
+		for i := 0; i < len(core.Tiers) && next != "" && models[next] == ""; i++ {
+			next = spec.Ladder.Missing[next]
 		}
-		if next != "" && et.Models[next] != "" {
-			et.Ladder[t] = next
+		if next != "" && models[next] != "" {
+			ladder[t] = next
 		}
 	}
-	return et
+	return ladder
 }

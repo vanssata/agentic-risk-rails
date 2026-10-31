@@ -105,8 +105,8 @@ func TestResolveCacheTTLAndUnknownKeepsPrevious(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sonnet", et.Models[core.TierBalanced])
 
-	// Expired: re-probed; UNKNOWN keeps the previous PASS.
-	et, err = Resolve(context.Background(), in(map[string]core.ModelState{"sonnet": core.ModelUnknown, "haiku": core.ModelFail}, t0.Add(25*time.Hour)))
+	// Within the TTL a forced re-probe that says UNKNOWN keeps the previous PASS (DES 4.3.2).
+	et, err = Resolve(context.Background(), inRefresh(in(map[string]core.ModelState{"sonnet": core.ModelUnknown, "haiku": core.ModelFail}, t0.Add(2*time.Hour))))
 	require.NoError(t, err)
 	assert.Equal(t, "sonnet", et.Models[core.TierBalanced])
 	assert.Empty(t, et.Models[core.TierFast])
@@ -124,14 +124,50 @@ func TestResolveCacheTTLAndUnknownKeepsPrevious(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestResolveOfflineUsesOnlyFreshCache(t *testing.T) {
+func TestExpiredOrFutureNeverCounts(t *testing.T) {
 	cache := Cache{Path: filepath.Join(t.TempDir(), "m.json")}
-	require.NoError(t, cache.Put("claude", LocalAccount, core.ProbeResult{Model: "sonnet", State: core.ModelPass, ProbedAt: t0}))
-	home := filepath.Dir(cache.Path)
-	s := spec()
-	s.Probe.Cache = cache.Path
-	assert.Contains(t, ForSync(context.Background(), s, home, t0.Add(time.Hour)), "claude")
-	assert.NotContains(t, ForSync(context.Background(), s, home, t0.Add(48*time.Hour)), "claude")
+	in := func(now time.Time, st core.ModelState) Input {
+		return Input{Spec: spec(), Runtime: "claude", Account: "a", Cache: cache, Now: now,
+			Prober: fakes.Prober{RuntimeName: "claude", States: map[string]core.ModelState{"sonnet": st}}}
+	}
+	_, err := Resolve(context.Background(), in(t0, core.ModelPass))
+	require.NoError(t, err)
+	// Past the TTL a new UNKNOWN probe must not resurrect the old PASS.
+	_, err = Resolve(context.Background(), in(t0.Add(25*time.Hour), core.ModelUnknown))
+	assert.Error(t, err)
+	// Offline (no prober) past the TTL: not PASS either.
+	i := in(t0.Add(25*time.Hour), core.ModelUnknown)
+	i.Prober = nil
+	_, err = Resolve(context.Background(), i)
+	assert.Error(t, err)
+	// A PASS dated in the future is stale.
+	require.NoError(t, cache.Put("claude", "f", core.ProbeResult{Model: "sonnet", State: core.ModelPass, ProbedAt: t0.Add(48 * time.Hour)}))
+	i = in(t0, core.ModelUnknown)
+	i.Account = "f"
+	_, err = Resolve(context.Background(), i)
+	assert.Error(t, err)
+}
+
+func TestCachePath(t *testing.T) {
+	home := "/home/u"
+	cases := []struct {
+		in string
+		ok bool
+	}{
+		{"~/.cache/riskrails/models.json", true},
+		{"/home/u/.cache/riskrails/x/models.json", true},
+		{"~/.cache/riskrails/../../.ssh/authorized_keys", false},
+		{"~/.cache/riskrails/../x", false},
+		{"~/.ssh/authorized_keys", false},
+		{"/etc/cron.d/x", false},
+		{"~/.cache/riskrails", false},
+		{"~/.cache/riskrails-evil/m.json", false},
+		{"relative/m.json", false},
+	}
+	for _, c := range cases {
+		_, err := CachePath(c.in, home)
+		assert.Equal(t, c.ok, err == nil, c.in)
+	}
 }
 
 func TestProberErrorIsFailClosed(t *testing.T) {
@@ -222,3 +258,5 @@ func TestOnError(t *testing.T) {
 		})
 	}
 }
+
+func inRefresh(i Input) Input { i.Refresh = true; return i }
