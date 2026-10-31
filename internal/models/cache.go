@@ -89,7 +89,7 @@ func (c Cache) Put(runtime, account string, rs ...core.ProbeResult) error {
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
