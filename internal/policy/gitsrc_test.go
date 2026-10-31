@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,6 +94,40 @@ func TestForgedTagCannotShadowRemoteRef(t *testing.T) {
 	l, err = ReadAtRef(context.Background(), root, "refs/remotes/origin/main")
 	require.NoError(t, err)
 	assert.Equal(t, core.L1, *l.Policy.Autonomy.Ceiling)
+}
+
+func TestResolveRefRejectsRevisionSyntaxAndShaForgery(t *testing.T) {
+	ctx := context.Background()
+	root := testutil.GitRepo(t, map[string]string{"riskrails.yaml": "autonomy: {ceiling: L1}\n"})
+	run(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	sha := strings.TrimSpace(string(out))
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "riskrails.yaml"), []byte("autonomy: {ceiling: L4}\n"), 0o644))
+	run(t, root, "commit", "-qam", "loosen")
+	run(t, root, "tag", "origin/main", "HEAD") // forged tag on the loosened commit
+
+	for _, name := range []string{"origin/main~0", "origin/main^{commit}", "origin/main^", "main@{0}", "main:riskrails.yaml", "a..b", "--x", "HEAD~1"} {
+		_, err := ResolveRef(ctx, root, name)
+		assert.Error(t, err, name)
+	}
+	got, err := ResolveRef(ctx, root, "refs/remotes/origin/main")
+	require.NoError(t, err)
+	assert.Equal(t, sha, got)
+	got, err = ResolveRef(ctx, root, sha)
+	require.NoError(t, err)
+	assert.Equal(t, sha, got)
+	_, err = ResolveRef(ctx, root, "HEAD")
+	assert.NoError(t, err)
+
+	// a tag named like the commit's SHA must not be able to redirect it
+	run(t, root, "tag", sha, "HEAD")
+	_, err = ResolveRef(ctx, root, sha)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both a SHA and a ref")
+	_, err = ResolveRef(ctx, root, strings.Repeat("0", 40))
+	assert.Error(t, err)
 }
 
 func TestListFilesAtIgnoresTheIndex(t *testing.T) {

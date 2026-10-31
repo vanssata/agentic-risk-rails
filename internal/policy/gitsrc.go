@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -60,35 +61,61 @@ func ListFilesAt(ctx context.Context, root, ref string) ([]string, error) {
 	return splitNUL(out), nil
 }
 
-// ResolveRef turns a user-supplied ref into a commit SHA. A short name that
-// exists in more than one namespace (a tag `origin/main` next to the remote
-// branch) is ambiguous and rejected, so a forged tag can never stand in for a
-// branch. Fully qualified refs, HEAD forms and SHAs are accepted as they are.
+// ResolveRef turns a user-supplied ref into a commit SHA. Accepted forms only:
+// HEAD; a fully qualified refs/... name; a bare short name that exists in
+// exactly one of refs/heads, refs/tags, refs/remotes (a forged tag `origin/main`
+// next to the remote branch is ambiguous and rejected); a full 40/64-hex SHA
+// that is a commit and is not also the name of a ref. Revision syntax
+// (~ ^ @ : { ..) and leading "-" are rejected, so no suffix can steer git to a
+// different object than the one named.
 func ResolveRef(ctx context.Context, root, name string) (string, error) {
-	if name == "" || strings.HasPrefix(name, "-") {
+	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "~^@:{ \t\n\\") || strings.Contains(name, "..") {
 		return "", fmt.Errorf("policy: invalid ref %q", name)
 	}
 	target := name
-	if !strings.HasPrefix(name, "refs/") {
+	switch {
+	case name == "HEAD":
+	case strings.HasPrefix(name, "refs/"):
+		if !refExists(ctx, root, name) {
+			return "", fmt.Errorf("policy: unknown ref %q", name)
+		}
+	case hexSHA.MatchString(name):
+		for _, ns := range []string{"refs/heads/", "refs/tags/", "refs/remotes/"} {
+			if refExists(ctx, root, ns+name) {
+				return "", fmt.Errorf("policy: %q is both a SHA and a ref name; use the fully qualified ref", name)
+			}
+		}
+		if _, err := gitOut(ctx, root, "cat-file", "-e", name+"^{commit}"); err != nil {
+			return "", fmt.Errorf("policy: unknown commit %q", name)
+		}
+	default:
 		var found []string
 		for _, ns := range []string{"refs/heads/", "refs/tags/", "refs/remotes/"} {
-			if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", ns+name); err == nil {
+			if refExists(ctx, root, ns+name) {
 				found = append(found, ns+name)
 			}
 		}
 		switch len(found) {
 		case 0:
+			return "", fmt.Errorf("policy: unknown ref %q", name)
 		case 1:
 			target = found[0]
 		default:
 			return "", fmt.Errorf("policy: ref %q is ambiguous (%s); use a fully qualified ref", name, strings.Join(found, ", "))
 		}
 	}
-	out, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", target+"^{commit}")
+	out, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", target+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("policy: unknown ref %q", name)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+var hexSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+func refExists(ctx context.Context, root, ref string) bool {
+	_, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", ref)
+	return err == nil
 }
 
 func displayRef(ref string) string {
@@ -128,6 +155,11 @@ func ReadAtRef(ctx context.Context, root, ref string) (core.Layer, error) {
 // is preferred and refs/heads/<b> is the fallback when there is no remote
 // (DES §3.4 step 3). Only fully qualified refs are used, so tags cannot shadow
 // them. No such branch => StrictDefaults.
+//
+// TRUST: refs/remotes/origin/* and origin/HEAD are writable by the agent
+// locally (`git update-ref`), so this read is a tripwire, not a boundary. Until
+// the wave-3 runner pins a trusted SHA (or fetches), CI must pass `--base` as a
+// SHA obtained from the hosting API.
 func InForce(ctx context.Context, root string) (core.Layer, error) {
 	const remote = "refs/remotes/origin/"
 	var refs []string
