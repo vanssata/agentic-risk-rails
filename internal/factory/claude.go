@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 )
@@ -17,7 +18,9 @@ import (
 type ClaudeRunner struct {
 	Bin            string // default "claude"
 	Models         map[core.Tier]string
-	PermissionMode string // default acceptEdits
+	PermissionMode string        // default acceptEdits
+	ReadOnly       bool          // reviewers: plan mode and no Edit/Write/Bash tools
+	Timeout        time.Duration // per worker; 0 = none
 }
 
 // claudeResult is the subset of the `--output-format json` result object used
@@ -38,6 +41,9 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if bin == "" {
 		bin = "claude"
 	}
+	if c.ReadOnly {
+		mode = "plan"
+	}
 	if mode == "" {
 		mode = "acceptEdits"
 	}
@@ -45,7 +51,16 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if spec.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(spec.MaxTurns))
 	}
+	if c.ReadOnly {
+		args = append(args, "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash")
+	}
+	if c.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = time.Second
 	cmd.Dir = spec.Worktree
 	cmd.Stdin = strings.NewReader(spec.Brief)
 	var out, errb bytes.Buffer
@@ -70,20 +85,17 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	return rep, nil
 }
 
-// statusOf takes the last `STATUS: X` line; absent or unknown ⇒ BLOCKED.
+// statusOf reads only the LAST non-empty line, which must be `STATUS: X`;
+// anything else is BLOCKED (a status quoted earlier in the body does not count).
 func statusOf(body string) core.WorkerStatus {
-	st := core.StatusBlocked
-	for _, line := range strings.Split(body, "\n") {
-		v, ok := strings.CutPrefix(strings.TrimSpace(line), "STATUS:")
-		if !ok {
-			continue
-		}
-		switch s := core.WorkerStatus(strings.TrimSpace(v)); s {
-		case core.StatusDone, core.StatusDoneWithConcerns, core.StatusBlocked, core.StatusNeedsContext:
-			st = s
-		default:
-			st = core.StatusBlocked
-		}
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	v, ok := strings.CutPrefix(strings.TrimSpace(lines[len(lines)-1]), "STATUS:")
+	if !ok {
+		return core.StatusBlocked
 	}
-	return st
+	switch s := core.WorkerStatus(strings.TrimSpace(v)); s {
+	case core.StatusDone, core.StatusDoneWithConcerns, core.StatusNeedsContext:
+		return s
+	}
+	return core.StatusBlocked
 }

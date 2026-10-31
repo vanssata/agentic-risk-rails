@@ -26,6 +26,15 @@ func TestCheck(t *testing.T) {
 		{"unknown after", []Step{s("a", []string{"a.go"}, "zz")}, "unknown after"},
 		{"duplicate id", []Step{s("a", []string{"a.go"}), s("a", []string{"b.go"})}, "duplicate"},
 		{"no files", []Step{s("a", nil)}, "no files"},
+		{"absolute path", []Step{s("a", []string{"/etc/passwd"})}, "absolute"},
+		{"dotdot", []Step{s("a", []string{"src/../../x"})}, "escapes"},
+		{"pathspec magic", []Step{s("a", []string{":(top)x"})}, "pathspec"},
+		{"glob star", []Step{s("a", []string{"src/*.go"})}, "glob"},
+		{"glob bracket", []Step{s("a", []string{"a[1].go"})}, "glob"},
+		{"dot only", []Step{s("a", []string{"."})}, "empty"},
+		{"directory prefix overlaps", []Step{s("a", []string{"src"}), s("b", []string{"src/x.go"})}, "share"},
+		{"unclean path overlaps after Clean", []Step{s("a", []string{"./x.go"}), s("b", []string{"x.go"})}, "share"},
+		{"sibling with common name prefix is no overlap", []Step{s("a", []string{"src"}), s("b", []string{"src2/x.go"})}, ""},
 		{"no id", []Step{s("", []string{"a.go"})}, "without id"},
 	}
 	for _, tc := range tests {

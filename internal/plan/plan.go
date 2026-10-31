@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"path"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,13 +41,13 @@ func Parse(raw []byte) (Plan, error) {
 // Check validates ids, after references, cycles and file ownership: two steps
 // sharing a file must be ordered by (transitive) after.
 func Check(p Plan) error {
-	_, err := analyse(p)
+	_, _, err := analyse(p)
 	return err
 }
 
 // Waves groups a checked plan into waves (longest-path levels), each in plan order.
 func Waves(p Plan) ([][]Step, error) {
-	level, err := analyse(p)
+	p, level, err := analyse(p)
 	if err != nil {
 		return nil, err
 	}
@@ -59,24 +62,28 @@ func Waves(p Plan) ([][]Step, error) {
 }
 
 // analyse validates the plan and returns each step's wave level.
-func analyse(p Plan) ([]int, error) {
+func analyse(p Plan) (Plan, []int, error) {
+	p, err := normalize(p)
+	if err != nil {
+		return p, nil, err
+	}
 	idx := map[string]int{}
 	for i, s := range p.Steps {
 		if s.ID == "" {
-			return nil, errors.New("plan: step without id")
+			return p, nil, errors.New("plan: step without id")
 		}
 		if _, dup := idx[s.ID]; dup {
-			return nil, fmt.Errorf("plan: duplicate step %q", s.ID)
+			return p, nil, fmt.Errorf("plan: duplicate step %q", s.ID)
 		}
 		if len(s.Files) == 0 {
-			return nil, fmt.Errorf("plan: step %q owns no files", s.ID)
+			return p, nil, fmt.Errorf("plan: step %q owns no files", s.ID)
 		}
 		idx[s.ID] = i
 	}
 	for _, s := range p.Steps {
 		for _, a := range s.After {
 			if _, ok := idx[a]; !ok {
-				return nil, fmt.Errorf("plan: step %q: unknown after %q", s.ID, a)
+				return p, nil, fmt.Errorf("plan: step %q: unknown after %q", s.ID, a)
 			}
 		}
 	}
@@ -110,31 +117,66 @@ func analyse(p Plan) ([]int, error) {
 	}
 	for i := range p.Steps {
 		if err := visit(i); err != nil {
-			return nil, err
+			return p, nil, err
 		}
 	}
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
+	return p, level, unorderedOverlap(p, reach)
+}
+
+// unorderedOverlap fails if two steps not ordered by after share a path.
+func unorderedOverlap(p Plan, reach []map[int]bool) error {
+	for i := range p.Steps {
+		for j := i + 1; j < len(p.Steps); j++ {
 			if reach[i][j] || reach[j][i] {
 				continue
 			}
 			if f := shared(p.Steps[i].Files, p.Steps[j].Files); f != "" {
-				return nil, fmt.Errorf("plan: steps %q and %q share %q: add after", p.Steps[i].ID, p.Steps[j].ID, f)
+				return fmt.Errorf("plan: steps %q and %q share %q: add after", p.Steps[i].ID, p.Steps[j].ID, f)
 			}
 		}
 	}
-	return level, nil
+	return nil
 }
 
+// shared returns a path of a that is equal to, inside, or a directory
+// prefix of a path of b.
 func shared(a, b []string) string {
-	set := map[string]bool{}
-	for _, f := range a {
-		set[f] = true
-	}
-	for _, f := range b {
-		if set[f] {
-			return f
+	for _, x := range a {
+		for _, y := range b {
+			if x == y || strings.HasPrefix(y, x+"/") || strings.HasPrefix(x, y+"/") {
+				return x
+			}
 		}
 	}
 	return ""
+}
+
+// normalize returns a copy of p with every file path cleaned. A path must be
+// relative, free of "..", pathspec magic (leading ':') and glob characters.
+func normalize(p Plan) (Plan, error) {
+	out := Plan{Steps: make([]Step, len(p.Steps))}
+	for i, s := range p.Steps {
+		out.Steps[i] = s
+		out.Steps[i].Files = make([]string, len(s.Files))
+		for j, f := range s.Files {
+			c := path.Clean(filepath.ToSlash(f))
+			switch {
+			case f == "" || c == ".":
+				return p, fmt.Errorf("plan: step %q: empty path", s.ID)
+			case path.IsAbs(c) || filepath.IsAbs(f):
+				return p, fmt.Errorf("plan: step %q: absolute path %q", s.ID, f)
+			case strings.HasPrefix(f, ":"):
+				return p, fmt.Errorf("plan: step %q: pathspec magic in %q", s.ID, f)
+			case strings.ContainsAny(f, "*?[]{}\\"):
+				return p, fmt.Errorf("plan: step %q: glob character in %q", s.ID, f)
+			}
+			for _, seg := range strings.Split(filepath.ToSlash(f), "/") {
+				if seg == ".." {
+					return p, fmt.Errorf("plan: step %q: %q escapes the repository", s.ID, f)
+				}
+			}
+			out.Steps[i].Files[j] = c
+		}
+	}
+	return out, nil
 }
