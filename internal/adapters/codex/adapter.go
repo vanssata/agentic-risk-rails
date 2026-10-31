@@ -53,9 +53,10 @@ type hookInput struct {
 //   - Bash: Tool "Bash", Command = tool_input.command.
 //   - apply_patch: Tool "Edit" (the guard's file-edit tool), Paths = every
 //     file in the patch, Content = full post-edit file. A patch touching more
-//     than one file cannot be represented by one ToolCall and is an error
-//     (the caller denies); a Move reports old and new path with the new
-//     content. Raw keeps the original payload.
+//     than one file fills Edits (one FileEdit each) and Paths, Content stays
+//     empty; a Move reports old and new path with the new content. If any
+//     file's post-edit content cannot be computed the call is an error (the
+//     caller denies). Raw keeps the original payload.
 //   - anything else (mcp__<server>__<tool>, update_plan, …): Tool = tool_name.
 func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) {
 	if event != eventPreTool {
@@ -86,28 +87,9 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 		}
 		call.Command = *ti.Command
 	case "apply_patch":
-		var ti struct {
-			Command *string `json:"command"`
+		if err := fillPatch(&call, in); err != nil {
+			return core.ToolCall{}, err
 		}
-		if err := json.Unmarshal(in.ToolInput, &ti); err != nil || ti.Command == nil {
-			return core.ToolCall{}, errors.New("codex: apply_patch tool_input.command missing")
-		}
-		if !strings.HasPrefix(in.Cwd, "/") {
-			return core.ToolCall{}, errors.New("codex: apply_patch needs an absolute cwd")
-		}
-		edits, err := parsePatch(in.Cwd, *ti.Command)
-		if err != nil {
-			return core.ToolCall{}, fmt.Errorf("codex: %w", err)
-		}
-		if len(edits) != 1 {
-			return core.ToolCall{}, fmt.Errorf("codex: apply_patch touches %d files; one file per patch is supported so Content can be the full post-edit file", len(edits))
-		}
-		call.Tool = "Edit"
-		if edits[0].From != "" {
-			call.Paths = []string{edits[0].From}
-		}
-		call.Paths = append(call.Paths, edits[0].Path)
-		call.Content = edits[0].Content
 	default:
 		if strings.HasPrefix(in.ToolName, "mcp__") {
 			fillFromArgs(&call, in.ToolInput)
@@ -127,6 +109,37 @@ func askTarget(c core.ToolCall) string {
 		return c.Tool
 	}
 	return "(the blocked action)"
+}
+
+func fillPatch(call *core.ToolCall, in hookInput) error {
+	var ti struct {
+		Command *string `json:"command"`
+	}
+	if err := json.Unmarshal(in.ToolInput, &ti); err != nil || ti.Command == nil {
+		return errors.New("codex: apply_patch tool_input.command missing")
+	}
+	if !strings.HasPrefix(in.Cwd, "/") {
+		return errors.New("codex: apply_patch needs an absolute cwd")
+	}
+	edits, err := parsePatch(in.Cwd, *ti.Command)
+	if err != nil {
+		return fmt.Errorf("codex: %w", err)
+	}
+	call.Tool = "Edit"
+	for _, e := range edits {
+		if e.From != "" {
+			call.Paths = append(call.Paths, e.From)
+		}
+		call.Paths = append(call.Paths, e.Path)
+	}
+	if len(edits) == 1 {
+		call.Content = edits[0].Content
+		return nil
+	}
+	for _, e := range edits {
+		call.Edits = append(call.Edits, core.FileEdit{Path: e.Path, From: e.From, Content: e.Content, Delete: e.Delete})
+	}
+	return nil
 }
 
 var (

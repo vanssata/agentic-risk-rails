@@ -14,6 +14,7 @@ type fileEdit struct {
 	Path    string // absolute, Clean'ed (new path for a move)
 	From    string // absolute old path for a move, else ""
 	Content string
+	Delete  bool
 }
 
 const (
@@ -62,7 +63,7 @@ func parsePatch(cwd, patch string) ([]fileEdit, error) {
 			out = append(out, fileEdit{Path: abs(cwd, l[len(hdrAdd):]), Content: b.String()})
 			i = j
 		case strings.HasPrefix(l, hdrDelete):
-			out = append(out, fileEdit{Path: abs(cwd, l[len(hdrDelete):])})
+			out = append(out, fileEdit{Path: abs(cwd, l[len(hdrDelete):]), Delete: true})
 			i++
 		case strings.HasPrefix(l, hdrUpdate):
 			src := abs(cwd, l[len(hdrUpdate):])
