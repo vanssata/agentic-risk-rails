@@ -1,0 +1,19 @@
+CONFLICT (phase 2 candidates):
+- A: The charge endpoint has a timeout of 30 seconds | src/Payment/Gateway.php:10 | [V]
+  B: The charge endpoint has a timeout of 60 seconds | docs/payments.md | [U]
+- A: Retries are enabled for the payment client | src/Payment/Gateway.php:20 | [U]
+  B: Retries are not enabled for the payment client | docs/payments.md#retries | [V]
+FACTS:
+- OrderService::place calls PaymentGateway::charge synchronously | src/Order/OrderService.php:42 | [V]
+- Doctrine flush runs inside the request listener | src/EventListener/Flush.php:8 | [V]
+- Symfony 7.1 is locked in composer.lock | composer.lock | [V]
+GAPS (phase 2 candidates):
+- behaviour of the queue worker under load
+- cache invalidation of the order read model
+TOUCHES:
+- src/Order/OrderService.php
+STEAL:
+- retry decorator -> PaymentGateway
+AVOID:
+- flush in listeners
+COST: tokens=100000 calls=20

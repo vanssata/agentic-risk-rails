@@ -1,0 +1,14 @@
+FACTS:
+- OrderService::place calls PaymentGateway::charge synchronously | src/order/OrderService.php:44 | [U]
+- The charge endpoint has a timeout of 60 seconds | docs/payments.md | [U]
+- Retries are not enabled for the payment client | docs/payments.md#retries | [V]
+- Symfony 7.1 is locked in composer.lock | composer.lock | [V]
+READ:
+- docs/payments.md
+- composer.lock
+GAPS:
+- behaviour of the queue worker under load
+- cache invalidation of the order read model
+STEAL:
+- retry decorator -> PaymentGateway
+COST: tokens=48000 calls=9
