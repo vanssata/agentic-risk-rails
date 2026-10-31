@@ -223,7 +223,7 @@ func (r *Runtime) ParseHookInput(event string, in io.Reader) (core.ToolCall, err
 	return c, r.ParseErr
 }
 
-func (r *Runtime) RenderHookOutput(_ string, v core.Verdict, stdout, _ io.Writer) (int, error) {
+func (r *Runtime) RenderHookOutput(_ string, _ core.ToolCall, v core.Verdict, stdout, _ io.Writer) (int, error) {
 	r.Rendered = append(r.Rendered, v)
 	_, err := fmt.Fprintf(stdout, "%s %s\n", v.Decision, v.Reason)
 	if v.Decision == core.Allow || v.Decision == core.Ask {

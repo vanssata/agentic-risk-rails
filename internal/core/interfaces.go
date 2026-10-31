@@ -108,6 +108,11 @@ type PolicyLoader interface {
 //     reads the current file and applies the edit(s). If it cannot, ParseHookInput
 //     returns an error and the caller denies.
 //   - URL is the target of WebFetch/WebSearch-like tools, for egress rules.
+//   - Edits: a call that changes several files at once (e.g. a multi-file
+//     apply_patch) lists every file with its FULL post-edit content (empty =
+//     deletion; a move is a deletion of From plus the new Path). When Edits is
+//     set, Paths lists every path in Edits and Content is unused. The guard
+//     checks every edit; one denied edit denies the call.
 type ToolCall struct {
 	Runtime string          `json:"runtime"`
 	Event   string          `json:"event"` // PreToolUse, BeforeTool, …
@@ -115,10 +120,19 @@ type ToolCall struct {
 	Command string          `json:"command,omitempty"`
 	Paths   []string        `json:"paths,omitempty"`
 	Content string          `json:"content,omitempty"`
+	Edits   []FileEdit      `json:"edits,omitempty"`
 	URL     string          `json:"url,omitempty"`
 	Model   string          `json:"model,omitempty"` // explicit subagent model, if the runtime exposes it
 	Cwd     string          `json:"cwd,omitempty"`
 	Raw     json.RawMessage `json:"raw,omitempty"`
+}
+
+// FileEdit is one file of a multi-file edit; Path is absolute and Clean'ed.
+type FileEdit struct {
+	Path    string `json:"path"`
+	From    string `json:"from,omitempty"` // previous path for a move
+	Content string `json:"content"`
+	Delete  bool   `json:"delete,omitempty"`
 }
 
 type Verdict struct {
@@ -157,8 +171,9 @@ type RuntimeAdapter interface {
 	ParseHookInput(event string, r io.Reader) (ToolCall, error)
 	// RenderHookOutput writes the runtime's response for event and returns the
 	// exit code. Any Decision other than Allow/Ask renders as deny with a
-	// blocking exit code.
-	RenderHookOutput(event string, v Verdict, stdout, stderr io.Writer) (exitCode int, err error)
+	// blocking exit code. call is the parsed call (zero value if parsing
+	// failed), so messages can name the command or paths.
+	RenderHookOutput(event string, call ToolCall, v Verdict, stdout, stderr io.Writer) (exitCode int, err error)
 	Generators() []Generator
 	// Enforcement reports what actually enforces on this host (e.g. no bwrap ⇒ hook_only).
 	Enforcement(ctx context.Context, root string) (Enforcement, error)

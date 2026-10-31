@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
@@ -36,8 +37,15 @@ func resolve(ctx context.Context, root string) (resolved, error) {
 	if err != nil {
 		return resolved{}, err
 	}
+	// Files for glob-set confirmation: working tree ∪ the default branch's tree,
+	// so removing a file from the index cannot hide it (wave-1 review).
 	// Not a git checkout ⇒ nil file list; the differ treats unverifiable glob changes as LOOSEN.
 	files, _ := policy.ListFiles(ctx, abs)
+	if ref, ok := policy.DefaultRef(ctx, abs); ok {
+		if base, err := policy.ListFilesAt(ctx, abs, ref); err == nil {
+			files = unionSorted(files, base)
+		}
+	}
 	svc := policy.New()
 	svc.Files = func(context.Context) ([]string, error) { return files, nil }
 
@@ -74,6 +82,19 @@ func resolve(ctx context.Context, root string) (resolved, error) {
 	}
 	home, _ := os.UserHomeDir()
 	return resolved{svc: svc, eff: eff, files: files, level: level, root: abs, home: home}, nil
+}
+
+func unionSorted(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range append(append([]string{}, a...), b...) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func guardContext(ctx context.Context, root, _ string) (core.GuardContext, error) {

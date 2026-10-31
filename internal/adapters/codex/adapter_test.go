@@ -169,7 +169,7 @@ func TestRenderHookOutput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		var so, se bytes.Buffer
-		code, err := Adapter{}.RenderHookOutput("PreToolUse", core.Verdict{Decision: tc.d, Reason: "no secrets", Rule: "secret_reads"}, &so, &se)
+		code, err := Adapter{}.RenderHookOutput("PreToolUse", core.ToolCall{Command: "git commit -m x"}, core.Verdict{Decision: tc.d, Reason: "no secrets", Rule: "secret_reads"}, &so, &se)
 		require.NoError(t, err)
 		assert.Equal(t, tc.code, code, tc.d)
 		assert.Empty(t, so.String(), "stdout stays empty: unsupported output would make the hook fail OPEN")
@@ -180,7 +180,7 @@ func TestRenderHookOutput(t *testing.T) {
 		}
 	}
 	var se bytes.Buffer
-	code, err := Adapter{}.RenderHookOutput("PostToolUse", core.Verdict{Decision: core.Allow}, &bytes.Buffer{}, &se)
+	code, err := Adapter{}.RenderHookOutput("PostToolUse", core.ToolCall{}, core.Verdict{Decision: core.Allow}, &bytes.Buffer{}, &se)
 	assert.Error(t, err)
 	assert.Equal(t, 2, code)
 }

@@ -40,7 +40,7 @@ type hookOutput struct {
 // other decision is a block: reason on stderr and exit 2 (exit 2 wins over any
 // JSON, so a deny can never be read as allow). Other events have no decision
 // schema: Allow/Ask are a silent exit 0, anything else blocks via stderr and exit 2.
-func (Adapter) RenderHookOutput(event string, v core.Verdict, stdout, stderr io.Writer) (int, error) {
+func (Adapter) RenderHookOutput(event string, _ core.ToolCall, v core.Verdict, stdout, stderr io.Writer) (int, error) {
 	passes := v.Decision == core.Allow || v.Decision == core.Ask
 	if passes && event != "PreToolUse" {
 		return 0, nil

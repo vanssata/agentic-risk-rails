@@ -160,7 +160,7 @@ func TestRenderHookOutput(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errb bytes.Buffer
-			code, err := Adapter{}.RenderHookOutput(c.event, core.Verdict{Decision: c.dec, Reason: "because"}, &out, &errb)
+			code, err := Adapter{}.RenderHookOutput(c.event, core.ToolCall{}, core.Verdict{Decision: c.dec, Reason: "because"}, &out, &errb)
 			require.NoError(t, err)
 			assert.Equal(t, c.exit, code)
 			if c.wantJSON == "" {

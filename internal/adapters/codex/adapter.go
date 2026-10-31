@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/runtimes"
@@ -114,38 +113,20 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 			fillFromArgs(&call, in.ToolInput)
 		}
 	}
-	rememberAsk(call)
 	return call, nil
 }
 
-// `rr guard` parses and renders in one short-lived process, so the adapter can
-// remember the call it parsed: Verdict does not carry the command, but the Ask
-// message must name it.
-var (
-	lastMu   sync.Mutex
-	lastDesc string
-)
-
-func rememberAsk(c core.ToolCall) {
-	d := c.Command
-	if d == "" && len(c.Paths) > 0 {
-		d = "edit " + strings.Join(c.Paths, " ")
+// askTarget names what the human should run or approve themselves.
+func askTarget(c core.ToolCall) string {
+	switch {
+	case c.Command != "":
+		return c.Command
+	case len(c.Paths) > 0:
+		return "edit " + strings.Join(c.Paths, " ")
+	case c.Tool != "":
+		return c.Tool
 	}
-	if d == "" {
-		d = c.Tool
-	}
-	lastMu.Lock()
-	lastDesc = d
-	lastMu.Unlock()
-}
-
-func askTarget(core.Verdict) string {
-	lastMu.Lock()
-	defer lastMu.Unlock()
-	if lastDesc == "" {
-		return "(the blocked action)"
-	}
-	return lastDesc
+	return "(the blocked action)"
 }
 
 var (
@@ -195,7 +176,7 @@ func fillFromArgs(call *core.ToolCall, input json.RawMessage) {
 // form). Codex PreToolUse cannot ask: "ask" output makes the hook fail and the
 // tool call continue, so Ask is rendered as a block whose message names the
 // command for the human to run (documented limitation).
-func (Adapter) RenderHookOutput(event string, v core.Verdict, _, stderr io.Writer) (int, error) {
+func (Adapter) RenderHookOutput(event string, call core.ToolCall, v core.Verdict, _, stderr io.Writer) (int, error) {
 	if event != eventPreTool {
 		_, _ = fmt.Fprintf(stderr, "rr: denied (unsupported event %q)\n", event)
 		return 2, fmt.Errorf("codex: unsupported event %q", event)
@@ -206,7 +187,7 @@ func (Adapter) RenderHookOutput(event string, v core.Verdict, _, stderr io.Write
 	msg := "rr: " + v.Reason
 	if v.Decision == core.Ask {
 		// Codex PreToolUse cannot ask; tell the human what to run themselves.
-		msg = "rr: needs approval — run it yourself: " + askTarget(v) + " (" + v.Reason + ")"
+		msg = "rr: needs approval — run it yourself: " + askTarget(call) + " (" + v.Reason + ")"
 	}
 	if v.Rule != "" {
 		msg += " [rule: " + v.Rule + "]"

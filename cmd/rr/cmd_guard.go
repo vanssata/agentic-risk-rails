@@ -52,8 +52,8 @@ func guardRuntime(ctx context.Context, runtime, event string, cmd *cobra.Command
 	if !ok {
 		return writeVerdict(out, errw, core.Verdict{Decision: core.Deny, Reason: fmt.Sprintf("unknown runtime %q", runtime), Rule: "guard.fail_closed"})
 	}
-	v := decide(ctx, a, event, cmd.InOrStdin())
-	code, err := a.RenderHookOutput(event, v, out, errw)
+	call, v := decide(ctx, a, event, cmd.InOrStdin())
+	code, err := a.RenderHookOutput(event, call, v, out, errw)
 	if err != nil {
 		fmt.Fprintln(errw, "rr guard: render:", err)
 		code = 2
@@ -65,12 +65,12 @@ func guardRuntime(ctx context.Context, runtime, event string, cmd *cobra.Command
 }
 
 // decide never fails: every error becomes a deny verdict.
-func decide(ctx context.Context, a core.RuntimeAdapter, event string, in io.Reader) core.Verdict {
+func decide(ctx context.Context, a core.RuntimeAdapter, event string, in io.Reader) (core.ToolCall, core.Verdict) {
 	call, err := a.ParseHookInput(event, in)
 	if err != nil {
-		return core.Verdict{Decision: core.Deny, Reason: "cannot parse hook input: " + err.Error(), Rule: "guard.fail_closed"}
+		return core.ToolCall{}, core.Verdict{Decision: core.Deny, Reason: "cannot parse hook input: " + err.Error(), Rule: "guard.fail_closed"}
 	}
-	return check(ctx, call, a.Name())
+	return call, check(ctx, call, a.Name())
 }
 
 func check(ctx context.Context, call core.ToolCall, runtime string) core.Verdict {

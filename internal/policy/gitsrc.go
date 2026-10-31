@@ -200,6 +200,16 @@ func ReadAtRef(ctx context.Context, root, ref string) (core.Layer, error) {
 // the wave-3 runner pins a trusted SHA (or fetches), CI must pass `--base` as a
 // SHA obtained from the hosting API.
 func InForce(ctx context.Context, root string) (core.Layer, error) {
+	ref, ok := DefaultRef(ctx, root)
+	if !ok {
+		return core.Layer{Policy: core.StrictDefaults(), Source: "default branch not found (strict defaults)"}, nil
+	}
+	return ReadAtRef(ctx, root, ref)
+}
+
+// DefaultRef returns the fully-qualified ref of the default branch that
+// InForce reads (same selection and trust caveats); ok=false if none exists.
+func DefaultRef(ctx context.Context, root string) (ref string, ok bool) {
 	const remote = "refs/remotes/origin/"
 	var refs []string
 	if out, err := gitOut(ctx, root, "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
@@ -208,12 +218,12 @@ func InForce(ctx context.Context, root string) (core.Layer, error) {
 	} else {
 		refs = []string{remote + "main", "refs/heads/main", remote + "master", "refs/heads/master"}
 	}
-	for _, ref := range refs {
-		if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", ref); err == nil {
-			return ReadAtRef(ctx, root, ref)
+	for _, r := range refs {
+		if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", r); err == nil {
+			return r, true
 		}
 	}
-	return core.Layer{Policy: core.StrictDefaults(), Source: "default branch not found (strict defaults)"}, nil
+	return "", false
 }
 
 var ceilingOverride *[2]string
