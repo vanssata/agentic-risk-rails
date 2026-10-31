@@ -89,7 +89,7 @@ func (a *analysis) redirect(r *syntax.Redirect) {
 	}
 	w := wordOf(r.Word)
 	switch r.Op {
-	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut:
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut:
 		a.addRedirect(w, true)
 	case syntax.DplOut:
 		if !isFD(w.s) {
@@ -281,12 +281,11 @@ func (a *analysis) unwrap(argv []word) ([]word, bool) {
 			i++
 			goto done
 		case strings.HasPrefix(s, "-") && len(s) > 1:
-			if name == "command" && (strings.Contains(s, "v") || strings.Contains(s, "V")) {
-				return nil, false // query form: nothing runs
-			}
-			if (name == "env" && strings.HasPrefix(s, "-S")) || (name == "sudo" && (s == "-s" || s == "-i" || s == "-e")) {
-				a.unrecog = append(a.unrecog, name+" "+s+" runs an unparsed command string")
-				return nil, false
+			if query, bad := specialWrapperOpt(name, s); query || bad {
+				if bad {
+					a.unrecog = append(a.unrecog, name+" "+s+" runs an unparsed command string")
+				}
+				return nil, false // query form (command -v) or opaque string: nothing to unwrap
 			}
 			if w.valOpts[s] {
 				i += 2
@@ -318,7 +317,7 @@ func (a *analysis) shell(argv []word, forms [][]word, depth int) {
 	i := 1
 	for i < len(argv) {
 		s := argv[i].s
-		if argv[i].dyn || !(strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+")) {
+		if argv[i].dyn || (!strings.HasPrefix(s, "-") && !strings.HasPrefix(s, "+")) {
 			break
 		}
 		if !strings.HasPrefix(s, "--") && strings.HasPrefix(s, "-") && strings.Contains(s, "c") {
@@ -424,4 +423,18 @@ func unescape(s string) (string, bool) {
 		}
 	}
 	return sb.String(), glob
+}
+
+// specialWrapperOpt flags `command -v` (runs nothing) and options that hand the
+// wrapper an unparsed command string (env -S, sudo -s/-i/-e).
+func specialWrapperOpt(name, opt string) (query, opaque bool) {
+	switch name {
+	case "command":
+		return strings.ContainsAny(opt, "vV"), false
+	case "env":
+		return false, strings.HasPrefix(opt, "-S")
+	case "sudo":
+		return false, opt == "-s" || opt == "-i" || opt == "-e"
+	}
+	return false, false
 }

@@ -100,27 +100,7 @@ func checkArgs(r *result, argv []word, call core.ToolCall, e core.EnforcementSpe
 			args = append(args, w)
 		}
 	}
-	var writes, reads []word
-	switch {
-	case name == "cp" && len(args) > 1:
-		writes, reads = args[len(args)-1:], args[:len(args)-1]
-	case name == "sed" && hasFlag(argv, "-i", "--in-place"):
-		if len(args) > 1 {
-			writes = args[1:]
-		}
-	case name == "dd":
-		for _, w := range args {
-			if v, ok := strings.CutPrefix(w.s, "of="); ok {
-				writes = append(writes, word{s: v})
-			} else if v, ok := strings.CutPrefix(w.s, "if="); ok {
-				reads = append(reads, word{s: v})
-			}
-		}
-	case writers[name]:
-		writes = args
-	default:
-		reads = args // any command may read what it is pointed at
-	}
+	writes, reads := fileRoles(name, argv, args)
 	for _, w := range writes {
 		r.add(pathArg(w, true, call, gc, name))
 	}
@@ -158,4 +138,29 @@ func pathArg(w word, write bool, call core.ToolCall, gc core.GuardContext, name 
 		return r.done()
 	}
 	return checkPath(w.s, write, call, gc, true)
+}
+
+// fileRoles says which arguments of a command are written and which are read.
+func fileRoles(name string, argv, args []word) (writes, reads []word) {
+	switch {
+	case name == "cp" && len(args) > 1:
+		return args[len(args)-1:], args[:len(args)-1]
+	case name == "sed" && hasFlag(argv, "-i", "--in-place"):
+		if len(args) > 1 {
+			return args[1:], nil
+		}
+		return nil, nil
+	case name == "dd":
+		for _, w := range args {
+			if v, ok := strings.CutPrefix(w.s, "of="); ok {
+				writes = append(writes, word{s: v})
+			} else if v, ok := strings.CutPrefix(w.s, "if="); ok {
+				reads = append(reads, word{s: v})
+			}
+		}
+		return writes, reads
+	case writers[name]:
+		return args, nil
+	}
+	return nil, args // any command may read what it is pointed at
 }

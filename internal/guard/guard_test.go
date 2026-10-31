@@ -48,7 +48,7 @@ type corpusCase struct {
 	Symlinks  map[string]string `json:"symlinks"`
 	Files     []string          `json:"files"`
 	Protected []string          `json:"protected"` // extra protected_paths for this case
-	Policy    string            `json:"policy"` // riskrails.yaml diff: LOOSEN | TIGHTEN | MIXED | ERROR | PARSE_ERROR | NIL
+	Policy    string            `json:"policy"`    // riskrails.yaml diff: LOOSEN | TIGHTEN | MIXED | ERROR | PARSE_ERROR | NIL
 	Fixture   core.Decision     `json:"fixture"`
 	Strict    core.Decision     `json:"strict"`
 	Rule      string            `json:"rule"` // substring of Verdict.Rule, optional

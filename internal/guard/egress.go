@@ -35,88 +35,108 @@ var (
 	}
 )
 
+// found collects the hosts of one invocation; unresolved means some target
+// could not be determined statically.
+type found struct {
+	hosts      []string
+	unresolved bool
+}
+
+func (f *found) addURL(raw string) {
+	if h := hostOfURL(raw); h != "" {
+		f.hosts = append(f.hosts, h)
+	} else {
+		f.unresolved = true
+	}
+}
+
 // hostsOf returns the hosts an invocation contacts and whether some target
 // could not be resolved statically.
-func hostsOf(argv []word) (hosts []string, unresolved bool) {
-	name := argv[0].s
-	args := argv[1:]
-	addURL := func(w word) {
-		if h := hostOfURL(w.s); h != "" {
-			hosts = append(hosts, h)
-		} else {
-			unresolved = true
-		}
-	}
+func hostsOf(argv []word) ([]string, bool) {
+	var f found
+	name, args := argv[0].s, argv[1:]
 	switch {
 	case httpTools[name]:
-		skip := false
-		for _, w := range args {
-			switch {
-			case skip:
-				skip = false
-			case w.dyn:
-				unresolved = true
-			case strings.HasPrefix(w.s, "-"):
-				skip = valueFlags[name][w.s]
-			case schemeRe.MatchString(w.s):
-				addURL(w)
-			case bareRe.MatchString(w.s):
-				addURL(word{s: "http://" + w.s})
-			}
-		}
+		f.httpTool(name, args)
 	case name == "git":
-		if len(args) == 0 || !gitNet[args[0].s] {
-			return
-		}
-		for _, w := range args[1:] {
-			if w.dyn && args[0].s == "clone" {
-				unresolved = true
-			} else if hs := urlLike(w.s); hs != "" {
-				hosts = append(hosts, hs)
-			}
-		}
+		f.gitRemote(args)
 	case installers[name]:
 		for _, w := range args {
 			if hs := urlLike(strings.TrimPrefix(w.s, "git+")); hs != "" {
-				hosts = append(hosts, hs)
+				f.hosts = append(f.hosts, hs)
 			}
 		}
 	case remoteShell[name]:
-		skip, first := false, true
-		for _, w := range args {
-			switch {
-			case skip:
-				skip = false
-			case w.dyn:
-				unresolved = true
-			case strings.HasPrefix(w.s, "-"):
-				skip = valueFlags[name][w.s]
-			case schemeRe.MatchString(w.s):
-				addURL(w)
-			case name == "ssh" || name == "sftp":
-				if first {
-					hosts = append(hosts, stripUser(w.s))
-				}
-				first = false
-			default:
-				if m := scpRe.FindStringSubmatch(w.s); m != nil {
-					hosts = append(hosts, strings.ToLower(m[1]))
-				} else if i := strings.IndexByte(w.s, ':'); i > 0 && !strings.ContainsAny(w.s[:i], "/.") {
-					hosts = append(hosts, strings.ToLower(stripUser(w.s[:i])))
-				}
-			}
-		}
+		f.remoteShell(name, args)
 	case rawSockets[name]:
 		for _, w := range args {
 			if w.dyn {
-				unresolved = true
+				f.unresolved = true
 			} else if !strings.HasPrefix(w.s, "-") {
-				hosts = append(hosts, strings.ToLower(w.s))
+				f.hosts = append(f.hosts, strings.ToLower(w.s))
 				break
 			}
 		}
 	}
-	return
+	return f.hosts, f.unresolved
+}
+
+func (f *found) httpTool(name string, args []word) {
+	skip := false
+	for _, w := range args {
+		switch {
+		case skip:
+			skip = false
+		case w.dyn:
+			f.unresolved = true
+		case strings.HasPrefix(w.s, "-"):
+			skip = valueFlags[name][w.s]
+		case schemeRe.MatchString(w.s):
+			f.addURL(w.s)
+		case bareRe.MatchString(w.s):
+			f.addURL("http://" + w.s)
+		}
+	}
+}
+
+func (f *found) gitRemote(args []word) {
+	if len(args) == 0 || !gitNet[args[0].s] {
+		return
+	}
+	for _, w := range args[1:] {
+		if w.dyn && args[0].s == "clone" {
+			f.unresolved = true
+		} else if hs := urlLike(w.s); hs != "" {
+			f.hosts = append(f.hosts, hs)
+		}
+	}
+}
+
+func (f *found) remoteShell(name string, args []word) {
+	skip, first := false, true
+	for _, w := range args {
+		switch {
+		case skip:
+			skip = false
+		case w.dyn:
+			f.unresolved = true
+		case strings.HasPrefix(w.s, "-"):
+			skip = valueFlags[name][w.s]
+		case schemeRe.MatchString(w.s):
+			f.addURL(w.s)
+		case name == "ssh" || name == "sftp":
+			if first {
+				f.hosts = append(f.hosts, stripUser(w.s))
+			}
+			first = false
+		default:
+			if m := scpRe.FindStringSubmatch(w.s); m != nil {
+				f.hosts = append(f.hosts, strings.ToLower(m[1]))
+			} else if i := strings.IndexByte(w.s, ':'); i > 0 && !strings.ContainsAny(w.s[:i], "/.") {
+				f.hosts = append(f.hosts, strings.ToLower(stripUser(w.s[:i])))
+			}
+		}
+	}
 }
 
 func stripUser(s string) string {

@@ -47,7 +47,7 @@ func isShortCluster(w string) bool {
 		return false
 	}
 	for _, c := range w[1:] {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 			return false
 		}
 	}
@@ -146,7 +146,7 @@ func matchFlagsAnywhere(pw, av []string, dyn []bool) bool {
 		return false
 	}
 	for k := 0; k < i; k++ {
-		if !(dyn[k] || globWord(pw[k], av[k])) || strings.Contains(pw[k], "*") {
+		if (!dyn[k] && !globWord(pw[k], av[k])) || strings.Contains(pw[k], "*") {
 			return false
 		}
 	}
