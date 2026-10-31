@@ -1,0 +1,253 @@
+[
+ {
+  "name": "Write riskrails.yaml policy=LOOSEN",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "LOOSEN"
+ },
+ {
+  "name": "Write riskrails.yaml policy=TIGHTEN",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "TIGHTEN",
+  "rule": "protected_paths"
+ },
+ {
+  "name": "Write riskrails.yaml policy=MIXED",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "MIXED"
+ },
+ {
+  "name": "Write riskrails.yaml policy=ERROR",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "ERROR"
+ },
+ {
+  "name": "Write riskrails.yaml policy=PARSE_ERROR",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "PARSE_ERROR"
+ },
+ {
+  "name": "Write riskrails.yaml policy=NIL",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "NIL"
+ },
+ {
+  "name": "Write riskrails.yaml policy=none",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": ""
+ },
+ {
+  "name": "Write riskrails.yaml policy=EQUAL",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "EQUAL"
+ },
+ {
+  "name": "Edit riskrails.yaml policy=TIGHTEN",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "MultiEdit riskrails.yaml policy=LOOSEN",
+  "level": "L1",
+  "tool": "MultiEdit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "LOOSEN"
+ },
+ {
+  "name": "Edit riskrails.yaml policy=NIL",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "NIL"
+ },
+ {
+  "name": "Write riskrails.yaml policy=TIGHTEN",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "TIGHTEN",
+  "step_files": []
+ },
+ {
+  "name": "Edit riskrails.yaml deletion (empty content)",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "Edit move riskrails.yaml (old,new)",
+  "level": "L1",
+  "tool": "Edit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/old.yaml"
+  ],
+  "content": "schema: 1\n",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "RiskRails.yaml case variant LOOSEN",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/RiskRails.yaml"
+  ],
+  "content": "x",
+  "policy": "LOOSEN"
+ },
+ {
+  "name": "RiskRails.yaml case variant TIGHTEN",
+  "level": "L1",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/RiskRails.yaml"
+  ],
+  "content": "x",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "policy + other file in one call",
+  "level": "L1",
+  "tool": "MultiEdit",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml",
+   "{root}/src/a.php"
+  ],
+  "content": "x",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "policy tighten at L2",
+  "level": "L2",
+  "tool": "Write",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "x",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "policy loosen at L4",
+  "level": "L4",
+  "tool": "Write",
+  "fixture": "deny",
+  "strict": "deny",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ],
+  "content": "x",
+  "policy": "LOOSEN"
+ },
+ {
+  "name": "bash redirect never edits policy",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "echo x > riskrails.yaml",
+  "policy": "TIGHTEN"
+ },
+ {
+  "name": "read policy file",
+  "level": "L1",
+  "tool": "Read",
+  "fixture": "allow",
+  "strict": "allow",
+  "paths": [
+   "{root}/riskrails.yaml"
+  ]
+ }
+]

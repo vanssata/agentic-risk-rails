@@ -1,0 +1,113 @@
+[
+ {
+  "name": "WebFetch https://packagist.org/x @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "https://packagist.org/x"
+ },
+ {
+  "name": "WebFetch https://repo.packagist.org/p @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "https://repo.packagist.org/p"
+ },
+ {
+  "name": "WebFetch https://evil.com/x @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "url": "https://evil.com/x"
+ },
+ {
+  "name": "WebFetch https://evil.com/x @L2",
+  "level": "L2",
+  "tool": "WebFetch",
+  "fixture": "deny",
+  "strict": "deny",
+  "url": "https://evil.com/x"
+ },
+ {
+  "name": "WebFetch https://sub.packagist.org/x @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "url": "https://sub.packagist.org/x"
+ },
+ {
+  "name": "WebFetch http://api.github.com:8080/x @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "http://api.github.com:8080/x"
+ },
+ {
+  "name": "WebFetch http://[::1 @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "url": "http://[::1"
+ },
+ {
+  "name": "WebFetch HTTPS://PACKAGIST.ORG/x @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "HTTPS://PACKAGIST.ORG/x"
+ },
+ {
+  "name": "WebFetch https://packagist.org.evil.com/ @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "url": "https://packagist.org.evil.com/"
+ },
+ {
+  "name": "WebFetch https://evil.com/?u=packagist.org @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "url": "https://evil.com/?u=packagist.org"
+ },
+ {
+  "name": "WebFetch https://user@evil.com@packagist.org/ @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "https://user@evil.com@packagist.org/"
+ },
+ {
+  "name": "WebFetch https://symfony.com/doc @L1",
+  "level": "L1",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "ask",
+  "url": "https://symfony.com/doc"
+ },
+ {
+  "name": "WebFetch https://packagist.org/x @L2",
+  "level": "L2",
+  "tool": "WebFetch",
+  "fixture": "allow",
+  "strict": "deny",
+  "url": "https://packagist.org/x"
+ },
+ {
+  "name": "WebSearch no url",
+  "level": "L1",
+  "tool": "WebSearch",
+  "fixture": "allow",
+  "strict": "allow"
+ }
+]

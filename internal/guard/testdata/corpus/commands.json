@@ -1,0 +1,482 @@
+[
+ {
+  "name": "git status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status"
+ },
+ {
+  "name": "git diff HEAD",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git diff HEAD"
+ },
+ {
+  "name": "git diff --stat",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git diff --stat"
+ },
+ {
+  "name": "composer install",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "composer install"
+ },
+ {
+  "name": "php bin/phpunit tests/Unit",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit tests/Unit"
+ },
+ {
+  "name": "php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit"
+ },
+ {
+  "name": "php bin/console cache:clear",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/console cache:clear"
+ },
+ {
+  "name": "git push --force origin feature",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push --force origin feature"
+ },
+ {
+  "name": "git push origin main",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "git push origin main"
+ },
+ {
+  "name": "git push origin feature",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git push origin feature"
+ },
+ {
+  "name": "git commit -m x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git commit -m x"
+ },
+ {
+  "name": "composer require foo/bar",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "composer require foo/bar"
+ },
+ {
+  "name": "composer global require x/y",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "composer global require x/y"
+ },
+ {
+  "name": "rm -rf /",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf /"
+ },
+ {
+  "name": "php bin/console doctrine:schema:drop --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "ask",
+  "command": "php bin/console doctrine:schema:drop --force"
+ },
+ {
+  "name": "php bin/console doctrine:migrations:migrate",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "php bin/console doctrine:migrations:migrate"
+ },
+ {
+  "name": "ls -la",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "ls -la"
+ },
+ {
+  "name": "echo hi",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo hi"
+ },
+ {
+  "name": "git status && git diff",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status && git diff"
+ },
+ {
+  "name": "git status; rm -rf /",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git status; rm -rf /"
+ },
+ {
+  "name": "git status | cat",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git status | cat"
+ },
+ {
+  "name": "git status\\ngit diff",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status\ngit diff"
+ },
+ {
+  "name": "composer install && php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "composer install && php bin/phpunit"
+ },
+ {
+  "name": "composer install; composer require a/b",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "composer install; composer require a/b"
+ },
+ {
+  "name": "php bin/phpunit > /dev/null 2>&1",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "php bin/phpunit > /dev/null 2>&1"
+ },
+ {
+  "name": "git push -f origin x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push -f origin x"
+ },
+ {
+  "name": "git push origin +main",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git push origin +main"
+ },
+ {
+  "name": "git push --force-with-lease origin x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push --force-with-lease origin x"
+ },
+ {
+  "name": "rm -fr /",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -fr /"
+ },
+ {
+  "name": "rm -r -f /",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -r -f /"
+ },
+ {
+  "name": "rm -rf /tmp/zzz",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "rm -rf /tmp/zzz"
+ },
+ {
+  "name": "composer update",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "composer update"
+ },
+ {
+  "name": "true && false",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "true && false"
+ },
+ {
+  "name": "cd src && git status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "cd src && git status"
+ },
+ {
+  "name": "python3 script.py",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "python3 script.py"
+ },
+ {
+  "name": "git status || git push --force",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git status || git push --force"
+ },
+ {
+  "name": "git status &",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status &"
+ },
+ {
+  "name": "git status @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "git status"
+ },
+ {
+  "name": "git push origin feature @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push origin feature"
+ },
+ {
+  "name": "git commit -m x @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git commit -m x"
+ },
+ {
+  "name": "ls -la @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ls -la"
+ },
+ {
+  "name": "echo hi @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo hi"
+ },
+ {
+  "name": "php bin/phpunit @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "php bin/phpunit"
+ },
+ {
+  "name": "rm -rf / @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf /"
+ },
+ {
+  "name": "git status @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "git status"
+ },
+ {
+  "name": "git push origin feature @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push origin feature"
+ },
+ {
+  "name": "git commit -m x @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git commit -m x"
+ },
+ {
+  "name": "ls -la @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ls -la"
+ },
+ {
+  "name": "echo hi @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo hi"
+ },
+ {
+  "name": "php bin/phpunit @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "php bin/phpunit"
+ },
+ {
+  "name": "rm -rf / @L3",
+  "level": "L3",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf /"
+ },
+ {
+  "name": "git status @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "git status"
+ },
+ {
+  "name": "git push origin feature @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git push origin feature"
+ },
+ {
+  "name": "git commit -m x @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git commit -m x"
+ },
+ {
+  "name": "ls -la @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "ls -la"
+ },
+ {
+  "name": "echo hi @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "echo hi"
+ },
+ {
+  "name": "php bin/phpunit @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "deny",
+  "command": "php bin/phpunit"
+ },
+ {
+  "name": "rm -rf / @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "rm -rf /"
+ },
+ {
+  "name": "git status @L0",
+  "level": "L0",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "ask",
+  "command": "git status"
+ },
+ {
+  "name": "ls @L0",
+  "level": "L0",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "ls"
+ }
+]

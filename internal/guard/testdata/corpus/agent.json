@@ -1,0 +1,154 @@
+[
+ {
+  "name": "Agent model=''",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": ""
+ },
+ {
+  "name": "Agent model='claude-opus-5-5'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "claude-opus-5-5"
+ },
+ {
+  "name": "Agent model='opus'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "opus"
+ },
+ {
+  "name": "Agent model='sonnet'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "sonnet"
+ },
+ {
+  "name": "Agent model='claude-sonnet-5-5'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "claude-sonnet-5-5"
+ },
+ {
+  "name": "Agent model='claude-haiku-4-5'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "claude-haiku-4-5"
+ },
+ {
+  "name": "Agent model='haiku'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "haiku"
+ },
+ {
+  "name": "Agent model='gpt-9'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "gpt-9"
+ },
+ {
+  "name": "Agent model='sonnetx'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "sonnetx"
+ },
+ {
+  "name": "Agent model='claude-sonnet'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "claude-sonnet"
+ },
+ {
+  "name": "Agent model='claude'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "claude"
+ },
+ {
+  "name": "Task model=''",
+  "level": "L1",
+  "tool": "Task",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": ""
+ },
+ {
+  "name": "Task model='opus'",
+  "level": "L1",
+  "tool": "Task",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "opus"
+ },
+ {
+  "name": "Task model='o1'",
+  "level": "L1",
+  "tool": "Task",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "o1"
+ },
+ {
+  "name": "Task model='claude-3-opus-20240229'",
+  "level": "L1",
+  "tool": "Task",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "claude-3-opus-20240229"
+ },
+ {
+  "name": "Agent model='OPUS'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "allow",
+  "strict": "allow",
+  "model": "OPUS"
+ },
+ {
+  "name": "Agent model='gemini-3'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "gemini-3"
+ },
+ {
+  "name": "Agent model='sonnet-ultra'",
+  "level": "L1",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "sonnet-ultra"
+ },
+ {
+  "name": "Agent unknown model at L2",
+  "level": "L2",
+  "tool": "Agent",
+  "fixture": "deny",
+  "strict": "deny",
+  "model": "gpt-9"
+ }
+]
