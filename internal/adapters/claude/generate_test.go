@@ -86,7 +86,7 @@ func TestProtectedPathsBackedBySandboxAndRules(t *testing.T) {
 		assert.Contains(t, doc.Permissions.Deny, "Edit(/"+p+")", p)
 	}
 	assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, ".claude/**")
-	assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, ".git/hooks/**")
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyWrite, ".git/**")
 	for _, p := range []string{".env.local", "config/secrets/**"} {
 		assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, p)
 		assert.Contains(t, doc.Permissions.Deny, "Read(/"+p+")")

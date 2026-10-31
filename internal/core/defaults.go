@@ -13,11 +13,7 @@ var AlwaysProtected = []string{
 	".cursor/**",
 	".kiro/**",
 	".mcp.json",
-	".git/config",
-	".git/HEAD",
-	".git/packed-refs",
-	".git/refs/**",
-	".git/hooks/**",
+	".git/**", // all of it: commondir, info/, objects/info/alternates, modules/ … can re-point git
 	".github/workflows/**",
 }
 
