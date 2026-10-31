@@ -17,13 +17,12 @@ import (
 
 // verifyFlags are shared by `rr verify` (and its subcommands) and `rr affected`.
 type verifyFlags struct {
-	root, base, mode string
+	root, mode string
 }
 
 func (f *verifyFlags) bind(c *cobra.Command) {
 	wd, _ := os.Getwd()
 	c.PersistentFlags().StringVar(&f.root, "root", wd, "repository root")
-	c.PersistentFlags().StringVar(&f.base, "base", "", "ref to diff against (default HEAD, plus untracked files)")
 	c.PersistentFlags().StringVar(&f.mode, "mode", string(core.ModeGuarded), "task mode (light|guarded|full|full_irreversible|programme)")
 }
 
@@ -51,13 +50,14 @@ func printJSON(c *cobra.Command, v any) error {
 	return enc.Encode(v)
 }
 
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return false
+// taskTrust loads the task's journal and the trust inputs recorded in task_started.
+func taskTrust(ctx context.Context, root, task string) ([]core.Event, verify.Trust, error) {
+	events, err := journal.New(root).Events(ctx, task)
+	if err != nil {
+		return nil, verify.Trust{}, err
 	}
-	null, err := os.Stat(os.DevNull) // /dev/null is a character device too
-	return err != nil || !os.SameFile(fi, null)
+	t, err := verify.LoadTrust(root, task, events)
+	return events, t, err
 }
 
 func init() {
@@ -67,7 +67,7 @@ func init() {
 		var closing bool
 		c := &cobra.Command{
 			Use:   "verify",
-			Short: "Run the tests for the current changes (affected, or full when policy requires)",
+			Short: "Run the tests for the task's changes (affected, or full when policy requires)",
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				spec, err := f.spec(cmd.Context())
 				if err != nil {
@@ -77,13 +77,17 @@ func init() {
 				if err != nil {
 					return err
 				}
-				changed, err := verify.ChangedFiles(cmd.Context(), f.root, f.base)
+				_, trust, err := taskTrust(cmd.Context(), f.root, task)
+				if err != nil {
+					return err
+				}
+				changed, err := verify.TaskChanged(cmd.Context(), f.root, trust, false)
 				if err != nil {
 					return err
 				}
 				rep, err := verify.Run(cmd.Context(), verify.Input{
 					Root: f.root, Task: task, Changed: changed, Spec: spec, Mode: mode, Closing: closing,
-					Tree:    func(ctx context.Context) (string, error) { return verify.TreeFingerprint(ctx, f.root) },
+					Tree:    func(ctx context.Context, ign bool) (string, error) { return verify.TreeFingerprint(ctx, f.root, ign) },
 					Journal: journal.New(f.root),
 				})
 				if err != nil {
@@ -103,34 +107,24 @@ func init() {
 		c.Flags().BoolVar(&closing, "close", false, "closing run: always full")
 		_ = c.MarkPersistentFlagRequired("task")
 
-		var scope []string
+		// facts takes every trust input (scope, base_sha, baseline) from the task journal only.
 		facts := &cobra.Command{
 			Use:   "facts",
 			Short: "Check the two close facts: green full verify on this tree, changes inside scope",
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				events, err := journal.New(f.root).Events(cmd.Context(), task)
+				events, trust, err := taskTrust(cmd.Context(), f.root, task)
 				if err != nil {
 					return err
 				}
-				// The task's scope comes from its journal. --scope is a fallback for a human at a
-				// terminal only: an agent's Bash tool has no TTY, so it cannot widen its own scope.
-				if js := verify.ScopeFromEvents(events); js != nil {
-					if len(scope) > 0 {
-						return errors.New("refusing: the task journal already carries a scope; --scope is not accepted")
-					}
-					scope = js
-				} else if len(scope) == 0 || !isTerminal(os.Stdin) {
-					return errors.New("refusing: no scope in the task journal, and --scope needs an interactive terminal")
-				}
-				changed, err := verify.ChangedFiles(cmd.Context(), f.root, f.base)
+				changed, err := verify.TaskChanged(cmd.Context(), f.root, trust, true)
 				if err != nil {
 					return err
 				}
-				tree, err := verify.TreeFingerprint(cmd.Context(), f.root)
+				tree, err := verify.TreeFingerprint(cmd.Context(), f.root, true)
 				if err != nil {
 					return err
 				}
-				fc := verify.ComputeFacts(events, tree, changed, scope)
+				fc := verify.ComputeFacts(events, tree, changed, trust.Scope)
 				if err := printJSON(cmd, fc); err != nil {
 					return err
 				}
@@ -140,7 +134,6 @@ func init() {
 				return nil
 			},
 		}
-		facts.Flags().StringSliceVar(&scope, "scope", nil, "globs the task may change (human terminal only)")
 		c.AddCommand(facts)
 		return c
 	})

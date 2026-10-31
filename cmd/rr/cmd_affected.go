@@ -37,7 +37,7 @@ func init() {
 					spec.Adapters = only
 				}
 				if len(files) == 0 {
-					if files, err = verify.ChangedFiles(cmd.Context(), f.root, f.base); err != nil {
+					if files, err = verify.GitChanged(cmd.Context(), f.root); err != nil {
 						return err
 					}
 				}

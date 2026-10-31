@@ -20,6 +20,11 @@ func runCmd(ctx context.Context, root string, spec core.VerifyAdapterSpec, tests
 	if len(argv) == 0 {
 		return core.TestResult{}, fmt.Errorf("verify: adapter %q has no cmd", spec.Name)
 	}
+	for _, t := range tests {
+		if strings.HasPrefix(t, "-") {
+			return core.TestResult{}, fmt.Errorf("verify: refusing test path %q: it would be read as an option", t)
+		}
+	}
 	if !full {
 		if len(tests) == 0 {
 			return core.TestResult{Output: "no tests selected"}, nil

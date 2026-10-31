@@ -211,7 +211,7 @@ func two() *int  { n := 2; return &n }
 
 func orchInput(j core.Journal, s *stub) Input {
 	return Input{
-		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: func(context.Context) (string, error) { return "T1", nil },
+		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: func(context.Context, bool) (string, error) { return "T1", nil },
 		Spec: core.VerifySpec{
 			Adapters:              []core.VerifyAdapterSpec{{Name: s.name, Cmd: "x"}},
 			FullRunWhen:           []string{"uncovered_file", "close"},
@@ -261,7 +261,7 @@ func TestRunOrchestration(t *testing.T) {
 		rep, err := Run(ctx, in)
 		require.NoError(t, err)
 		assert.True(t, rep.Full)
-		assert.Equal(t, []string{"verify_run", "verify_run", "selection_misses"}, j.Types("t1"))
+		assert.Equal(t, []string{"verify_run", "verify_started", "verify_run", "selection_misses"}, j.Types("t1"))
 	})
 
 	t.Run("no miss when full is green or previous was not affected-green", func(t *testing.T) {
@@ -271,7 +271,7 @@ func TestRunOrchestration(t *testing.T) {
 		in.Closing = true
 		_, err := Run(ctx, in)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"verify_run"}, j.Types("t1"))
+		assert.Equal(t, []string{"verify_started", "verify_run"}, j.Types("t1"))
 	})
 
 	t.Run("suite budget", func(t *testing.T) {
@@ -323,22 +323,4 @@ func TestComputeFacts(t *testing.T) {
 			assert.Equal(t, tc.want.GreenNow && tc.want.InScope, got.Ok())
 		})
 	}
-}
-
-func TestChangedFilesAndFingerprint(t *testing.T) {
-	root := testutil.GitRepo(t, map[string]string{"a.txt": "1", "b.txt": "1"})
-	ctx := context.Background()
-	f0, err := TreeFingerprint(ctx, root)
-	require.NoError(t, err)
-	write(t, root, map[string]string{"a.txt": "2", "new.txt": "n"})
-	files, err := ChangedFiles(ctx, root, "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"a.txt", "new.txt"}, files)
-	f1, err := TreeFingerprint(ctx, root)
-	require.NoError(t, err)
-	assert.NotEqual(t, f0, f1)
-	write(t, root, map[string]string{"new.txt": "m"})
-	f2, err := TreeFingerprint(ctx, root)
-	require.NoError(t, err)
-	assert.NotEqual(t, f1, f2)
 }

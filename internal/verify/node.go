@@ -30,6 +30,9 @@ var nodeTestFile = regexp.MustCompile(`\.(test|spec)\.[cm]?[jt]sx?$`)
 
 func (n Node) Map(ctx context.Context, root string, changed []string) (tests, uncovered []string, err error) {
 	for _, f := range changed {
+		if strings.HasPrefix(f, "-") {
+			return nil, nil, fmt.Errorf("verify: refusing path %q: it would be read as an option", f)
+		}
 		switch {
 		case nodeTestFile.MatchString(f):
 			tests = append(tests, f)

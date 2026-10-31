@@ -5,6 +5,8 @@ package verify
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,8 +72,8 @@ type Input struct {
 	Spec    core.VerifySpec
 	Mode    core.Mode
 	Closing bool
-	Tree    func(context.Context) (string, error) // tree fingerprint, taken before and after the run (see TreeFingerprint); nil: none
-	Journal core.Journal                          // nil: nothing is recorded and suite_budget is not enforced
+	Tree    func(ctx context.Context, includeIgnored bool) (string, error) // see TreeFingerprint; nil: none
+	Journal core.Journal                                                   // nil: nothing is recorded and suite_budget is not enforced
 	Actors  []core.VerifyAdapter
 }
 
@@ -107,10 +109,12 @@ type Selection struct {
 	Uncovered []string
 	Full      bool
 	Reason    string
+	// Unsupported lists policy adapters with no built-in implementation (e.g. lint).
+	Unsupported []string
 }
 
 // Select maps the changes through every configured adapter and applies the
-// full-run rules. Policy adapters with no built-in adapter (e.g. lint) are skipped.
+// full-run rules.
 func Select(ctx context.Context, in Input) (Selection, error) {
 	actors := in.Actors
 	if actors == nil {
@@ -118,16 +122,21 @@ func Select(ctx context.Context, in Input) (Selection, error) {
 	}
 	var sel Selection
 	for _, spec := range in.Spec.Adapters {
+		known := false
 		for _, a := range actors {
 			if a.Name() != spec.Name {
 				continue
 			}
+			known = true
 			tests, unc, err := a.Map(ctx, in.Root, in.Changed)
 			if err != nil {
 				return Selection{}, fmt.Errorf("verify: map %s: %w", spec.Name, err)
 			}
 			sel.Items = append(sel.Items, Item{a, spec, tests})
 			sel.Uncovered = append(sel.Uncovered, unc...)
+		}
+		if !known {
+			sel.Unsupported = append(sel.Unsupported, spec.Name)
 		}
 	}
 	if len(sel.Items) == 0 {
@@ -148,17 +157,14 @@ func Run(ctx context.Context, in Input) (Report, error) {
 	rep := Report{Full: sel.Full, Reason: sel.Reason, Uncovered: sel.Uncovered, Results: map[string]core.TestResult{}}
 	sels := sel.Items
 
-	var prior []core.Event
-	if in.Journal != nil {
-		var err error
-		if prior, err = in.Journal.Events(ctx, in.Task); err != nil {
-			return rep, fmt.Errorf("verify: journal: %w", err)
-		}
-		if rep.Full && in.Spec.SuiteBudget != nil && countFull(prior) >= *in.Spec.SuiteBudget {
-			return rep, ErrSuiteBudget
-		}
+	if rep.Full && len(sel.Unsupported) > 0 {
+		return rep, fmt.Errorf("verify: adapter %s not supported; a full run cannot go green without it", sel.Unsupported[0])
 	}
-	tree, err := fingerprint(ctx, in)
+	prior, err := begin(ctx, in, rep.Full)
+	if err != nil {
+		return rep, err
+	}
+	before, err := fingerprint(ctx, in, false)
 	if err != nil {
 		return rep, err
 	}
@@ -175,33 +181,57 @@ func Run(ctx context.Context, in Input) (Report, error) {
 		names = append(names, s.Spec.Name)
 		ran += len(res.Ran)
 	}
-	after, err := fingerprint(ctx, in)
+	// Ignored files (caches) may change during a run; everything else may not.
+	after, err := fingerprint(ctx, in, false)
 	if err != nil {
 		return rep, err
 	}
-	if after != tree {
+	if after != before {
 		rep.Passed = false // the tree changed during the run: the result is about no tree
 	}
-	if in.Journal == nil {
-		return rep, nil
-	}
-	if err := appendEvent(ctx, in, "verify_run", RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: tree}); err != nil {
+	tree, err := fingerprint(ctx, in, true) // the run's tree: full, after the run
+	if err != nil {
 		return rep, err
 	}
-	if rep.Full && !rep.Passed && metricOn(in.Spec) && lastRunGreenAffected(prior) {
-		err := appendEvent(ctx, in, "selection_misses", map[string]any{"changed": in.Changed, "adapters": names})
-		if err != nil {
-			return rep, err
-		}
-	}
-	return rep, nil
+	return rep, record(ctx, in, rep, prior, RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: tree})
 }
 
-func fingerprint(ctx context.Context, in Input) (string, error) {
+// begin reads the task's earlier events and, for a budgeted full run, reserves it.
+func begin(ctx context.Context, in Input, full bool) ([]core.Event, error) {
+	if in.Journal == nil {
+		return nil, nil
+	}
+	prior, err := in.Journal.Events(ctx, in.Task)
+	if err != nil {
+		return nil, fmt.Errorf("verify: journal: %w", err)
+	}
+	if full && in.Spec.SuiteBudget != nil {
+		if err := reserve(ctx, in, *in.Spec.SuiteBudget); err != nil {
+			return nil, err
+		}
+	}
+	return prior, nil
+}
+
+// record journals verify_run and, when affected was green and full is red, selection_misses.
+func record(ctx context.Context, in Input, rep Report, prior []core.Event, d RunData) error {
+	if in.Journal == nil {
+		return nil
+	}
+	if err := appendEvent(ctx, in, "verify_run", d); err != nil {
+		return err
+	}
+	if rep.Full && !rep.Passed && metricOn(in.Spec) && lastRunGreenAffected(prior) {
+		return appendEvent(ctx, in, "selection_misses", map[string]any{"changed": in.Changed, "adapters": d.Adapters})
+	}
+	return nil
+}
+
+func fingerprint(ctx context.Context, in Input, includeIgnored bool) (string, error) {
 	if in.Tree == nil {
 		return "", nil
 	}
-	t, err := in.Tree(ctx)
+	t, err := in.Tree(ctx, includeIgnored)
 	if err != nil {
 		return "", fmt.Errorf("verify: fingerprint: %w", err)
 	}
@@ -232,14 +262,51 @@ func runs(events []core.Event) []RunData {
 	return out
 }
 
-func countFull(events []core.Event) int {
-	n := 0
-	for _, r := range runs(events) {
-		if r.Full {
-			n++
+// reserve takes one of the task's full runs. The verify_started event is
+// appended under the journal lock BEFORE the run and then ranked: only the first
+// suite_budget non-voided starts may run; a loser voids its own start and is
+// refused, so parallel runs can never exceed the budget.
+func reserve(ctx context.Context, in Input, budget int) error {
+	var nb [8]byte
+	if _, err := rand.Read(nb[:]); err != nil {
+		return err
+	}
+	nonce := hex.EncodeToString(nb[:])
+	if err := appendEvent(ctx, in, "verify_started", map[string]any{"nonce": nonce, "full": true}); err != nil {
+		return err
+	}
+	events, err := in.Journal.Events(ctx, in.Task)
+	if err != nil {
+		return fmt.Errorf("verify: journal: %w", err)
+	}
+	voided := map[string]bool{}
+	type nonceData struct {
+		Nonce string `json:"nonce"`
+	}
+	for _, e := range events {
+		var d nonceData
+		if e.Type == "verify_voided" && json.Unmarshal(e.Data, &d) == nil {
+			voided[d.Nonce] = true
 		}
 	}
-	return n
+	rank := 0
+	for _, e := range events {
+		var d nonceData
+		if e.Type != "verify_started" || json.Unmarshal(e.Data, &d) != nil || voided[d.Nonce] {
+			continue
+		}
+		if d.Nonce == nonce {
+			break
+		}
+		rank++
+	}
+	if rank >= budget {
+		if err := appendEvent(ctx, in, "verify_voided", nonceData{nonce}); err != nil {
+			return err
+		}
+		return ErrSuiteBudget
+	}
+	return nil
 }
 
 // lastRunGreenAffected: the most recent run was affected-only and green, so a
@@ -285,18 +352,3 @@ func ComputeFacts(events []core.Event, tree string, changed, scope []string) Fac
 
 // Ok reports whether both facts hold.
 func (f Facts) Ok() bool { return f.GreenNow && f.InScope }
-
-// ScopeFromEvents returns the task scope globs recorded by task_started or
-// plan_accepted (data field "scope"); the last one wins. nil if none carries it.
-func ScopeFromEvents(events []core.Event) []string {
-	var scope []string
-	for _, e := range events {
-		var d struct {
-			Scope []string `json:"scope"`
-		}
-		if (e.Type == "task_started" || e.Type == "plan_accepted") && json.Unmarshal(e.Data, &d) == nil && d.Scope != nil {
-			scope = d.Scope
-		}
-	}
-	return scope
-}

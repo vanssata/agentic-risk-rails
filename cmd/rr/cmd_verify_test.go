@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,46 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vanssata/agentic-risk-rails/internal/core"
-	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
-
-func startTask(t *testing.T, root string, data string) {
-	t.Helper()
-	_, err := journal.New(root).Append(context.Background(), core.Event{Type: "task_started", Task: "t1", Actor: core.ActorHuman, Data: json.RawMessage(data)})
-	require.NoError(t, err)
-}
-
-func TestVerifyFactsFlagsAndScope(t *testing.T) {
-	root := testutil.CopyFixture(t, "php-symfony")
-
-	// persistent flags: --task/--root work on the subcommand; no scope anywhere => refuse
-	startTask(t, root, `{}`)
-	_, err := runPolicyRR(t, "verify", "facts", "--task", "t1", "--root", root)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no scope in the task journal")
-
-	// --scope without a terminal is refused too (an agent has no TTY)
-	_, err = runPolicyRR(t, "verify", "facts", "--task", "t1", "--root", root, "--scope", "**")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "interactive terminal")
-}
-
-func TestVerifyFactsScopeFromJournal(t *testing.T) {
-	root := testutil.CopyFixture(t, "php-symfony")
-	startTask(t, root, `{"scope":["src/**"]}`)
-
-	_, err := runPolicyRR(t, "verify", "facts", "--task", "t1", "--root", root, "--scope", "**")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already carries a scope")
-
-	// scope is known; no verify_run yet => facts do not hold, but the refusal is about facts
-	out, err := runPolicyRR(t, "verify", "facts", "--task", "t1", "--root", root)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "close facts do not hold")
-	assert.Contains(t, out, `"green_now": false`)
-}
 
 func TestVerifyUsesResolvedPolicy(t *testing.T) {
 	root := testutil.CopyFixture(t, "php-symfony")

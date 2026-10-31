@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -50,15 +53,38 @@ func nul(s string) []string {
 
 func notRR(p string) bool { return p != ".rr" && !strings.HasPrefix(p, ".rr/") }
 
-// ChangedFiles lists files changed against base (default HEAD): the diff
-// without rename detection (a rename is a delete plus an add), untracked files,
-// and files hidden from git with assume-unchanged / skip-worktree (treated as
-// changed because their state cannot be trusted). `.rr/` is excluded.
-func ChangedFiles(ctx context.Context, root, base string) ([]string, error) {
-	if base == "" {
-		base = "HEAD"
+var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// HeadSHA is the full commit id of HEAD; the flow records it as base_sha.
+func HeadSHA(ctx context.Context, root string) (string, error) {
+	out, err := vcs(ctx, root, "rev-parse", "--verify", "--end-of-options", "HEAD")
+	return strings.TrimSpace(out), err
+}
+
+// diffNames lists files differing from rev (a full hex SHA, or the literal HEAD),
+// without rename detection (a rename is a delete plus an add).
+func diffNames(ctx context.Context, root, rev string) ([]string, error) {
+	if rev != "HEAD" && !fullSHA.MatchString(rev) {
+		return nil, fmt.Errorf("verify: %q is not a full commit id", rev)
 	}
-	diff, err := vcs(ctx, root, "diff", "--no-renames", "--name-only", "-z", base, "--")
+	out, err := vcs(ctx, root, "diff", "--no-renames", "--name-only", "-z", "--end-of-options", rev, "--")
+	return nul(out), err
+}
+
+func visible(paths []string) []string {
+	var kept []string
+	for _, p := range paths {
+		if notRR(p) {
+			kept = append(kept, p)
+		}
+	}
+	return uniq(kept)
+}
+
+// GitChanged lists files changed against HEAD plus untracked (not ignored) ones.
+// It is a preview for `rr affected`; task scope checks use TaskChanged.
+func GitChanged(ctx context.Context, root string) ([]string, error) {
+	diff, err := diffNames(ctx, root, "HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -66,30 +92,137 @@ func ChangedFiles(ctx context.Context, root, base string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	tagged, err := vcs(ctx, root, "ls-files", "-v", "-z")
+	return visible(append(diff, nul(untracked)...)), nil
+}
+
+// Manifest maps every file of the tree (tracked, untracked and, if asked,
+// ignored; nested repositories and submodule worktrees included; only the root
+// `.git` and `.rr` are skipped) to its mode and content hash.
+type Manifest map[string]string
+
+func buildManifest(ctx context.Context, root string, includeIgnored bool) (Manifest, error) {
+	skip := map[string]bool{}
+	if !includeIgnored {
+		out, err := vcs(ctx, root, "ls-files", "-o", "-i", "--exclude-standard", "-z")
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range nul(out) {
+			skip[p] = true
+		}
+	}
+	m := Manifest{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
+		if d.IsDir() {
+			if rel == ".git" || rel == ".rr" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skip[rel] {
+			return nil
+		}
+		h, err := hashPath(p)
+		if err != nil {
+			return fmt.Errorf("verify: manifest %s: %w", rel, err)
+		}
+		m[rel] = h
+		return nil
+	})
+	return m, err
+}
+
+func hashPath(p string) (string, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t, err := os.Readlink(p)
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.WriteString(h, t)
+	} else {
+		f, err := os.Open(p)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		if _, err := io.Copy(h, f); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%o:%s", fi.Mode(), hex.EncodeToString(h.Sum(nil))), nil
+}
+
+// Baseline is what the flow calls at task start: the full manifest (JSON, to be
+// written to .rr/run/<task>.baseline.json) and its sha256 (task_started.baseline).
+func Baseline(ctx context.Context, root string) (manifest []byte, sha string, err error) {
+	m, err := buildManifest(ctx, root, true)
+	if err != nil {
+		return nil, "", err
+	}
+	manifest, err = json.Marshal(m) // map keys are sorted: deterministic
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(manifest)
+	return manifest, hex.EncodeToString(sum[:]), nil
+}
+
+// TaskChanged lists every path whose state differs from the task baseline:
+// the diff against base_sha, plus every added, changed or deleted path of the
+// manifest. With includeIgnored=false, ignored paths are left out (they are not
+// test inputs, e.g. caches); scope checks use true.
+func TaskChanged(ctx context.Context, root string, t Trust, includeIgnored bool) ([]string, error) {
+	out, err := diffNames(ctx, root, t.BaseSHA)
 	if err != nil {
 		return nil, err
 	}
-	out := append(nul(diff), nul(untracked)...)
-	for _, e := range nul(tagged) {
-		if len(e) > 2 && (e[0] >= 'a' && e[0] <= 'z' || e[0] == 'S') {
-			out = append(out, e[2:])
+	cur, err := buildManifest(ctx, root, true)
+	if err != nil {
+		return nil, err
+	}
+	var ignored map[string]bool
+	if !includeIgnored {
+		list, err := vcs(ctx, root, "ls-files", "-o", "-i", "--exclude-standard", "-z")
+		if err != nil {
+			return nil, err
+		}
+		ignored = map[string]bool{}
+		for _, p := range nul(list) {
+			ignored[p] = true
 		}
 	}
-	var kept []string
-	for _, p := range out {
-		if notRR(p) {
-			kept = append(kept, p)
+	for p, h := range cur {
+		if t.Manifest[p] != h && !ignored[p] {
+			out = append(out, p)
 		}
 	}
-	return uniq(kept), nil
+	for p := range t.Manifest {
+		if _, ok := cur[p]; !ok && !ignored[p] {
+			out = append(out, p)
+		}
+	}
+	return visible(out), nil
 }
 
-// TreeFingerprint hashes HEAD, the index (mode + blob of every tracked file) and
-// the mode and content of every changed, untracked and ignored file (`.rr/`
-// excluded). A deleted file hashes differently from an empty one; an unreadable
-// file is an error.
-func TreeFingerprint(ctx context.Context, root string) (string, error) {
+// TreeFingerprint hashes HEAD, the index and the manifest of the tree. Without
+// includeIgnored, ignored files (caches) are not part of it.
+func TreeFingerprint(ctx context.Context, root string, includeIgnored bool) (string, error) {
 	head, err := vcs(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
@@ -98,58 +231,17 @@ func TreeFingerprint(ctx context.Context, root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	changed, err := ChangedFiles(ctx, root, "")
+	m, err := buildManifest(ctx, root, includeIgnored)
 	if err != nil {
 		return "", err
 	}
-	all, err := vcs(ctx, root, "ls-files", "-o", "-z") // includes ignored files
+	b, err := json.Marshal(m)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
 	fmt.Fprintln(h, strings.TrimSpace(head))
 	h.Write([]byte(index))
-	for _, f := range uniq(append(changed, nul(all)...)) {
-		if !notRR(f) {
-			continue
-		}
-		if err := hashFile(h, root, f); err != nil {
-			return "", err
-		}
-	}
+	h.Write(b)
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func hashFile(h io.Writer, root, rel string) error {
-	p := filepath.Join(root, rel)
-	fi, err := os.Lstat(p)
-	switch {
-	case os.IsNotExist(err):
-		_, err = fmt.Fprintf(h, "%s\x00deleted\x00", rel)
-		return err
-	case err != nil:
-		return fmt.Errorf("verify: fingerprint %s: %w", rel, err)
-	}
-	fmt.Fprintf(h, "%s\x00%o\x00", rel, fi.Mode())
-	if fi.Mode()&os.ModeSymlink != 0 {
-		t, err := os.Readlink(p)
-		if err != nil {
-			return fmt.Errorf("verify: fingerprint %s: %w", rel, err)
-		}
-		_, err = io.WriteString(h, t)
-		return err
-	}
-	if fi.IsDir() {
-		return nil
-	}
-	f, err := os.Open(p)
-	if err != nil {
-		return fmt.Errorf("verify: fingerprint %s: %w", rel, err)
-	}
-	defer f.Close()
-	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("verify: fingerprint %s: %w", rel, err)
-	}
-	_, err = h.Write([]byte{0})
-	return err
 }
