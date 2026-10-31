@@ -65,140 +65,36 @@ func (m *measure) set(v int, why string) {
 	m.ok = true
 }
 
+// scorer holds what every axis measurement needs.
+type scorer struct {
+	r                 core.RiskSpec
+	in                Input
+	tests             []string
+	testsOnly, allNew bool
+}
+
 // Score measures the six axes and derives the mode.
 func Score(pol core.Policy, in Input) core.Weight {
-	r := pol.Risk
-	tests := r.Axes[core.AxisCoverage].TestGlobs
-	testsOnly := len(in.Files) > 0
-	allNew := true
+	s := scorer{r: pol.Risk, in: in, tests: pol.Risk.Axes[core.AxisCoverage].TestGlobs, testsOnly: len(in.Files) > 0, allNew: true}
 	for _, f := range in.Files {
-		if anyMatch(tests, f) == "" {
-			testsOnly = false
+		if anyMatch(s.tests, f) == "" {
+			s.testsOnly = false
 		}
 		if _, ok := in.Refs[f]; ok {
-			allNew = false
+			s.allNew = false
 		}
 	}
-	m := map[core.Axis]*measure{}
-	for _, a := range core.Axes {
-		m[a] = &measure{}
+	m := map[core.Axis]*measure{
+		core.AxisScope: s.scope(), core.AxisBehaviour: s.behaviour(), core.AxisReversibility: s.reversibility(),
+		core.AxisDomain: s.domain(), core.AxisNovelty: s.novelty(), core.AxisCoverage: s.coverage(),
 	}
-
-	// scope: references and hot_paths
-	lo, hi := 0, 5
-	if b := r.Axes[core.AxisScope].Bands; len(b) >= 2 {
-		lo, hi = b[0], b[1]
-	}
-	m[core.AxisScope].set(0, "no references")
-	for _, f := range in.Files {
-		if p := anyMatch(r.HotPaths, f); p != "" {
-			m[core.AxisScope].set(2, f+" matches hot_paths "+p)
-		} else if n, ok := in.Refs[f]; ok {
-			v := 2
-			if n <= lo {
-				v = 0
-			} else if n <= hi {
-				v = 1
-			}
-			m[core.AxisScope].set(v, fmt.Sprintf("%s referenced from %d files", f, n))
-		}
-	}
-
-	// behaviour: keyword floor; 0 for tests-only or all-new; else the session's call
-	for _, kw := range r.Axes[core.AxisBehaviour].Keywords {
-		rx := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(kw) + `\b`)
-		if rx.MatchString(in.Goal) {
-			m[core.AxisBehaviour].set(1, fmt.Sprintf("keyword %q in the goal", kw))
-		}
-		for _, f := range in.Files {
-			if rx.MatchString(in.Content[f]) {
-				m[core.AxisBehaviour].set(1, fmt.Sprintf("keyword %q in %s", kw, f))
-			}
-		}
-	}
-	if !m[core.AxisBehaviour].ok && (testsOnly || allNew) {
-		m[core.AxisBehaviour].set(0, "tests only or every file is new")
-	}
-
-	// reversibility: paths, then content of non-test needs_step/irreversible files
-	rev := r.Reversibility
-	m[core.AxisReversibility].set(0, "git revert returns everything")
-	for _, f := range in.Files {
-		irr, step := anyMatch(rev.Irreversible, f), anyMatch(rev.NeedsStep, f)
-		if irr != "" {
-			m[core.AxisReversibility].set(2, f+" matches irreversible "+irr)
-		} else if step != "" {
-			m[core.AxisReversibility].set(1, f+" matches needs_step "+step)
-		}
-		if (irr != "" || step != "") && anyMatch(tests, f) == "" {
-			if p := contentHit(rev.IrreversibleContent, in.Content[f]); p != "" {
-				m[core.AxisReversibility].set(2, fmt.Sprintf("%s contains %q", f, p))
-			}
-		}
-	}
-
-	// domain: paths. customer_visible is 1, any other class is 2
-	classes := make([]string, 0, len(r.Domain))
-	for c := range r.Domain {
-		classes = append(classes, c)
-	}
-	sort.Strings(classes)
-	for _, f := range in.Files {
-		for _, c := range classes {
-			if p := anyMatch(r.Domain[c], f); p != "" {
-				v := 2
-				if c == "customer_visible" {
-					v = 1
-				}
-				m[core.AxisDomain].set(v, fmt.Sprintf("%s is %s (%s)", f, c, p))
-			}
-		}
-	}
-
-	// novelty: a dependency manifest among the files
-	if floor := r.Axes[core.AxisNovelty].ManifestFloor; floor != nil {
-		for _, f := range in.Files {
-			if anyMatch(manifests, path.Base(f)) != "" {
-				m[core.AxisNovelty].set(*floor, f+" is a dependency manifest")
-			}
-		}
-	}
-	if testsOnly {
+	if s.testsOnly {
 		for _, a := range []core.Axis{core.AxisDomain, core.AxisNovelty} {
 			if !m[a].ok {
 				m[a].set(0, "tests only")
 			}
 		}
 	}
-
-	// coverage: a code file is covered when some test file's name contains its identifier
-	var testNames []string
-	for _, t := range append(append([]string{}, in.Tree...), in.Files...) {
-		if anyMatch(tests, t) != "" {
-			testNames = append(testNames, path.Base(t))
-		}
-	}
-	code, covered := 0, 0
-	for _, f := range in.Files {
-		if !codeExt[path.Ext(f)] || anyMatch(tests, f) != "" {
-			continue
-		}
-		code++
-		for _, t := range testNames {
-			if strings.Contains(t, ident(f)) {
-				covered++
-				break
-			}
-		}
-	}
-	cov := 0
-	if covered < code {
-		cov = 1
-		if covered == 0 {
-			cov = 2
-		}
-	}
-	m[core.AxisCoverage].set(cov, fmt.Sprintf("%d of %d code files have a test", covered, code))
 
 	w := core.Weight{Axes: map[core.Axis]int{}, Measured: true}
 	for _, a := range core.Axes {
@@ -210,7 +106,7 @@ func Score(pol core.Policy, in Input) core.Weight {
 			x.v, x.why = d, "declared"
 		case !x.ok && declared:
 			x.v, x.why = d, "declared"
-		case !x.ok && r.Axes[a].Declared != nil && *r.Axes[a].Declared:
+		case !x.ok && s.r.Axes[a].Declared != nil && *s.r.Axes[a].Declared:
 			x.v, x.why = 1, "UNKNOWN, neither measured nor declared"
 		}
 		w.Axes[a] = x.v
@@ -218,7 +114,7 @@ func Score(pol core.Policy, in Input) core.Weight {
 	}
 	for _, f := range in.Files {
 		if path.Base(f) == policyFile {
-			for a, v := range r.PolicyFileWeight {
+			for a, v := range s.r.PolicyFileWeight {
 				w.Axes[a] = max(w.Axes[a], v)
 			}
 			w.Reasons = append(w.Reasons, policyFile+" changed: policy_file_weight applied")
@@ -227,6 +123,139 @@ func Score(pol core.Policy, in Input) core.Weight {
 	}
 	w.Mode, w.Reasons = modeFor(pol, w.Axes, in, w.Reasons)
 	return w
+}
+
+// scope: references and hot_paths.
+func (s scorer) scope() *measure {
+	lo, hi := 0, 5
+	if b := s.r.Axes[core.AxisScope].Bands; len(b) >= 2 {
+		lo, hi = b[0], b[1]
+	}
+	m := &measure{}
+	m.set(0, "no references")
+	for _, f := range s.in.Files {
+		if p := anyMatch(s.r.HotPaths, f); p != "" {
+			m.set(2, f+" matches hot_paths "+p)
+		} else if n, ok := s.in.Refs[f]; ok {
+			v := 2
+			if n <= lo {
+				v = 0
+			} else if n <= hi {
+				v = 1
+			}
+			m.set(v, fmt.Sprintf("%s referenced from %d files", f, n))
+		}
+	}
+	return m
+}
+
+// behaviour: keyword floor; 0 for tests-only or all-new; else the session's call.
+func (s scorer) behaviour() *measure {
+	m := &measure{}
+	for _, kw := range s.r.Axes[core.AxisBehaviour].Keywords {
+		rx := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(kw) + `\b`)
+		if rx.MatchString(s.in.Goal) {
+			m.set(1, fmt.Sprintf("keyword %q in the goal", kw))
+		}
+		for _, f := range s.in.Files {
+			if rx.MatchString(s.in.Content[f]) {
+				m.set(1, fmt.Sprintf("keyword %q in %s", kw, f))
+			}
+		}
+	}
+	if !m.ok && (s.testsOnly || s.allNew) {
+		m.set(0, "tests only or every file is new")
+	}
+	return m
+}
+
+// reversibility: paths, then content of non-test needs_step/irreversible files.
+func (s scorer) reversibility() *measure {
+	rev := s.r.Reversibility
+	m := &measure{}
+	m.set(0, "git revert returns everything")
+	for _, f := range s.in.Files {
+		irr, step := anyMatch(rev.Irreversible, f), anyMatch(rev.NeedsStep, f)
+		if irr != "" {
+			m.set(2, f+" matches irreversible "+irr)
+		} else if step != "" {
+			m.set(1, f+" matches needs_step "+step)
+		}
+		if (irr != "" || step != "") && anyMatch(s.tests, f) == "" {
+			if p := contentHit(rev.IrreversibleContent, s.in.Content[f]); p != "" {
+				m.set(2, fmt.Sprintf("%s contains %q", f, p))
+			}
+		}
+	}
+	return m
+}
+
+// domain: paths. customer_visible is 1, any other class is 2.
+func (s scorer) domain() *measure {
+	classes := make([]string, 0, len(s.r.Domain))
+	for c := range s.r.Domain {
+		classes = append(classes, c)
+	}
+	sort.Strings(classes)
+	m := &measure{}
+	for _, f := range s.in.Files {
+		for _, c := range classes {
+			if p := anyMatch(s.r.Domain[c], f); p != "" {
+				v := 2
+				if c == "customer_visible" {
+					v = 1
+				}
+				m.set(v, fmt.Sprintf("%s is %s (%s)", f, c, p))
+			}
+		}
+	}
+	return m
+}
+
+// novelty: a dependency manifest among the files.
+func (s scorer) novelty() *measure {
+	m := &measure{}
+	if floor := s.r.Axes[core.AxisNovelty].ManifestFloor; floor != nil {
+		for _, f := range s.in.Files {
+			if anyMatch(manifests, path.Base(f)) != "" {
+				m.set(*floor, f+" is a dependency manifest")
+			}
+		}
+	}
+	return m
+}
+
+// coverage: a code file is covered when some test file's name contains its identifier.
+func (s scorer) coverage() *measure {
+	var testNames []string
+	for _, t := range append(append([]string{}, s.in.Tree...), s.in.Files...) {
+		if anyMatch(s.tests, t) != "" {
+			testNames = append(testNames, path.Base(t))
+		}
+	}
+	code, covered := 0, 0
+	for _, f := range s.in.Files {
+		if !codeExt[path.Ext(f)] || anyMatch(s.tests, f) != "" {
+			continue
+		}
+		code++
+		for _, t := range testNames {
+			if strings.Contains(t, ident(f)) {
+				covered++
+				break
+			}
+		}
+	}
+	v := 0
+	if covered < code {
+		v = 1
+		if covered == 0 {
+			v = 2
+		}
+	}
+	m := &measure{}
+	m.set(v, fmt.Sprintf("%d of %d code files have a test", covered, code))
+	return m
 }
 
 func contentHit(patterns []string, text string) string {
@@ -273,7 +302,11 @@ func modeFor(pol core.Policy, axes map[core.Axis]int, in Input, reasons []string
 			}
 		}
 		if hit {
-			why := fmt.Sprintf("hard floor %s%v>=%d -> %s", h.Axis, h.Both, h.Value, h.Mode)
+			label := string(h.Axis)
+			if len(h.Both) > 0 {
+				label = fmt.Sprint(h.Both)
+			}
+			why := fmt.Sprintf("hard floor %s>=%d -> %s", label, h.Value, h.Mode)
 			if h.Review != "" {
 				why += " (review: " + h.Review + ")"
 			}
@@ -281,16 +314,16 @@ func modeFor(pol core.Policy, axes map[core.Axis]int, in Input, reasons []string
 		}
 	}
 	for _, t := range r.Modes[core.ModeProgramme].Trigger {
-		var fired bool
-		if mm := filesOver.FindStringSubmatch(t); mm != nil {
+		fired := true // an unknown trigger errs upward
+		mm := filesOver.FindStringSubmatch(t)
+		switch {
+		case mm != nil:
 			n, _ := strconv.Atoi(mm[1])
 			fired = len(in.Files) > n
-		} else if t == "spec" {
+		case t == "spec":
 			fired = in.Spec
-		} else if t == ">1 session" {
+		case t == ">1 session":
 			fired = in.Sessions > 1
-		} else {
-			fired = true // an unknown trigger errs upward
 		}
 		if fired {
 			bump(core.ModeProgramme, "programme trigger "+strconv.Quote(t))

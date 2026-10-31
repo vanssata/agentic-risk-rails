@@ -112,7 +112,7 @@ func TestSQ1(t *testing.T) {
 			axes(1, 1, 1, 1, 1, 1), core.ModeGuarded},
 		{"product editor feature, new mechanism, no tests",
 			Input{Files: []string{"src/Entity/Product.php", "migrations/Version20261025.php", "assets/editor/ProductScreen.js", "templates/product/edit.html.twig"},
-				Refs: map[string]int{"src/Entity/Product.php": 2, "migrations/Version20261025.php": 0, "templates/product/edit.html.twig": 1},
+				Refs:     map[string]int{"src/Entity/Product.php": 2, "migrations/Version20261025.php": 0, "templates/product/edit.html.twig": 1},
 				Declared: decl(bh, 2, nv, 2)},
 			axes(1, 2, 1, 1, 2, 2), core.ModeFull},
 		{"learning workbench feature",
