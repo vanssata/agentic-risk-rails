@@ -30,11 +30,7 @@ func init() {
 					}
 					reports = append(reports, r)
 				}
-				out, err := research.MergeBrief(research.Merge(reports), research.MaxBriefTokens)
-				if err != nil {
-					return err
-				}
-				_, err = fmt.Fprint(cmd.OutOrStdout(), out)
+				_, err := fmt.Fprint(cmd.OutOrStdout(), research.MergeBrief(research.Merge(reports), research.MaxBriefTokens))
 				return err
 			},
 		})

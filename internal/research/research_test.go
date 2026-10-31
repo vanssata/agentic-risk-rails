@@ -54,9 +54,7 @@ func TestMergeGolden(t *testing.T) {
 	assert.Equal(t, "[V]", m.Facts[0].Tag)
 	assert.Len(t, m.Facts[0].Sources, 1) // same normalized source (case, :line)
 	assert.Len(t, m.Conflicts, 2)        // number (30 vs 60) and polarity (retries)
-	out, err := MergeBrief(m, MaxBriefTokens)
-	require.NoError(t, err)
-	testutil.Golden(t, "merge.golden", []byte(out))
+	testutil.Golden(t, "merge.golden", []byte(MergeBrief(m, MaxBriefTokens)))
 }
 
 func TestMergeNeverJoinsDifferentPolarityOrNumbers(t *testing.T) {
@@ -124,8 +122,7 @@ func TestMergeBriefTruncates(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		fs = append(fs, Fact{fmt.Sprintf("distinct%d alpha%d beta%d gamma%d delta%d", i, i, i, i, i), []string{"s"}, "[U]"})
 	}
-	out, err := MergeBrief(Merged{Facts: fs}, MaxBriefTokens)
-	require.NoError(t, err)
+	out := MergeBrief(Merged{Facts: fs}, MaxBriefTokens)
 	assert.LessOrEqual(t, EstimateTokens(out), MaxBriefTokens)
 	assert.Contains(t, out, "FACTS-OMITTED")
 }
@@ -224,7 +221,98 @@ func TestRunUsesCache(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, rr.calls["code-scout"])
 
-	req.Mode = core.ModeFull // other scouts return BLOCKED
-	_, err = Run(context.Background(), rr, dir, spec, req)
+	req.Mode = core.ModeFull // other scouts return BLOCKED; the code result is kept
+	res, err = Run(context.Background(), rr, dir, spec, req)
+	require.NoError(t, err)
+	assert.Len(t, res.Reports, 1)
+	require.Len(t, res.Errors, 4)
+	var se *ScoutError
+	require.ErrorAs(t, res.Errors[0], &se)
+	assert.Equal(t, core.StatusBlocked, se.Status)
+}
+
+func TestRunBadCacheIsMiss(t *testing.T) {
+	spec := core.StrictDefaults().Research
+	body := "FACTS:\n- a b c | s | [V]\nREAD:\n- src/a.php\nCOST: tokens=1 calls=1\n"
+	rr := &roleRunner{calls: map[string]int{}, body: map[string]string{"code-scout": body, "test-scout": body}}
+	// bad sha => cache key error, unwritable dir => Put error; both only cost a miss
+	req := Request{SHA: "NOT A SHA", Question: "q", Goal: "g", Mode: core.ModeGuarded}
+	res, err := Run(context.Background(), rr, "/proc/nonexistent/x", spec, req)
+	require.NoError(t, err)
+	assert.Empty(t, res.Errors)
+	assert.Len(t, res.Reports, 2)
+}
+
+func TestMergeNoFalseMerges(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		{"backing store", "the session backing store is redis", "the session backing store is memcached"},
+		{"enabled/disabled", "feature enabled by default", "feature disabled by default"},
+		{"dotted numbers", "supported version is 1.5", "supported version is 5.1"},
+		{"number order", "limit is 5 per 10 minutes", "limit is 10 per 5 minutes"},
+		{"units", "timeout is 30s", "timeout is 30ms"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := Merge([]Report{
+				{Facts: []Fact{{tc.a, []string{"x"}, "[V]"}}},
+				{Facts: []Fact{{tc.b, []string{"y"}, "[V]"}}},
+			})
+			assert.Len(t, m.Conflicts, 1)
+			assert.Empty(t, m.Facts)
+		})
+	}
+	// curly apostrophe and stop words do not prevent a true duplicate; "no-op" is not a negation
+	m := Merge([]Report{
+		{Facts: []Fact{{"The cache doesn\u2019t expire", []string{"x"}, "[U]"}}},
+		{Facts: []Fact{{"cache doesn't expire", []string{"y"}, "[V]"}}},
+		{Facts: []Fact{{"flush is a no-op here", []string{"z"}, "[V]"}}},
+		{Facts: []Fact{{"queue workers restart nightly", []string{"z"}, "[V]"}}},
+	})
+	assert.Len(t, m.Facts, 3)
+	assert.Empty(t, m.Conflicts)
+	assert.Equal(t, "[V]", m.Facts[0].Tag)
+	assert.Len(t, m.Facts[0].Sources, 2)
+}
+
+func TestMergeBriefCapsEveryList(t *testing.T) {
+	var m Merged
+	for i := 0; i < 300; i++ {
+		x := fmt.Sprintf("long item number %d with filler words to take some room", i)
+		f := Fact{x + " a", []string{"s"}, "[V]"}
+		m.Conflicts = append(m.Conflicts, Conflict{f, f})
+		m.Gaps = append(m.Gaps, x)
+		m.Touches = append(m.Touches, x)
+		m.Steal = append(m.Steal, x)
+		m.Avoid = append(m.Avoid, x)
+	}
+	out := MergeBrief(m, 500)
+	assert.LessOrEqual(t, EstimateTokens(out), 500)
+	for _, k := range []string{"CONFLICT-OMITTED", "GAPS-OMITTED", "TOUCHES-OMITTED", "STEAL-OMITTED", "AVOID-OMITTED", "COST:"} {
+		assert.Contains(t, out, k)
+	}
+}
+
+func TestParseHardening(t *testing.T) {
+	r, err := Parse("FACTS:\n- a | b claim | src | [V]\n")
+	require.NoError(t, err)
+	assert.Equal(t, "a | b claim", r.Facts[0].Claim)
+	assert.Equal(t, []string{"src"}, r.Facts[0].Sources)
+	_, err = Parse("COST: tokens=-1 calls=2")
 	assert.Error(t, err)
+	_, err = Parse("COST: tokens=1 calls=-2")
+	assert.Error(t, err)
+	_, err = Parse(strings.Repeat("x", MaxReportBytes+1))
+	assert.Error(t, err)
+}
+
+func TestCacheReadHandling(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, role := range []string{"code", "test", "project-docs"} {
+		e := Entry{Role: role, At: t0}
+		assert.False(t, Valid(e, Inv{Now: t0}), role+" empty READ is not reusable")
+		e.Read = []string{"/repo/src/a.php:12", "./lib"}
+		assert.True(t, Valid(e, Inv{Root: "/repo", Now: t0}), role)
+		// a deleted or renamed READ path is listed (old path) by --no-renames
+		assert.False(t, Valid(e, Inv{Root: "/repo", Changed: []string{"src/a.php"}}), role+" abs+line READ, deletion")
+		assert.False(t, Valid(e, Inv{Root: "/repo", Changed: []string{"lib/x.go"}}), role+" ./dir READ")
+	}
 }

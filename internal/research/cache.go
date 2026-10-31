@@ -29,9 +29,11 @@ type Entry struct {
 	At       time.Time `json:"at"`
 }
 
-// Inv is what changed since the entry's sha: paths from `git diff --name-only <sha>..HEAD`,
-// the current lockfile hash and the clock. It is supplied by the caller.
+// Inv is what changed since the entry's sha, supplied by the caller. Changed must come from
+// `git diff --name-only --no-renames <sha>..HEAD` plus uncommitted changes, so that a rename
+// or deletion lists the old path. Root (optional) is the repo root, stripped from absolute READ paths.
 type Inv struct {
+	Root     string
 	Changed  []string
 	LockHash string
 	Now      time.Time
@@ -109,13 +111,13 @@ func Get(dir, sha, role, qhash string, inv Inv) (Entry, bool, error) {
 func Valid(e Entry, inv Inv) bool {
 	switch e.Role {
 	case "code", "test":
-		return !touches(e.Read, inv.Changed)
+		return len(e.Read) > 0 && !touches(e, inv)
 	case "tech-docs":
 		return e.LockHash == inv.LockHash
 	case "prior-art":
 		return inv.Now.Sub(e.At) < PriorArtTTL
 	case "project-docs":
-		if touches(e.Read, inv.Changed) {
+		if len(e.Read) == 0 || touches(e, inv) {
 			return false
 		}
 		for _, c := range inv.Changed {
@@ -128,12 +130,22 @@ func Valid(e Entry, inv Inv) bool {
 	return false // history is always fresh
 }
 
+// normRead strips :line, a leading ./ and the repo root from a path.
+func normRead(p, root string) string {
+	p = lineSuffix.ReplaceAllString(strings.TrimSpace(p), "")
+	if root != "" {
+		p = strings.TrimPrefix(p, strings.TrimSuffix(root, "/")+"/")
+	}
+	p = strings.TrimPrefix(p, "./")
+	return strings.TrimSuffix(p, "/")
+}
+
 // touches reports whether any changed path equals a READ path or lies under a READ directory.
-func touches(read, changed []string) bool {
-	for _, r := range read {
-		r = strings.TrimSuffix(r, "/")
-		for _, c := range changed {
-			if c == r || strings.HasPrefix(c, r+"/") {
+func touches(e Entry, inv Inv) bool {
+	for _, r := range e.Read {
+		r = normRead(r, inv.Root)
+		for _, c := range inv.Changed {
+			if c = normRead(c, inv.Root); c == r || strings.HasPrefix(c, r+"/") {
 				return true
 			}
 		}
