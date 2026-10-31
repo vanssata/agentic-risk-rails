@@ -23,7 +23,14 @@ max_concurrent_threads_per_session = 3
 '/tmp' = 'write'
 
 [permissions.riskrails.filesystem.':workspace_roots']
+'**/.env*' = 'deny'
 '.' = 'write'
-'.env*' = 'deny'
+'.claude/**' = 'read'
+'.codex/**' = 'read'
+'.cursor/**' = 'read'
+'.gemini/**' = 'read'
 '.github/**' = 'read'
+'.kiro/**' = 'read'
+'.mcp.json' = 'read'
+'.rr/**' = 'read'
 'riskrails.yaml' = 'read'

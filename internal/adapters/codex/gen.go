@@ -122,9 +122,13 @@ func filesystem(in core.SyncInput) map[string]any {
 			place(abs, ws, in.Home, e, access)
 		}
 	}
+	add(core.AlwaysProtected, "read")
+	add(enf.ProtectedPaths, "read")
 	add(enf.Sandbox.Readonly, "read")
 	add(enf.Sandbox.NoWrite, "read")
+	add(enf.SecretReads, "deny")
 	add(enf.Sandbox.NoRead, "deny")
+	dropCovered(ws)
 	fs := map[string]any{":workspace_roots": ws}
 	for k, v := range abs {
 		fs[k] = v
@@ -140,15 +144,85 @@ func place(abs, ws map[string]string, home, entry, access string) {
 		entry, target = strings.TrimRight(home, "/")+entry[1:], abs
 	case strings.HasPrefix(entry, "/"):
 		target = abs
+	}
+	if target != nil && access == "read" {
+		return // outside the workspace everything but /tmp is read-only already; glob "read" is invalid in Codex
+	}
+	switch {
+	case target != nil:
 	case entry == ".git" || strings.HasPrefix(entry, ".git/"):
-		return // always read-only in Codex; rules for absent paths under .git break bwrap
+		// .git is read-only in the Codex sandbox anyway, and a rule for an absent
+		// path under it (e.g. .git/refs/remotes in a fresh repo) makes bwrap fail.
+		return
 	default:
 		target = ws
+		var ok bool
+		if entry, ok = wsEntry(entry, access); !ok {
+			return
+		}
 	}
 	if cur, set := target[entry]; entry == "" || set && strictness[cur] >= strictness[access] {
 		return
 	}
 	target[entry] = access
+}
+
+// dropCovered removes read-only entries lying under another read-only "dir/**":
+// bwrap cannot create the mount point of an absent path below a read-only mount
+// (observed: ".github/**" + ".github/workflows/**" fails when workflows/ is absent).
+func dropCovered(ws map[string]string) {
+	for k, v := range ws {
+		if v != "read" {
+			continue
+		}
+		for p, pv := range ws {
+			if dir, ok := strings.CutSuffix(p, "/**"); ok && pv == "read" && p != k && strings.HasPrefix(k, dir+"/") {
+				delete(ws, k)
+				break
+			}
+		}
+	}
+}
+
+const globMeta = "*?[{"
+
+// wsEntry adapts a policy pattern to what Codex accepts under :workspace_roots
+// (verified on 0.166.0): a glob path only supports "deny"; "read" needs an
+// exact path or a trailing "/**". So:
+//   - deny: slash-less patterns get "**/" (gitignore semantics, internal/globs);
+//   - read, exact path: kept as is (root-relative; nested copies are NOT covered);
+//   - read, other glob: the closest directory-level rule (literal prefix + "/**"),
+//     or dropped when there is no literal directory prefix (e.g. ".env*").
+//
+// Residual gaps are listed in docs/research/verified/codex.md.
+func wsEntry(entry, access string) (string, bool) {
+	if entry == "" {
+		return "", false
+	}
+	if access == "deny" {
+		if !strings.Contains(entry, "/") {
+			entry = "**/" + entry
+		}
+		return entry, true
+	}
+	if !strings.ContainsAny(entry, globMeta) {
+		return entry, true
+	}
+	if base, ok := strings.CutSuffix(entry, "/**"); ok && !strings.ContainsAny(base, globMeta) {
+		return entry, true
+	}
+	var prefix []string
+	segs := strings.Split(entry, "/")
+	for _, sg := range segs[:len(segs)-1] {
+		if strings.ContainsAny(sg, globMeta) {
+			break
+		}
+		prefix = append(prefix, sg)
+	}
+	if len(prefix) == 0 {
+		return "", false
+	}
+	return strings.Join(prefix, "/") + "/**", true
 }
 
 // ---- .codex/hooks.json ----

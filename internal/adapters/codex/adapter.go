@@ -15,8 +15,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/runtimes"
@@ -107,14 +109,92 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 		}
 		call.Paths = append(call.Paths, edits[0].Path)
 		call.Content = edits[0].Content
+	default:
+		if strings.HasPrefix(in.ToolName, "mcp__") {
+			fillFromArgs(&call, in.ToolInput)
+		}
 	}
+	rememberAsk(call)
 	return call, nil
+}
+
+// `rr guard` parses and renders in one short-lived process, so the adapter can
+// remember the call it parsed: Verdict does not carry the command, but the Ask
+// message must name it.
+var (
+	lastMu   sync.Mutex
+	lastDesc string
+)
+
+func rememberAsk(c core.ToolCall) {
+	d := c.Command
+	if d == "" && len(c.Paths) > 0 {
+		d = "edit " + strings.Join(c.Paths, " ")
+	}
+	if d == "" {
+		d = c.Tool
+	}
+	lastMu.Lock()
+	lastDesc = d
+	lastMu.Unlock()
+}
+
+func askTarget(core.Verdict) string {
+	lastMu.Lock()
+	defer lastMu.Unlock()
+	if lastDesc == "" {
+		return "(the blocked action)"
+	}
+	return lastDesc
+}
+
+var (
+	pathKeys = []string{"path", "file_path", "filePath", "paths", "file", "filename", "target", "destination"}
+	urlKeys  = []string{"url", "uri"}
+)
+
+// fillFromArgs extracts Paths/URL/Command from the common argument names of MCP
+// tools so the guard's path and egress rules see them. Raw still has everything.
+func fillFromArgs(call *core.ToolCall, input json.RawMessage) {
+	var args map[string]json.RawMessage
+	if json.Unmarshal(input, &args) != nil {
+		return
+	}
+	str := func(k string) string {
+		var s string
+		if json.Unmarshal(args[k], &s) != nil {
+			return ""
+		}
+		return s
+	}
+	for _, k := range pathKeys {
+		var list []string
+		if json.Unmarshal(args[k], &list) != nil {
+			list = []string{str(k)}
+		}
+		for _, p := range list {
+			if p == "" {
+				continue
+			}
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(call.Cwd, p)
+			}
+			call.Paths = append(call.Paths, filepath.Clean(p))
+		}
+	}
+	for _, k := range urlKeys {
+		if u := str(k); u != "" && call.URL == "" {
+			call.URL = u
+		}
+	}
+	call.Command = str("command")
 }
 
 // RenderHookOutput: Allow is silent exit 0. Everything else — Deny, Ask and
 // unknown decisions — is exit 2 with the reason on stderr (verified blocking
 // form). Codex PreToolUse cannot ask: "ask" output makes the hook fail and the
-// tool call continue, so Ask is rendered as deny.
+// tool call continue, so Ask is rendered as a block whose message names the
+// command for the human to run (documented limitation).
 func (Adapter) RenderHookOutput(event string, v core.Verdict, _, stderr io.Writer) (int, error) {
 	if event != eventPreTool {
 		_, _ = fmt.Fprintf(stderr, "rr: denied (unsupported event %q)\n", event)
@@ -125,7 +205,8 @@ func (Adapter) RenderHookOutput(event string, v core.Verdict, _, stderr io.Write
 	}
 	msg := "rr: " + v.Reason
 	if v.Decision == core.Ask {
-		msg = "rr: approval required, Codex hooks cannot ask: " + v.Reason
+		// Codex PreToolUse cannot ask; tell the human what to run themselves.
+		msg = "rr: needs approval — run it yourself: " + askTarget(v) + " (" + v.Reason + ")"
 	}
 	if v.Rule != "" {
 		msg += " [rule: " + v.Rule + "]"

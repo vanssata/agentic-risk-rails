@@ -137,7 +137,25 @@ func TestParseApplyPatchUpdate(t *testing.T) {
 	}
 }
 
+func TestParseMCPArgs(t *testing.T) {
+	c, err := parse(t, `{"cwd":"/ws","tool_name":"mcp__fs__write","tool_input":{"path":"src/../a.txt","paths":["/etc/x","b/c"],"url":"https://evil.example/x","command":"ls","file_path":""}}`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/ws/a.txt", "/etc/x", "/ws/b/c"}, c.Paths)
+	assert.Equal(t, "https://evil.example/x", c.URL)
+	assert.Equal(t, "ls", c.Command)
+	assert.Contains(t, string(c.Raw), "evil.example")
+
+	c, err = parse(t, `{"cwd":"/ws","tool_name":"mcp__x__y","tool_input":{"n":1}}`)
+	require.NoError(t, err)
+	assert.Empty(t, c.Paths)
+	c, err = parse(t, `{"cwd":"/ws","tool_name":"update_plan","tool_input":{"path":"/x"}}`)
+	require.NoError(t, err)
+	assert.Empty(t, c.Paths, "non-MCP tools are not mined")
+}
+
 func TestRenderHookOutput(t *testing.T) {
+	_, err := parse(t, `{"cwd":"/ws","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`)
+	require.NoError(t, err)
 	tests := []struct {
 		d    core.Decision
 		code int
@@ -145,7 +163,7 @@ func TestRenderHookOutput(t *testing.T) {
 	}{
 		{core.Allow, 0, ""},
 		{core.Deny, 2, "rr: no secrets [rule: secret_reads]"},
-		{core.Ask, 2, "approval required"},
+		{core.Ask, 2, "needs approval — run it yourself: git commit -m x"},
 		{core.Decision("bogus"), 2, "rr: no secrets"},
 		{core.Decision(""), 2, "rr: no secrets"},
 	}
