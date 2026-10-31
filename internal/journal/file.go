@@ -55,7 +55,7 @@ func (j *fileJournal) lock() (unlock func(), err error) {
 	if err := os.MkdirAll(filepath.Join(j.root, ".rr"), 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(j.root, ".rr", ".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(filepath.Join(j.root, ".rr", ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -101,38 +101,9 @@ func (j *fileJournal) Append(ctx context.Context, e core.Event) (core.Event, err
 	defer unlock()
 
 	path := filepath.Join(RunDir(j.root), e.Task+".jsonl")
-	prev := GenesisPrev
-	created := false
-	switch {
-	case exists(path):
-		if e.Type == "task_started" {
-			return core.Event{}, fmt.Errorf("journal: task %q already started", e.Task)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return core.Event{}, err
-		}
-		lines := splitLines(data)
-		if len(lines) > 0 {
-			prev = hashHex(lines[len(lines)-1])
-		}
-	case e.Type != "task_started":
-		return core.Event{}, fmt.Errorf("journal: task %q is not open", e.Task)
-	default:
-		if exists(filepath.Join(TasksDir(j.root), e.Task+".jsonl")) {
-			return core.Event{}, fmt.Errorf("journal: task %q is already closed", e.Task)
-		}
-		open, err := openTasks(j.root)
-		if err != nil {
-			return core.Event{}, err
-		}
-		if len(open) > 0 {
-			return core.Event{}, &core.Refusal{Code: "TASK_IN_FLIGHT", Detail: "task " + open[0] + " is open in this checkout"}
-		}
-		if err := os.MkdirAll(RunDir(j.root), 0o755); err != nil {
-			return core.Event{}, err
-		}
-		created = true
+	prev, created, err := j.prepare(e, path)
+	if err != nil {
+		return core.Event{}, err
 	}
 
 	if e.Schema == 0 {
@@ -144,19 +115,7 @@ func (j *fileJournal) Append(ctx context.Context, e core.Event) (core.Event, err
 	if err != nil {
 		return core.Event{}, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return core.Event{}, err
-	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		_ = f.Close()
-		return core.Event{}, err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return core.Event{}, err
-	}
-	if err := f.Close(); err != nil {
+	if err := appendLine(path, line); err != nil {
 		return core.Event{}, err
 	}
 	if created {
