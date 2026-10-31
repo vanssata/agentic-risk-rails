@@ -1,0 +1,8 @@
+scope=1: composer.json referenced from 1 files
+behaviour=0: declared
+reversibility=0: git revert returns everything
+domain=0: declared
+novelty=1: composer.json is a dependency manifest
+coverage=0: 0 of 0 code files have a test
+W=2 -> light
+W 2 -> light

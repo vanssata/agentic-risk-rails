@@ -1,0 +1,9 @@
+scope=0: no references
+behaviour=0: declared
+reversibility=0: git revert returns everything
+domain=1: templates/base.html.twig is customer_visible (templates/**)
+novelty=0: declared
+coverage=0: 0 of 0 code files have a test
+W=1 -> light
+programme trigger "spec"
+W 1 -> programme
