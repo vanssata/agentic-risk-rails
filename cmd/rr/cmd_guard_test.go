@@ -85,7 +85,7 @@ func TestGuardStdin(t *testing.T) {
 		code int
 	}{
 		{`{"tool":"Bash","command":"echo hi"}`, core.Allow, 0},
-		{`{"tool":"Bash","command":"ls"}`, core.Ask, 0},
+		{`{"tool":"Bash","command":"python3 x.py"}`, core.Ask, 0},
 		{`{"tool":"Bash","command":"rm -rf /"}`, core.Deny, 2},
 		{`not json`, core.Deny, 2},
 	} {

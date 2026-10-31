@@ -20,7 +20,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "deny",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C config/secrets diff --no-index /dev/null key"
  },
  {
@@ -36,7 +36,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C src status"
  },
  {
@@ -51,8 +51,8 @@
   "name": "git -c core.pager=x log",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "git -c core.pager=x log"
  },
  {
@@ -60,7 +60,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git --no-pager -C src diff"
  },
  {
@@ -68,7 +68,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C .. status"
  },
  {
@@ -92,7 +92,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C a -C b status"
  },
  {
@@ -100,7 +100,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git --no-optional-locks status"
  },
  {
@@ -140,7 +140,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C /etc diff --no-index /dev/null passwd"
  },
  {
@@ -191,7 +191,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "deny",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git diff --no-index empty config",
   "files": [
    "{root}/config/secrets/k"
@@ -202,7 +202,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git diff --no-index empty src",
   "files": [
    "{root}/src/a.php"
@@ -212,8 +212,8 @@
   "name": "ls .",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "deny",
-  "strict": "deny",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls .",
   "files": [
    "{root}/.env.local",
@@ -224,8 +224,8 @@
   "name": "ls src",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls src",
   "files": [
    "{root}/src/a.php"
@@ -235,8 +235,8 @@
   "name": "ls {home}",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls {home}"
  },
  {
@@ -251,8 +251,8 @@
   "name": "cd . && ls",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "cd . && ls",
   "files": [
    "{root}/.env.local",
@@ -286,8 +286,8 @@
   "name": "git add .",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "deny",
-  "strict": "deny",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "git add .",
   "files": [
    "{root}/.env.local",
@@ -298,8 +298,8 @@
   "name": "git add .",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "git add .",
   "files": [
    "{root}/src/a.php"
@@ -412,8 +412,8 @@
   "name": "git log --format=%H",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "git log --format=%H"
  },
  {
@@ -691,7 +691,7 @@
   "level": "L1",
   "tool": "mcp__x__exec",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "raw": {
    "tool_input": {
     "code": "git status"

@@ -463,7 +463,7 @@
   "level": "L1",
   "tool": "",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status"
  },
  {

@@ -1,0 +1,2272 @@
+[
+ {
+  "name": "find . -delete",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "find . -delete",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "find . -fprint out.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "find . -fprint out.txt",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "find . -name x -exec cat {} +",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "find . -name x -exec cat {} +",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg --pre cat foo src",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg --pre cat foo src",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sed -n 'r .env.local' src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sed -n 'r .env.local' src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sed -n 's/a/b/w out.txt' src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sed -n 's/a/b/w out.txt' src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sed -i s/a/b/ src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sed -i s/a/b/ src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sed s/a/b/ src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sed s/a/b/ src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "awk 'BEGIN{system(\"id\")}'",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "awk 'BEGIN{system(\"id\")}'",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "awk '{print $1 | \"sh\"}' src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "awk '{print $1 | \"sh\"}' src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "date -s 2020-01-01",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "date -s 2020-01-01",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "tree -o out.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "tree -o out.txt",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "uniq src/a.php out.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "uniq src/a.php out.txt",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sort --output=x src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sort --output=x src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sudo ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sudo ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sudo cat src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sudo cat src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sort -ro x src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sort -ro x src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sort --compress-program=sh src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sort --compress-program=sh src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git branch -D x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git branch -D x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git branch newname",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git branch newname",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git remote add o url",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git remote add o url",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git stash",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git stash",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git stash pop",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git stash pop",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config user.name x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config user.name x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "php -r 'echo 1;'",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "php -r 'echo 1;'",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "node -e 1",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "node -e 1",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "composer install --no-dev",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "composer install --no-dev",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git add -f src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git add -f src/a.php",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "printenv HOME",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "printenv HOME",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "env FOO=1 ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "env FOO=1 ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git diff --output=out.txt",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git diff --output=out.txt",
+  "fixture": "allow",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git diff",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git diff",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "stat .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "stat .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "head .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "head .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep foo .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep foo .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "wc -l ~/.ssh/id_rsa",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "wc -l ~/.ssh/id_rsa",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "ls ~/.ssh",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "ls ~/.ssh",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "tail -n1 .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "tail -n1 .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "diff .env.local src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "diff .env.local src/a.php",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "file .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "file .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sort .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sort .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cut -d= -f1 .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cut -d= -f1 .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "less .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "less .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git show HEAD:x .env.local",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git show HEAD:x .env.local",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "ls @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "ls",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cat src/a.php @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "cat src/a.php",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mkdir x @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "mkdir x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm src/a.php @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "rm src/a.php",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git add . @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "git add .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "find . -name x @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "find . -name x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sed -n 1p src/a.php @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "sed -n 1p src/a.php",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git status @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "git status",
+  "fixture": "allow",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git diff @L2",
+  "level": "L2",
+  "tool": "Bash",
+  "command": "git diff",
+  "fixture": "allow",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mkdir -p src/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mkdir -p src/x",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "touch src/y.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "touch src/y.php",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cp src/a.php src/b.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cp src/a.php src/b.php",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mv src/a.php src/c.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mv src/a.php src/c.php",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm src/a.php",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm src/a.php",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm -rf src/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm -rf src/x",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mv src/a.php /tmp/rr-nowhere",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mv src/a.php /tmp/rr-nowhere",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cp src/a.php ../x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cp src/a.php ../x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "touch ../x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "touch ../x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm ../x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm ../x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "touch .env",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "touch .env",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mkdir .git/hooks/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mkdir .git/hooks/x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm .github/workflows/ci.yml",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm .github/workflows/ci.yml",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mv src/a.php riskrails.yaml",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mv src/a.php riskrails.yaml",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm -r ./",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm -r ./",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm -rf src/..",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm -rf src/..",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rm -rf .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rm -rf .",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cp .env.local src/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cp .env.local src/x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "mv .env.local src/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "mv .env.local src/x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "touch .claude/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "touch .claude/x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "APP_ENV=test php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "APP_ENV=test php bin/phpunit",
+  "fixture": "allow",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "APP_DEBUG=0 NODE_ENV=production php bin/console cache:clear",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "APP_DEBUG=0 NODE_ENV=production php bin/console cache:clear",
+  "fixture": "allow",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "LC_ALL=C ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "LC_ALL=C ls",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "TZ=UTC date",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "TZ=UTC date",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "CI=true LANG=C.UTF-8 ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "CI=true LANG=C.UTF-8 ls",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "env APP_ENV=test php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "env APP_ENV=test php bin/phpunit",
+  "fixture": "allow",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "APP_ENV=$X php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "APP_ENV=$X php bin/phpunit",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "APP_ENV+=x php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "APP_ENV+=x php bin/phpunit",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "PHP_INI_SCAN_DIR=/x php bin/phpunit",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "PHP_INI_SCAN_DIR=/x php bin/phpunit",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "GIT_SSH_COMMAND=x git fetch",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "GIT_SSH_COMMAND=x git fetch",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "LD_PRELOAD=x ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "LD_PRELOAD=x ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "PATH=/x ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "PATH=/x ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "CDPATH=x ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "CDPATH=x ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "COMPOSER=x ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "COMPOSER=x ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "FOO=bar ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "FOO=bar ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "APP_ENV=test FOO=bar ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "APP_ENV=test FOO=bar ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sudo APP_ENV=test ls",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sudo APP_ENV=test ls",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "tar cf x.tar .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "tar cf x.tar .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cp -r . src/bak",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cp -r . src/bak",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rsync -a . /tmp/rr-x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rsync -a . /tmp/rr-x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "scp -r . host:/x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "scp -r . host:/x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "zip -r x.zip .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "zip -r x.zip .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git grep foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git grep foo",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git grep --no-index foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git grep --no-index foo .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git grep --untracked foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git grep --untracked foo",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git grep --no-index foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git grep --no-index foo",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git grep --no-index --exclude-standard foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git grep --no-index --exclude-standard foo",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg foo",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg -uu foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg -uu foo",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep -rn foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep -rn foo",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep -rn foo src",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep -rn foo src",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep -rn -e foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep -rn -e foo",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg foo .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg -uu foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg -uu foo .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg --no-ignore foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg --no-ignore foo .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "rg --hidden foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rg --hidden foo .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep -r foo .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep -r foo .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "grep -R foo",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "grep -R foo",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "du -sh .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "du -sh .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "tree .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "tree .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "stat .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "stat .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "find . -name x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "find . -name x",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "ls -R .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "ls -R .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git add .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git add .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git status .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git status .",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "php bin/phpunit .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "php bin/phpunit .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "php foo.php .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "php foo.php .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git diff --no-index /dev/null .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git diff --no-index /dev/null .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "cat .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "cat .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "python3 x.py .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "python3 x.py .",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "composer install --working-dir=.",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "composer install --working-dir=.",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "npm ci --prefix .",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "npm ci --prefix .",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config core.fsmonitor ./pwn.sh",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config core.fsmonitor ./pwn.sh",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config --local core.hooksPath x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config --local core.hooksPath x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config -f .git/config core.editor x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config -f .git/config core.editor x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config --unset core.hooksPath",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config --unset core.hooksPath",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config diff.foo.textconv x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config diff.foo.textconv x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config merge.driver.driver x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config merge.driver.driver x",
+  "fixture": "ask",
+  "strict": "ask",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c core.hooksPath=x commit -m y",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c core.hooksPath=x commit -m y",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c core.fsmonitor=x status",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c core.fsmonitor=x status",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c url.x.insteadOf=y fetch",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c url.x.insteadOf=y fetch",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c gpg.program=x commit -m y",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c gpg.program=x commit -m y",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c sequence.editor=x rebase -i",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c sequence.editor=x rebase -i",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -c include.path=x log",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -c include.path=x log",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git --no-pager config --get core.fsmonitor",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git --no-pager config --get core.fsmonitor",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config --get-regexp alias",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config --get-regexp alias",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git config -l",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git config -l",
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "bash -c 'git config core.fsmonitor x'",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "bash -c 'git config core.fsmonitor x'",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "sudo git config core.fsmonitor x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sudo git config core.fsmonitor x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "git -C src config core.fsmonitor x",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "git -C src config core.fsmonitor x",
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "Grep root, ignored .env.local",
+  "level": "L1",
+  "tool": "Grep",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "x"
+   }
+  },
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "Grep root, .env.local untracked-not-ignored",
+  "level": "L1",
+  "tool": "Grep",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "x"
+   }
+  },
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php",
+   ".env.local"
+  ]
+ },
+ {
+  "name": "Grep root, no repo file list",
+  "level": "L1",
+  "tool": "Grep",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "x"
+   }
+  },
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ]
+ },
+ {
+  "name": "Glob root, ignored .env.local",
+  "level": "L1",
+  "tool": "Glob",
+  "paths": [
+   "{root}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "**/*"
+   }
+  },
+  "fixture": "allow",
+  "strict": "allow",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "Grep home .ssh not tracked-skipped",
+  "level": "L1",
+  "tool": "Grep",
+  "paths": [
+   "{home}"
+  ],
+  "raw": {
+   "tool_input": {
+    "pattern": "x"
+   }
+  },
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{home}/.ssh/id_rsa"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ },
+ {
+  "name": "Read ignored .env.local is still denied",
+  "level": "L1",
+  "tool": "Read",
+  "paths": [
+   "{root}/.env.local"
+  ],
+  "raw": {},
+  "fixture": "deny",
+  "strict": "deny",
+  "files": [
+   "{root}/.env.local",
+   "{root}/src/a.php"
+  ],
+  "repo_files": [
+   "src/a.php"
+  ]
+ }
+]

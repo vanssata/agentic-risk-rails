@@ -125,7 +125,7 @@ func checkUnknownTool(call core.ToolCall, gc core.GuardContext) core.Verdict {
 		} else {
 			r.add(checkEither(p, call, gc, false))
 		}
-		r.add(checkDir(p, call, gc))
+		r.add(checkDir(p, call, gc, dirContent))
 	}
 	for _, u := range urls {
 		r.add(checkHost(hostOfURL(u), u, e, gc))
@@ -164,14 +164,14 @@ func checkSearch(call core.ToolCall, gc core.GuardContext) core.Verdict {
 	}
 	for _, p := range roots {
 		r.add(checkPath(p, false, call, gc, false))
-		r.add(searchSecrets(resolve(p, call.Cwd, gc), secretList(gc), filters, gc))
+		r.add(searchSecrets(resolve(p, call.Cwd, gc), secretList(gc), filters, newTracker(gc, true), gc))
 	}
 	return r.done()
 }
 
 // searchSecrets walks t and denies when a secret file lies below it. Directory
 // entries never decide when a glob is given: their files do.
-func searchSecrets(t target, list, globPats []string, gc core.GuardContext) core.Verdict {
+func searchSecrets(t target, list, globPats []string, tr *tracker, gc core.GuardContext) core.Verdict {
 	root := evalPrefix(filepath.Clean(gc.Root))
 	var hit core.Verdict
 	count := 0
@@ -190,18 +190,11 @@ func searchSecrets(t target, list, globPats []string, gc core.GuardContext) core
 		if rel, err := filepath.Rel(root, p); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
 			tg.rel, tg.inside = filepath.ToSlash(rel), true
 		}
-		pat, ok := matchesRule(list, tg, gc)
-		if !ok || (d.IsDir() && len(globPats) > 0) {
-			return nil
+		if v := secretVerdict(list, tg, d, p, t, globPats, tr, gc); v.Decision != "" {
+			hit = v
+			return fs.SkipAll
 		}
-		if !d.IsDir() {
-			sub, _ := filepath.Rel(t.abs, p)
-			if excludedByGlob(globPats, filepath.ToSlash(sub), filepath.Base(p)) {
-				return nil
-			}
-		}
-		hit = core.Verdict{Decision: core.Deny, Reason: "search would expose secret path " + p, Rule: "enforcement.secret_reads: " + pat}
-		return fs.SkipAll
+		return nil
 	})
 	return hit
 }
@@ -218,4 +211,48 @@ func excludedByGlob(globPats []string, rel, base string) bool {
 		return false
 	}
 	return !matchPath(g, rel) && !matchPath(g, base)
+}
+
+// tracker answers "would a .gitignore-honouring tool see this file": RepoFiles
+// is tracked plus untracked-not-ignored, so absent means ignored. With no
+// RepoFiles (not a git checkout) nothing can be skipped.
+type tracker struct {
+	files []string
+	set   map[string]bool
+}
+
+func newTracker(gc core.GuardContext, on bool) *tracker {
+	if !on || len(gc.RepoFiles) == 0 {
+		return nil
+	}
+	return &tracker{files: gc.RepoFiles}
+}
+
+func (t *tracker) has(rel string) bool {
+	if t.set == nil {
+		t.set = make(map[string]bool, len(t.files))
+		for _, f := range t.files {
+			t.set[filepath.ToSlash(filepath.Clean(f))] = true
+		}
+	}
+	return t.set[rel]
+}
+
+// secretVerdict judges one walked entry: a deny when it is a secret file the
+// search would really read (not excluded by a glob, not ignored by git).
+func secretVerdict(list []string, tg target, d fs.DirEntry, p string, t target, globPats []string, tr *tracker, gc core.GuardContext) core.Verdict {
+	pat, ok := matchesRule(list, tg, gc)
+	if !ok || (d.IsDir() && (len(globPats) > 0 || tr != nil)) {
+		return core.Verdict{}
+	}
+	if !d.IsDir() && tr != nil && tg.inside && !tr.has(tg.rel) {
+		return core.Verdict{} // on disk but ignored by git: ripgrep-style tools do not read it
+	}
+	if !d.IsDir() {
+		sub, _ := filepath.Rel(t.abs, p)
+		if excludedByGlob(globPats, filepath.ToSlash(sub), filepath.Base(p)) {
+			return core.Verdict{}
+		}
+	}
+	return core.Verdict{Decision: core.Deny, Reason: "search would expose secret path " + p, Rule: "enforcement.secret_reads: " + pat}
 }

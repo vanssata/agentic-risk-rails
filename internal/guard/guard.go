@@ -15,23 +15,35 @@
 //     (substitutions, subshells, loops, `bash -c` strings, heredoc bodies,
 //     `find -exec`) is checked. Wrappers (env, sudo, xargs, timeout, ...) are
 //     unwrapped; `git -C dir` is a cd for that command; every other git global
-//     option except --no-pager/--no-optional-locks is unrecognised.
+//     option except --no-pager/--no-optional-locks is unrecognised, and
+//     `git -c`/`git config` with a key that runs programs, loads configuration
+//     or rewrites remotes (core.*, include*, filter.*, alias.*, credential.*,
+//     url.*, diff.external/textconv, gpg.program, sequence.editor ...) is deny.
 //  3. UNRECOGNISED => ask (deny at L>=2): eval/source/alias/trap, a command name
 //     or argument that is not a literal, a non-static cd, shell reading stdin,
-//     function definitions, env assignments before a command, risky globals.
-//  4. Commands: deny > ask > allow, else commands.unlisted. Deny/ask patterns
-//     match every wrapper level and may be interleaved with option tokens;
-//     allow patterns are strict (`cmd*` never extends `cmd` itself) and match
-//     only the innermost command.
+//     function definitions, risky globals, and any env assignment before a
+//     command except a static APP_ENV/APP_DEBUG/NODE_ENV/CI/TZ/LANG/LC_*.
+//  4. Commands: deny > ask > allow > default allow > unlisted. Deny/ask patterns
+//     match every wrapper level and tolerate option tokens between words; allow
+//     patterns are strict (`cmd*` never extends `cmd` itself) and match only the
+//     innermost command. DEFAULT ALLOW (L0/L1 only, never under sudo/doas): known
+//     read-only commands (ls, cat, grep, find without -exec, sed -n, git status/
+//     log/diff ... see readonly.go) and workspace commands (mkdir, touch, cp, mv,
+//     rm, git add) whose path arguments pass rule 5. Other unlisted commands use
+//     commands.unlisted (deny at L>=2).
 //  5. Every argument is a path: reads are checked against secret_reads/no_read;
 //     writes against core.AlwaysProtected, protected_paths, sandbox.*, the scope
 //     guard and the repo root. Flag values (`--x=v`, or the path-like token after
-//     `--x`) get the read rules AND the deny-type write rules. An argument that
-//     is an existing directory is a recursive read: denied if a secret lies below.
+//     `--x`) get the read rules AND the deny-type write rules. An existing
+//     directory argument of a command that READS CONTENT (cat, tar, cp, rsync,
+//     grep -r, git diff --no-index, unknown commands; and the implicit "." of
+//     `grep -r foo`) is a recursive read: denied if a secret lies below it. Name-
+//     only commands (ls, find, du, git add/status ...) are exempt; rg, git grep
+//     and Grep/Glob skip files git ignores (absent from RepoFiles).
 //  6. Hosts of known network commands and URL tools must be in egress.allow
 //     when deny_default is set (a tripwire, not a boundary).
-//  7. Grep/Glob: the search root must not contain secret files unless ONE plain
-//     positive glob excludes them all.
+//  7. Grep/Glob: the search root must not contain secret files git would show
+//     unless ONE plain positive glob excludes them all.
 //  8. Unknown (MCP) tools: every string in the raw input is classified as path,
 //     URL, shell text (keys command/cmd/script/code/shell/sh) or model, and the
 //     matching rules apply.
