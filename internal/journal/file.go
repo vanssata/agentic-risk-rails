@@ -67,6 +67,8 @@ func (j *fileJournal) lock() (unlock func(), err error) {
 	return func() { _ = f.Close() }, nil // closing releases the flock
 }
 
+var headRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 var taskIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 func validTask(t string) error {
@@ -231,8 +233,14 @@ func (j *fileJournal) Close(ctx context.Context, task string) error {
 	sum := projection.Summarize(events)
 	sum.Head = head
 	taskDir := filepath.Join(TasksDir(j.root), task)
+	firstTasks := !exists(TasksDir(j.root))
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		return err
+	}
+	if firstTasks {
+		if err := fsyncDir(filepath.Join(j.root, ".rr")); err != nil {
+			return err
+		}
 	}
 	if err := writeSynced(filepath.Join(taskDir, "task.md"), []byte(projection.TaskMD(sum))); err != nil {
 		return err
@@ -306,32 +314,46 @@ func ReadHead(root, task string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	head := ""
 	for _, l := range strings.Split(string(b), "\n") {
 		if h, ok := strings.CutPrefix(l, "- head: "); ok {
-			return strings.TrimSpace(h), nil
+			head = h // the LAST head line wins
 		}
 	}
-	return "", fmt.Errorf("journal: no head hash in task.md of %q", task)
+	if !headRe.MatchString(head) {
+		return "", fmt.Errorf("journal: no anchor in task.md of %q", task)
+	}
+	return head, nil
 }
 
 // Repair truncates a trailing partial line, but only if that partial line is
-// not valid JSON. It reports whether the file was changed.
-func Repair(path string) (bool, error) {
+// not valid JSON. It takes the journal lock and first saves the removed bytes
+// to <path>.torn.<unix-nanos>. It returns the removed bytes (nil if unchanged).
+func Repair(root, path string) ([]byte, error) {
+	unlock, err := (&fileJournal{root: root}).lock()
+	if err != nil {
+		return nil, fmt.Errorf("journal: lock: %w", err)
+	}
+	defer unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if len(data) == 0 || data[len(data)-1] == '\n' {
-		return false, nil
+		return nil, nil
 	}
 	cut := bytes.LastIndexByte(data, '\n') + 1
-	if json.Valid(data[cut:]) {
-		return false, fmt.Errorf("%s: unterminated last line is valid JSON; not truncating", path)
+	removed := data[cut:]
+	if json.Valid(removed) {
+		return nil, fmt.Errorf("%s: unterminated last line is valid JSON; not truncating", path)
+	}
+	if err := writeSynced(fmt.Sprintf("%s.torn.%d", path, time.Now().UnixNano()), removed); err != nil {
+		return nil, err
 	}
 	if err := os.Truncate(path, int64(cut)); err != nil {
-		return false, err
+		return nil, err
 	}
-	return true, nil
+	return removed, fsyncDir(filepath.Dir(path))
 }
 
 func writeSynced(path string, b []byte) error {

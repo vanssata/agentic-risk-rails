@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 )
@@ -93,12 +94,12 @@ func Risks(events []core.Event) []core.Event {
 // TaskMD renders the minimal deterministic task.md of a closed task.
 func TaskMD(s Summary) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Task %s\n\n", s.Task)
-	fmt.Fprintf(&b, "- mode: %s\n", s.Mode)
+	fmt.Fprintf(&b, "# Task %s\n\n", clean(s.Task))
+	fmt.Fprintf(&b, "- mode: %s\n", clean(s.Mode))
 	fmt.Fprintf(&b, "- first event: %s\n", s.First.UTC().Format(time.RFC3339Nano))
 	fmt.Fprintf(&b, "- last event: %s\n", s.Last.UTC().Format(time.RFC3339Nano))
 	if s.Head != "" {
-		fmt.Fprintf(&b, "- head: %s\n", s.Head)
+		fmt.Fprintf(&b, "- head: %s\n", clean(s.Head))
 	}
 	fmt.Fprintf(&b, "- events: %d\n\n## Events by type\n\n", s.Total)
 	types := make([]string, 0, len(s.Counts))
@@ -107,10 +108,21 @@ func TaskMD(s Summary) string {
 	}
 	sort.Strings(types)
 	for _, t := range types {
-		fmt.Fprintf(&b, "- %s: %d\n", t, s.Counts[t])
+		fmt.Fprintf(&b, "- %s: %d\n", clean(t), s.Counts[t])
 	}
 	if len(s.Closed) > 0 {
 		fmt.Fprintf(&b, "\n## Closing facts\n\n```json\n%s\n```\n", s.Closed)
 	}
 	return b.String()
+}
+
+// clean drops control characters (newlines included) so agent-written values
+// cannot inject lines into task.md.
+func clean(v string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+		return r
+	}, v)
 }
