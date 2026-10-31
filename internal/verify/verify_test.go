@@ -211,7 +211,7 @@ func two() *int  { n := 2; return &n }
 
 func orchInput(j core.Journal, s *stub) Input {
 	return Input{
-		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: "T1",
+		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: func(context.Context) (string, error) { return "T1", nil },
 		Spec: core.VerifySpec{
 			Adapters:              []core.VerifyAdapterSpec{{Name: s.name, Cmd: "x"}},
 			FullRunWhen:           []string{"uncovered_file", "close"},

@@ -25,12 +25,14 @@ var lockfiles = map[string]bool{
 	"poetry.lock": true, "uv.lock": true, "Pipfile.lock": true, "go.sum": true, "go.mod": true, "Cargo.lock": true,
 }
 
-// FullRunRequired applies spec.FullRunWhen. Tokens: lockfile, uncovered_file,
-// mode>=full, close; anything else is a glob over the changed files. An empty
-// FullRunWhen never forces a full run except at close (ADR-10 floor).
+// FullRunRequired applies spec.FullRunWhen. Tokens: lockfile, mode>=full, close, uncovered_file
+// (the last two are floors that hold even when omitted); anything else is a glob over the changed files.
 func FullRunRequired(spec core.VerifySpec, changed, uncovered []string, mode core.Mode, closing bool) (bool, string) {
 	if closing {
 		return true, "close"
+	}
+	if len(uncovered) > 0 { // hard floor: no test maps to it, whatever the policy says
+		return true, "uncovered_file: " + uncovered[0]
 	}
 	for _, rule := range spec.FullRunWhen {
 		switch rule {
@@ -39,10 +41,7 @@ func FullRunRequired(spec core.VerifySpec, changed, uncovered []string, mode cor
 			if mode.Rank() >= core.ModeFull.Rank() {
 				return true, rule
 			}
-		case "uncovered_file":
-			if len(uncovered) > 0 {
-				return true, rule + ": " + uncovered[0]
-			}
+		case "uncovered_file": // enforced above
 		case "lockfile":
 			for _, f := range changed {
 				if lockfiles[path.Base(f)] {
@@ -71,8 +70,8 @@ type Input struct {
 	Spec    core.VerifySpec
 	Mode    core.Mode
 	Closing bool
-	Tree    string       // tree fingerprint recorded in verify_run (see TreeFingerprint)
-	Journal core.Journal // nil: nothing is recorded and suite_budget is not enforced
+	Tree    func(context.Context) (string, error) // tree fingerprint, taken before and after the run (see TreeFingerprint); nil: none
+	Journal core.Journal                          // nil: nothing is recorded and suite_budget is not enforced
 	Actors  []core.VerifyAdapter
 }
 
@@ -159,6 +158,10 @@ func Run(ctx context.Context, in Input) (Report, error) {
 			return rep, ErrSuiteBudget
 		}
 	}
+	tree, err := fingerprint(ctx, in)
+	if err != nil {
+		return rep, err
+	}
 	rep.Passed = true
 	var names []string
 	ran := 0
@@ -172,19 +175,41 @@ func Run(ctx context.Context, in Input) (Report, error) {
 		names = append(names, s.Spec.Name)
 		ran += len(res.Ran)
 	}
+	after, err := fingerprint(ctx, in)
+	if err != nil {
+		return rep, err
+	}
+	if after != tree {
+		rep.Passed = false // the tree changed during the run: the result is about no tree
+	}
 	if in.Journal == nil {
 		return rep, nil
 	}
-	if err := appendEvent(ctx, in, "verify_run", RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: in.Tree}); err != nil {
+	if err := appendEvent(ctx, in, "verify_run", RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: tree}); err != nil {
 		return rep, err
 	}
-	if rep.Full && !rep.Passed && in.Spec.SelectionMissesMetric != nil && *in.Spec.SelectionMissesMetric && lastRunGreenAffected(prior) {
+	if rep.Full && !rep.Passed && metricOn(in.Spec) && lastRunGreenAffected(prior) {
 		err := appendEvent(ctx, in, "selection_misses", map[string]any{"changed": in.Changed, "adapters": names})
 		if err != nil {
 			return rep, err
 		}
 	}
 	return rep, nil
+}
+
+func fingerprint(ctx context.Context, in Input) (string, error) {
+	if in.Tree == nil {
+		return "", nil
+	}
+	t, err := in.Tree(ctx)
+	if err != nil {
+		return "", fmt.Errorf("verify: fingerprint: %w", err)
+	}
+	return t, nil
+}
+
+func metricOn(spec core.VerifySpec) bool {
+	return spec.SelectionMissesMetric != nil && *spec.SelectionMissesMetric
 }
 
 func appendEvent(ctx context.Context, in Input, typ string, data any) error {
@@ -260,3 +285,18 @@ func ComputeFacts(events []core.Event, tree string, changed, scope []string) Fac
 
 // Ok reports whether both facts hold.
 func (f Facts) Ok() bool { return f.GreenNow && f.InScope }
+
+// ScopeFromEvents returns the task scope globs recorded by task_started or
+// plan_accepted (data field "scope"); the last one wins. nil if none carries it.
+func ScopeFromEvents(events []core.Event) []string {
+	var scope []string
+	for _, e := range events {
+		var d struct {
+			Scope []string `json:"scope"`
+		}
+		if (e.Type == "task_started" || e.Type == "plan_accepted") && json.Unmarshal(e.Data, &d) == nil && d.Scope != nil {
+			scope = d.Scope
+		}
+	}
+	return scope
+}

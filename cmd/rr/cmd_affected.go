@@ -19,7 +19,7 @@ func init() {
 			Use:   "affected [files...]",
 			Short: "Print the tests affected by the changed files (default: git changes) and whether a full run is required",
 			RunE: func(cmd *cobra.Command, files []string) error {
-				spec, err := f.spec()
+				spec, err := f.spec(cmd.Context())
 				if err != nil {
 					return err
 				}

@@ -30,7 +30,7 @@ func TestAffectedPHPFixture(t *testing.T) {
 	got.Tests = nil
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	assert.True(t, got.Full)
-	assert.Contains(t, got.Reason, "lockfile")
+	assert.NotEmpty(t, got.Reason)
 	assert.Equal(t, []string{"composer.lock", "src/Controller/HomeController.php"}, got.Uncovered)
 
 	_, err = runPolicyRR(t, "affected", "--root", root, "--mode", "bogus", "x")

@@ -1,47 +1,40 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/vanssata/agentic-risk-rails/internal/cli"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
-	"github.com/vanssata/agentic-risk-rails/internal/policy"
 	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
 
-// verifyFlags are shared by `rr verify` and `rr affected`.
+// verifyFlags are shared by `rr verify` (and its subcommands) and `rr affected`.
 type verifyFlags struct {
 	root, base, mode string
 }
 
 func (f *verifyFlags) bind(c *cobra.Command) {
 	wd, _ := os.Getwd()
-	c.Flags().StringVar(&f.root, "root", wd, "repository root")
-	c.Flags().StringVar(&f.base, "base", "", "ref to diff against (default HEAD, plus untracked files)")
-	c.Flags().StringVar(&f.mode, "mode", string(core.ModeGuarded), "task mode (light|guarded|full|full_irreversible|programme)")
+	c.PersistentFlags().StringVar(&f.root, "root", wd, "repository root")
+	c.PersistentFlags().StringVar(&f.base, "base", "", "ref to diff against (default HEAD, plus untracked files)")
+	c.PersistentFlags().StringVar(&f.mode, "mode", string(core.ModeGuarded), "task mode (light|guarded|full|full_irreversible|programme)")
 }
 
-func (f *verifyFlags) spec() (core.VerifySpec, error) {
-	raw, err := os.ReadFile(filepath.Join(f.root, "riskrails.yaml"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return core.StrictDefaults().Verify, nil
-	}
+// spec is the verify section of the RESOLVED policy (strictest of in-force and
+// working tree, clamped by the ceiling). Any resolve error refuses: no fallback.
+func (f *verifyFlags) spec(ctx context.Context) (core.VerifySpec, error) {
+	r, err := resolve(ctx, f.root)
 	if err != nil {
-		return core.VerifySpec{}, err
+		return core.VerifySpec{}, fmt.Errorf("refusing: policy not resolved: %w", err)
 	}
-	p, err := policy.Load(raw)
-	if err != nil {
-		return core.VerifySpec{}, fmt.Errorf("riskrails.yaml: %w", err)
-	}
-	return p.Verify, nil
+	return r.eff.Policy.Verify, nil
 }
 
 func (f *verifyFlags) mod() (core.Mode, error) {
@@ -58,6 +51,15 @@ func printJSON(c *cobra.Command, v any) error {
 	return enc.Encode(v)
 }
 
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull) // /dev/null is a character device too
+	return err != nil || !os.SameFile(fi, null)
+}
+
 func init() {
 	cli.Register(func() *cobra.Command {
 		var f verifyFlags
@@ -67,7 +69,7 @@ func init() {
 			Use:   "verify",
 			Short: "Run the tests for the current changes (affected, or full when policy requires)",
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				spec, err := f.spec()
+				spec, err := f.spec(cmd.Context())
 				if err != nil {
 					return err
 				}
@@ -79,13 +81,10 @@ func init() {
 				if err != nil {
 					return err
 				}
-				tree, err := verify.TreeFingerprint(cmd.Context(), f.root)
-				if err != nil {
-					return err
-				}
 				rep, err := verify.Run(cmd.Context(), verify.Input{
-					Root: f.root, Task: task, Changed: changed, Spec: spec, Mode: mode,
-					Closing: closing, Tree: tree, Journal: journal.New(f.root),
+					Root: f.root, Task: task, Changed: changed, Spec: spec, Mode: mode, Closing: closing,
+					Tree:    func(ctx context.Context) (string, error) { return verify.TreeFingerprint(ctx, f.root) },
+					Journal: journal.New(f.root),
 				})
 				if err != nil {
 					return err
@@ -100,9 +99,9 @@ func init() {
 			},
 		}
 		f.bind(c)
-		c.Flags().StringVar(&task, "task", "", "task id (journal)")
+		c.PersistentFlags().StringVar(&task, "task", "", "task id (journal)")
 		c.Flags().BoolVar(&closing, "close", false, "closing run: always full")
-		_ = c.MarkFlagRequired("task")
+		_ = c.MarkPersistentFlagRequired("task")
 
 		var scope []string
 		facts := &cobra.Command{
@@ -112,6 +111,16 @@ func init() {
 				events, err := journal.New(f.root).Events(cmd.Context(), task)
 				if err != nil {
 					return err
+				}
+				// The task's scope comes from its journal. --scope is a fallback for a human at a
+				// terminal only: an agent's Bash tool has no TTY, so it cannot widen its own scope.
+				if js := verify.ScopeFromEvents(events); js != nil {
+					if len(scope) > 0 {
+						return errors.New("refusing: the task journal already carries a scope; --scope is not accepted")
+					}
+					scope = js
+				} else if len(scope) == 0 || !isTerminal(os.Stdin) {
+					return errors.New("refusing: no scope in the task journal, and --scope needs an interactive terminal")
 				}
 				changed, err := verify.ChangedFiles(cmd.Context(), f.root, f.base)
 				if err != nil {
@@ -131,7 +140,7 @@ func init() {
 				return nil
 			},
 		}
-		facts.Flags().StringSliceVar(&scope, "scope", nil, "globs the task may change")
+		facts.Flags().StringSliceVar(&scope, "scope", nil, "globs the task may change (human terminal only)")
 		c.AddCommand(facts)
 		return c
 	})
