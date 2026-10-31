@@ -51,12 +51,12 @@ printf '%s\n' '{"result":"made it\nSTATUS: DONE","is_error":false,"num_turns":4,
 	assert.Error(t, err, "no model for tier")
 }
 
-// RR_CONTRACT=1 only: pins the [U] JSON result field names against the real binary.
+// RR_CONTRACT=1 only: pins the JSON result field names against the real binary.
 func TestClaudeContract(t *testing.T) {
 	if os.Getenv("RR_CONTRACT") != "1" {
 		t.Skip("RR_CONTRACT=1 required")
 	}
-	r := ClaudeRunner{Models: map[core.Tier]string{core.TierFast: "haiku"}, PermissionMode: "plan"}
+	r := ClaudeRunner{Models: map[core.Tier]string{core.TierFast: "haiku"}}.ReadOnly()
 	got, err := r.Run(context.Background(), core.WorkerSpec{Tier: core.TierFast, Brief: "Reply with the single line: STATUS: DONE", Worktree: t.TempDir(), MaxTurns: 2})
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusDone, got.Status)

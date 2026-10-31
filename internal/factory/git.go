@@ -112,16 +112,32 @@ var errNotRegular = errors.New("staged entry is not a regular file")
 // builtinMerge are the merge attribute values that run no configured driver.
 var builtinMerge = map[string]bool{"unspecified": true, "set": true, "unset": true, "text": true, "binary": true, "union": true}
 
-// attrPaths lists the non-ignored files of w that carry a `filter` attribute
-// (clean/smudge programs come from untrusted config) or a custom `merge`
-// driver. `diff` is queried too, but its drivers are inert here: external diff
-// and textconv are disabled and diff is run with --no-ext-diff --no-textconv.
-func attrPaths(ctx context.Context, w worktree) ([]string, error) {
+// unchanged reports whether the staged tree equals HEAD's.
+func unchanged(ctx context.Context, w worktree) (bool, error) {
+	head, err := w.git(ctx, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return false, err
+	}
+	idx, err := w.git(ctx, "write-tree")
+	return head == idx, err
+}
+
+// attrPaths lists the non-ignored files of w, plus extra paths, that carry a
+// `filter` attribute (clean/smudge programs come from untrusted config) or a
+// custom `merge` driver. `diff` drivers are inert here: external diff and
+// textconv are disabled and diff runs with --no-ext-diff --no-textconv.
+func attrPaths(ctx context.Context, w worktree, extra ...string) ([]string, error) {
 	list, err := w.git(ctx, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-	if err != nil || list == "" {
+	if err != nil {
 		return nil, err
 	}
-	out, err := run(ctx, w.dir, list, w.args([]string{"check-attr", "--stdin", "-z", "filter", "merge", "diff"})...)
+	for _, e := range extra {
+		list += e + "\x00"
+	}
+	if list == "" {
+		return nil, nil
+	}
+	out, err := run(ctx, w.dir, list, w.args([]string{"check-attr", "--stdin", "-z", "filter", "merge"})...)
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +184,15 @@ func statusFiles(ctx context.Context, w worktree) (changed, ignored []string, er
 // tree id. Only regular files (modes 100644/100755) or deletions may be staged:
 // a symlink (120000) or gitlink (160000) is an error.
 func stage(ctx context.Context, w worktree, files []string) (tree string, err error) {
-	if _, err := w.git(ctx, append([]string{"add", "-A", "--"}, files...)...); err != nil {
+	// a declared file that never came to exist is no pathspec error, just no change
+	known, err := w.git(ctx, append([]string{"ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"}, files...)...)
+	if err != nil {
 		return "", err
+	}
+	if present := strings.Split(strings.TrimRight(known, "\x00"), "\x00"); known != "" {
+		if _, err := w.git(ctx, append([]string{"add", "-A", "--"}, present...)...); err != nil {
+			return "", err
+		}
 	}
 	raw, err := w.git(ctx, "diff", "--cached", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv")
 	if err != nil {

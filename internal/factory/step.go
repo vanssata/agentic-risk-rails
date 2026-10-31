@@ -22,7 +22,9 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 		return res, nil
 	}
 	branch := "rr/" + f.Task + "/" + st.ID
+	f.mu.Lock() // worktree add touches Root's .git
 	w, err := addWorktree(ctx, f.Root, filepath.Join(f.WorkDir, st.ID), branch)
+	f.mu.Unlock()
 	if err != nil {
 		return res, err
 	}
@@ -32,18 +34,10 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 	}
 
 	brief := briefOf(st)
-	rep, err := f.work(ctx, st, "implementer", w.dir, brief)
-	if err != nil {
+	rep, why, err := f.implement(ctx, st, w, brief)
+	if err != nil || why != "" {
+		res.Blocked = why
 		return res, err
-	}
-	if rep.Status == core.StatusNeedsContext {
-		scout, err := f.work(ctx, st, "code-scout", w.dir, "Find the context this step is missing:\n"+rep.Body)
-		if err != nil {
-			return res, err
-		}
-		if rep, err = f.work(ctx, st, "implementer", w.dir, brief+"\n\nCONTEXT:\n"+scout.Body); err != nil {
-			return res, err
-		}
 	}
 	res.Status = rep.Status
 	switch rep.Status {
@@ -54,10 +48,6 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 		return block("worker %s: %s", rep.Status, firstLine(rep.Body))
 	}
 
-	if why, err := f.checkScope(ctx, w, st); err != nil || why != "" {
-		res.Blocked = why
-		return res, err
-	}
 	ok, rounds, blocked, err := f.review(ctx, st, w, brief)
 	res.Rounds = rounds
 	if err != nil {
@@ -73,6 +63,10 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 		}
 		return block("REVIEW_BUDGET: %d review rounds failed, a human decides", MaxReviewRounds)
 	}
+	if same, err := unchanged(ctx, w); err != nil || same {
+		res.Blocked = "no changes"
+		return res, err
+	}
 
 	sha, err := commit(ctx, w, "step "+st.ID)
 	if err != nil {
@@ -81,18 +75,55 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 	if err := f.emit(ctx, "step_committed", map[string]any{"step": st.ID, "sha": sha}); err != nil {
 		return res, err
 	}
+	res.Commit, res.Blocked, err = f.integrate(ctx, st, sha)
+	if err != nil || res.Blocked != "" {
+		return res, err
+	}
+	return res, f.emit(ctx, "step_integrated", map[string]any{"step": st.ID, "sha": res.Commit})
+}
+
+// implement runs the implementer; on NEEDS_CONTEXT a read-only scout, then the
+// implementer once more. Every worker is followed by a scope check (inside
+// work) before the next one starts in the worktree.
+func (f *Factory) implement(ctx context.Context, st plan.Step, w worktree, brief string) (rep core.WorkerReport, blocked string, err error) {
+	rep, blocked, err = f.work(ctx, f.Implementer, st, "implementer", w, brief)
+	if err != nil || blocked != "" || rep.Status != core.StatusNeedsContext {
+		return rep, blocked, err
+	}
+	scout, blocked, err := f.work(ctx, f.Reviewer.ReadOnly(), st, "code-scout", w, "Find the context this step is missing:\n"+rep.Body)
+	if err != nil || blocked != "" {
+		return rep, blocked, err
+	}
+	return f.work(ctx, f.Implementer, st, "implementer", w, brief+"\n\nCONTEXT:\n"+scout.Body)
+}
+
+// integrate cherry-picks the step commit into Root, serialised. Root's
+// attributes (including .git/info/attributes, which the worker may have
+// written) are re-checked first: with no filter or custom merge driver
+// selected for any path, the pick runs none. A conflict leaves Root unchanged
+// and blocks the step.
+func (f *Factory) integrate(ctx context.Context, st plan.Step, sha string) (integrated, blocked string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	gd, err := git(ctx, f.Root, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", "", err
+	}
+	root := worktree{dir: f.Root, gitdir: strings.TrimSpace(gd)}
+	bad, err := attrPaths(ctx, root, st.Files...)
+	if err != nil {
+		return "", "", err
+	}
+	if len(bad) > 0 {
+		why := "scope: filter or merge attribute on " + strings.Join(bad, ", ") + " in the integration checkout"
+		return "", why, f.emit(ctx, "scope_violation", map[string]any{"step": st.ID, "reason": why})
+	}
 	if _, err := git(ctx, f.Root, "cherry-pick", sha); err != nil {
 		_, _ = git(ctx, f.Root, "cherry-pick", "--abort")
-		return res, err
+		return "", "integration conflict: " + firstLine(err.Error()), nil
 	}
 	head, err := git(ctx, f.Root, "rev-parse", "HEAD")
-	if err != nil {
-		return res, err
-	}
-	res.Commit = strings.TrimSpace(head)
-	return res, f.emit(ctx, "step_integrated", map[string]any{"step": st.ID, "sha": res.Commit})
+	return strings.TrimSpace(head), "", err
 }
 
 // checkScope returns why the worktree may not be reviewed or committed ("" if
@@ -163,7 +194,7 @@ func steersClaude(p string) bool {
 		return true
 	}
 	switch path.Base(p) {
-	case ".mcp.json", "CLAUDE.md", "AGENTS.md":
+	case ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md":
 		return true
 	}
 	return false

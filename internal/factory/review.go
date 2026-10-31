@@ -19,7 +19,7 @@ func (f *Factory) roundTier(round int) (tier core.Tier, independent bool) {
 		return f.Tier, false
 	}
 	if r := f.Tier.Rank(); r >= 0 && r+1 < len(core.Tiers) {
-		if up := core.Tiers[r+1]; f.Effective[up] != "" {
+		if up := core.Tiers[r+1]; f.Effective[up] {
 			return up, false
 		}
 	}
@@ -64,15 +64,12 @@ func (f *Factory) review(ctx context.Context, st plan.Step, w worktree, brief st
 		if round == MaxReviewRounds {
 			return false, rounds, "", nil
 		}
-		fix, err := f.work(ctx, st, "fixer", w.dir, brief+"\n\nFIX THESE FINDINGS (one batch):\n"+findings)
-		if err != nil {
-			return false, rounds, "", err
+		fix, why, err := f.work(ctx, f.Implementer, st, "fixer", w, brief+"\n\nFIX THESE FINDINGS (one batch):\n"+findings)
+		if err != nil || why != "" {
+			return false, rounds, why, err
 		}
 		if fix.Status != core.StatusDone && fix.Status != core.StatusDoneWithConcerns {
 			return false, rounds, fmt.Sprintf("fixer %s: %s", fix.Status, firstLine(fix.Body)), nil
-		}
-		if why, err := f.checkScope(ctx, w, st); err != nil || why != "" {
-			return false, rounds, why, err
 		}
 	}
 	return false, rounds, "", nil

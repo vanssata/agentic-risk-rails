@@ -21,12 +21,12 @@ const MaxReviewRounds = 3
 
 type Config struct {
 	Task      string
-	Root      string               // integration checkout; step commits are cherry-picked here
-	WorkDir   string               // parent directory of the step worktrees
-	Tier      core.Tier            // tier of the mode: implementers and rounds 1-2
-	Effective map[core.Tier]string // tiers available; round 3 goes up only if the next tier is here
-	Parallel  int                  // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
-	MaxTurns  int                  // per worker, DES §6: 30
+	Root      string             // integration checkout; step commits are cherry-picked here
+	WorkDir   string             // parent directory of the step worktrees
+	Tier      core.Tier          // tier of the mode: implementers and rounds 1-2
+	Effective map[core.Tier]bool // tiers available; round 3 goes up only if the next tier is here
+	Parallel  int                // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
+	MaxTurns  int                // per worker, DES §6: 30
 	Budget    core.TokenCount
 }
 
@@ -50,6 +50,7 @@ type Result struct {
 	Rounds   int               // review rounds used
 	Human    bool              // review budget exhausted: a human decides
 	Blocked  string            // reason, if the step stopped the wave
+	Skipped  bool              // never ran (or was cancelled) because another step stopped the wave
 	Concerns string            // body of a DONE_WITH_CONCERNS report
 }
 
@@ -106,7 +107,7 @@ func stopper(res []Result) (Result, bool) {
 		if r.OK() {
 			continue
 		}
-		if !strings.HasPrefix(r.Blocked, "skipped") {
+		if !r.Skipped {
 			return r, true
 		}
 		if first == nil {
@@ -127,7 +128,7 @@ func (f *Factory) runWave(parent context.Context, wi int, wave []plan.Step) ([]R
 	errs := make([]error, len(wave))
 	var wg sync.WaitGroup
 	for i, st := range wave {
-		results[i] = Result{Step: st.ID, Blocked: "skipped: wave stopped"}
+		results[i] = Result{Step: st.ID, Skipped: true, Blocked: "skipped: wave stopped"}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -143,7 +144,7 @@ func (f *Factory) runWave(parent context.Context, wi int, wave []plan.Step) ([]R
 			results[i], errs[i] = f.runStep(ctx, wi, st)
 			if errs[i] != nil && parent.Err() == nil && ctx.Err() != nil {
 				// cancelled because another step stopped the wave
-				results[i].Blocked, errs[i] = "skipped: wave stopped while running", nil
+				results[i].Skipped, results[i].Blocked, errs[i] = true, "skipped: wave stopped while running", nil
 			}
 			if errs[i] != nil || !results[i].OK() {
 				cancel()
@@ -159,14 +160,18 @@ func (f *Factory) runWave(parent context.Context, wi int, wave []plan.Step) ([]R
 	return results, nil
 }
 
-// work runs one worker and journals its report.
-func (f *Factory) work(ctx context.Context, st plan.Step, role, dir, brief string) (core.WorkerReport, error) {
-	rep, err := f.Implementer.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
+// work runs one worker, journals its report and re-checks the scope before any
+// other worker may start in the worktree. blocked is non-empty on a violation.
+func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step, role string, w worktree, brief string) (rep core.WorkerReport, blocked string, err error) {
+	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
 	if err != nil {
-		return rep, fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
+		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
-	err = f.emit(ctx, "step_report", map[string]any{"step": st.ID, "role": role, "status": rep.Status, "tokens": rep.Tokens, "calls": rep.Calls})
-	return rep, err
+	if err = f.emit(ctx, "step_report", map[string]any{"step": st.ID, "role": role, "status": rep.Status, "tokens": rep.Tokens, "calls": rep.Calls}); err != nil {
+		return rep, "", err
+	}
+	blocked, err = f.checkScope(ctx, w, st)
+	return rep, blocked, err
 }
 
 func briefOf(st plan.Step) string {

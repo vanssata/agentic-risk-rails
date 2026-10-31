@@ -83,7 +83,7 @@ func newFactory(t *testing.T, impl, reviewer core.WorkerRunner) (*Factory, *fake
 	return &Factory{
 		Config: Config{
 			Task: "t1", Root: testutil.GitRepo(t, map[string]string{"README.md": "x\n"}), WorkDir: t.TempDir(),
-			Tier: core.TierBalanced, Effective: map[core.Tier]string{core.TierBalanced: "sonnet", core.TierStrong: "opus"},
+			Tier: core.TierBalanced, Effective: map[core.Tier]bool{core.TierBalanced: true, core.TierStrong: true},
 			Parallel: 2, MaxTurns: 30,
 		},
 		Implementer: impl, Reviewer: ro{reviewer}, Journal: j,
@@ -188,13 +188,20 @@ func TestWorkerStatuses(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			impl := &writer{status: map[string][]core.WorkerStatus{"a": tc.statuses}, extra: map[string]string{"a": tc.extra}}
-			f, _ := newFactory(t, impl, reviews(pass1))
+			rv := reviews(pass1)
+			f, _ := newFactory(t, impl, rv)
 			res, err := f.RunWaves(context.Background(), plan.Plan{Steps: []plan.Step{step("a")}})
 			require.NoError(t, err)
 			require.Len(t, res, 1)
 			assert.Equal(t, tc.wantOK, res[0].OK())
 			assert.Contains(t, res[0].Blocked, tc.wantBlock)
-			assert.Equal(t, tc.wantScout, impl.count("code-scout:"))
+			scouts := 0 // the scout runs read-only, through the reviewer runner
+			for _, s := range rv.Specs {
+				if s.Role == "code-scout" {
+					scouts++
+				}
+			}
+			assert.Equal(t, tc.wantScout, scouts)
 			assert.Equal(t, tc.concerns, res[0].Concerns != "")
 			if !tc.wantOK {
 				_, statErr := os.Stat(filepath.Join(f.Root, "a.txt"))

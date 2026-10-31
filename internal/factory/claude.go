@@ -17,15 +17,17 @@ import (
 // ClaudeRunner runs a worker as `claude -p` with cwd = the step worktree.
 // Models maps a tier to the alias/ID passed to --model (from EffectiveTiers).
 type ClaudeRunner struct {
-	Bin            string // default "claude"
-	Models         map[core.Tier]string
-	PermissionMode string        // default acceptEdits
-	readOnly       bool          // set by ReadOnly(): reviewers get a read-only tool allowlist
-	Timeout        time.Duration // per worker; 0 = none
+	Bin      string // default "claude"
+	Models   map[core.Tier]string
+	readOnly bool          // set by ReadOnly(): reviewers get a read-only tool allowlist
+	Timeout  time.Duration // per worker; 0 = DefaultTimeout, never unlimited
 }
 
+// DefaultTimeout bounds a worker that has no explicit Timeout.
+const DefaultTimeout = 30 * time.Minute
+
 // claudeResult is the subset of the `--output-format json` result object used
-// here; field names are [U] until the RR_CONTRACT test pins them.
+// (fields confirmed against claude 2.1.316).
 type claudeResult struct {
 	Result   string         `json:"result"`
 	IsError  bool           `json:"is_error"`
@@ -45,15 +47,12 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if !ok {
 		return core.WorkerReport{}, fmt.Errorf("claude runner: no model for tier %s", spec.Tier)
 	}
-	bin, mode := c.Bin, c.PermissionMode
+	bin, mode := c.Bin, "acceptEdits"
 	if bin == "" {
 		bin = "claude"
 	}
 	if c.readOnly {
 		mode = "plan"
-	}
-	if mode == "" {
-		mode = "acceptEdits"
 	}
 	args := []string{"-p", "--output-format", "json", "--model", model, "--permission-mode", mode, "--no-session-persistence"}
 	if spec.MaxTurns > 0 {
@@ -65,11 +64,12 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 		args = append(args, "--tools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
 			"--setting-sources", "user", "--strict-mcp-config")
 	}
-	if c.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
-		defer cancel()
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) } // the whole group
@@ -79,6 +79,9 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	runErr := cmd.Run()
+	if cmd.Process != nil { // leftover background processes die with the worker, also after a normal exit
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 
 	var res claudeResult
 	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
