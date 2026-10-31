@@ -29,7 +29,7 @@ func startedTask(t *testing.T, root, task string, scope []string) []core.Event {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(journal.RunDir(root), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(journal.RunDir(root), task+".baseline.json"), manifest, 0o644))
-	data, err := json.Marshal(map[string]any{"scope": scope, "base_sha": base, "baseline": sha})
+	data, err := json.Marshal(map[string]any{"scope": scope, "base_sha": base, "baseline": sha, "mode": "guarded"})
 	require.NoError(t, err)
 	return []core.Event{{Type: "task_started", Task: task, Data: data}}
 }
@@ -250,7 +250,7 @@ func TestSuiteBudgetParallel(t *testing.T) {
 func TestUnsupportedAdapterRefusesFullRun(t *testing.T) {
 	s := &stub{name: "go", tests: []string{"./a"}, pass: true}
 	in := orchInput(&fakes.Journal{}, s)
-	in.Spec.Adapters = append(in.Spec.Adapters, core.VerifyAdapterSpec{Name: "lint", Cmd: "x"})
+	in.Spec.Adapters = append(in.Spec.Adapters, core.VerifyAdapterSpec{Name: "lint"}) // no built-in, no cmd
 
 	_, err := Run(context.Background(), in) // affected: allowed
 	require.NoError(t, err)
@@ -274,4 +274,68 @@ func TestOptionLikePathsRefused(t *testing.T) {
 	}
 	_, _, err := Node{Tool: "jest"}.Map(ctx, t.TempDir(), []string{"--config=evil.js"})
 	assert.Error(t, err)
+}
+
+func TestTaskMode(t *testing.T) {
+	ev := func(typ, mode string) core.Event {
+		return core.Event{Type: typ, Data: []byte(`{"mode":"` + mode + `"}`)}
+	}
+	tests := []struct {
+		name    string
+		events  []core.Event
+		want    core.Mode
+		wantErr bool
+	}{
+		{"started only", []core.Event{ev("task_started", "light")}, core.ModeLight, false},
+		{"rescored up", []core.Event{ev("task_started", "light"), ev("weight_rescored", "full")}, core.ModeFull, false},
+		{"amended wins by rank, not order", []core.Event{ev("task_started", "guarded"), ev("weight_amended", "programme"), ev("weight_rescored", "full")}, core.ModeProgramme, false},
+		{"never lowers", []core.Event{ev("task_started", "full"), ev("weight_amended", "light")}, core.ModeFull, false},
+		{"unknown later value ignored", []core.Event{ev("task_started", "light"), ev("weight_rescored", "bogus")}, core.ModeLight, false},
+		{"unknown started mode", []core.Event{ev("task_started", "bogus"), ev("weight_rescored", "full")}, "", true},
+		{"no mode", []core.Event{{Type: "task_started", Data: []byte(`{}`)}}, "", true},
+		{"no events", nil, "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := TaskMode(tc.events)
+			assert.Equal(t, tc.wantErr, err != nil)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestGenericAdapterRunsCmdOnFullOnly(t *testing.T) {
+	ctx := context.Background()
+	root := testutil.CopyFixture(t, "php-symfony")
+	fixer := filepath.Join(root, "vendor/bin/php-cs-fixer")
+	rec := filepath.Join(t.TempDir(), "fixer")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fixer), 0o755))
+	require.NoError(t, os.WriteFile(fixer, []byte("#!/bin/sh\necho \"$@\" >> "+rec+"\nexit ${FIXER_EXIT:-0}\n"), 0o755))
+	fakeRunner(t, "php")
+
+	in := Input{
+		Root: root, Task: "t1", Changed: []string{"src/Payment/PaymentService.php"}, Mode: core.ModeGuarded,
+		Spec: core.VerifySpec{Adapters: []core.VerifyAdapterSpec{
+			{Name: "phpunit", Cmd: "php bin/phpunit"},
+			{Name: "lint", Cmd: "vendor/bin/php-cs-fixer fix --dry-run"},
+		}},
+	}
+	rep, err := Run(ctx, in) // affected: lint is not executed
+	require.NoError(t, err)
+	assert.False(t, rep.Full)
+	assert.True(t, rep.Passed)
+	assert.NotContains(t, rep.Results, "lint")
+	assert.Empty(t, calls(t, rec))
+
+	in.Closing = true
+	rep, err = Run(ctx, in)
+	require.NoError(t, err)
+	assert.True(t, rep.Passed)
+	assert.Contains(t, rep.Results, "lint")
+	assert.Equal(t, []string{"fix --dry-run"}, calls(t, rec))
+
+	t.Setenv("FIXER_EXIT", "1")
+	rep, err = Run(ctx, in)
+	require.NoError(t, err)
+	assert.False(t, rep.Passed, "a failing generic cmd turns the close red")
 }

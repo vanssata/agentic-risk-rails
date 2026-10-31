@@ -17,13 +17,12 @@ import (
 
 // verifyFlags are shared by `rr verify` (and its subcommands) and `rr affected`.
 type verifyFlags struct {
-	root, mode string
+	root string
 }
 
 func (f *verifyFlags) bind(c *cobra.Command) {
 	wd, _ := os.Getwd()
 	c.PersistentFlags().StringVar(&f.root, "root", wd, "repository root")
-	c.PersistentFlags().StringVar(&f.mode, "mode", string(core.ModeGuarded), "task mode (light|guarded|full|full_irreversible|programme)")
 }
 
 // spec is the verify section of the RESOLVED policy (strictest of in-force and
@@ -34,14 +33,6 @@ func (f *verifyFlags) spec(ctx context.Context) (core.VerifySpec, error) {
 		return core.VerifySpec{}, fmt.Errorf("refusing: policy not resolved: %w", err)
 	}
 	return r.eff.Policy.Verify, nil
-}
-
-func (f *verifyFlags) mod() (core.Mode, error) {
-	m := core.Mode(f.mode)
-	if m.Rank() < 0 {
-		return "", fmt.Errorf("unknown mode %q", f.mode)
-	}
-	return m, nil
 }
 
 func printJSON(c *cobra.Command, v any) error {
@@ -73,11 +64,11 @@ func init() {
 				if err != nil {
 					return err
 				}
-				mode, err := f.mod()
+				events, trust, err := taskTrust(cmd.Context(), f.root, task)
 				if err != nil {
 					return err
 				}
-				_, trust, err := taskTrust(cmd.Context(), f.root, task)
+				mode, err := verify.TaskMode(events)
 				if err != nil {
 					return err
 				}

@@ -109,7 +109,7 @@ type Selection struct {
 	Uncovered []string
 	Full      bool
 	Reason    string
-	// Unsupported lists policy adapters with no built-in implementation (e.g. lint).
+	// Unsupported lists policy adapters with neither a built-in implementation nor a cmd.
 	Unsupported []string
 }
 
@@ -135,11 +135,15 @@ func Select(ctx context.Context, in Input) (Selection, error) {
 			sel.Items = append(sel.Items, Item{a, spec, tests})
 			sel.Uncovered = append(sel.Uncovered, unc...)
 		}
-		if !known {
+		switch {
+		case known:
+		case spec.Cmd != "": // no built-in: run its cmd as-is on full runs (cmd comes from the resolved policy)
+			sel.Items = append(sel.Items, Item{Adapter: generic{spec.Name}, Spec: spec})
+		default:
 			sel.Unsupported = append(sel.Unsupported, spec.Name)
 		}
 	}
-	if len(sel.Items) == 0 {
+	if len(sel.Items) == len(sel.generic()) { // no built-in adapter: only generic cmds would run, which never map tests
 		return Selection{}, errors.New("verify: no configured adapter is available")
 	}
 	sel.Uncovered = uniq(sel.Uncovered)
@@ -172,6 +176,9 @@ func Run(ctx context.Context, in Input) (Report, error) {
 	var names []string
 	ran := 0
 	for _, s := range sels {
+		if _, isGeneric := s.Adapter.(generic); isGeneric && !rep.Full {
+			continue // never maps affected tests: only full/close runs execute it
+		}
 		res, err := s.Adapter.Run(ctx, in.Root, s.Spec, s.Tests, rep.Full)
 		if err != nil {
 			return rep, err

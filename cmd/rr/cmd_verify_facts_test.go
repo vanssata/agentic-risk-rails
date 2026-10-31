@@ -18,7 +18,14 @@ import (
 
 // startTask does what the flow does: baseline manifest file + task_started{scope, base_sha, baseline}.
 func startTask(t *testing.T, root string, scope []string) {
+	startTaskMode(t, root, "guarded", scope...)
+}
+
+func startTaskMode(t *testing.T, root, mode string, scope ...string) {
 	t.Helper()
+	if scope == nil {
+		scope = []string{"**"}
+	}
 	ctx := context.Background()
 	manifest, sha, err := verify.Baseline(ctx, root)
 	require.NoError(t, err)
@@ -26,7 +33,7 @@ func startTask(t *testing.T, root string, scope []string) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(journal.RunDir(root), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(journal.RunDir(root), "t1.baseline.json"), manifest, 0o644))
-	data, _ := json.Marshal(map[string]any{"scope": scope, "base_sha": base, "baseline": sha})
+	data, _ := json.Marshal(map[string]any{"scope": scope, "base_sha": base, "baseline": sha, "mode": mode})
 	_, err = journal.New(root).Append(ctx, core.Event{Type: "task_started", Task: "t1", Actor: core.ActorHuman, Data: data})
 	require.NoError(t, err)
 }
@@ -68,4 +75,11 @@ func TestVerifyFactsFromJournal(t *testing.T) {
 	assert.Contains(t, out, `"in_scope": false`)
 	assert.Contains(t, out, "poison.txt")
 	assert.NotContains(t, out, "PaymentService.php")
+}
+
+func TestVerifyHasNoModeFlag(t *testing.T) {
+	root := testutil.CopyFixture(t, "php-symfony")
+	_, err := runPolicyRR(t, "verify", "--task", "t1", "--root", root, "--mode", "light")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown flag")
 }

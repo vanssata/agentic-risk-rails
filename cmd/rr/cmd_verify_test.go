@@ -26,7 +26,8 @@ func TestVerifyUsesResolvedPolicy(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "riskrails.yaml"), loosened, 0o644))
 
-	out, err := runPolicyRR(t, "affected", "--root", root, "--phpunit", "--mode", "full", "src/Payment/PaymentService.php")
+	startTaskMode(t, root, "full")
+	out, err := runPolicyRR(t, "affected", "--root", root, "--phpunit", "--task", "t1", "src/Payment/PaymentService.php")
 	require.NoError(t, err)
 	var got struct{ Full bool }
 	require.NoError(t, json.Unmarshal([]byte(out), &got))

@@ -63,3 +63,33 @@ func LoadTrust(root, task string, events []core.Event) (Trust, error) {
 	}
 	return t, nil
 }
+
+// TaskMode is the highest-ranked mode among task_started, weight_rescored and
+// weight_amended (data.mode); modes only grow. task_started must carry a known mode.
+func TaskMode(events []core.Event) (core.Mode, error) {
+	best, started := core.Mode(""), false
+	for _, e := range events {
+		if e.Type != "task_started" && e.Type != "weight_rescored" && e.Type != "weight_amended" {
+			continue
+		}
+		var d struct {
+			Mode core.Mode `json:"mode"`
+		}
+		if json.Unmarshal(e.Data, &d) != nil || d.Mode.Rank() < 0 {
+			if e.Type == "task_started" {
+				break
+			}
+			continue
+		}
+		if e.Type == "task_started" {
+			started = true
+		}
+		if best == "" || d.Mode.Rank() > best.Rank() {
+			best = d.Mode
+		}
+	}
+	if !started {
+		return "", errors.New("verify: refusing: task_started carries no known mode")
+	}
+	return best, nil
+}

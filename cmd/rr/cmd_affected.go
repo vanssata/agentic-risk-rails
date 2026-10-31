@@ -5,6 +5,7 @@ import (
 
 	"github.com/vanssata/agentic-risk-rails/internal/cli"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
 
@@ -14,6 +15,7 @@ var affectedAdapters = []string{"phpunit", "jest", "vitest", "pytest", "go"}
 func init() {
 	cli.Register(func() *cobra.Command {
 		var f verifyFlags
+		var task string
 		picked := map[string]*bool{}
 		c := &cobra.Command{
 			Use:   "affected [files...]",
@@ -23,9 +25,15 @@ func init() {
 				if err != nil {
 					return err
 				}
-				mode, err := f.mod()
-				if err != nil {
-					return err
+				mode := core.ModeGuarded // a preview without a task; with --task the journal's mode applies
+				if task != "" {
+					events, err := journal.New(f.root).Events(cmd.Context(), task)
+					if err != nil {
+						return err
+					}
+					if mode, err = verify.TaskMode(events); err != nil {
+						return err
+					}
 				}
 				var only []core.VerifyAdapterSpec
 				for _, a := range spec.Adapters {
@@ -58,6 +66,7 @@ func init() {
 			},
 		}
 		f.bind(c)
+		c.Flags().StringVar(&task, "task", "", "task id: use the mode recorded in its journal (default: guarded)")
 		for _, n := range affectedAdapters {
 			picked[n] = c.Flags().Bool(n, false, "only the "+n+" adapter")
 		}
