@@ -156,7 +156,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "bash -c \"git status\""
  },
  {
@@ -251,8 +251,8 @@
   "name": "cat <<'EOF'\\ngit push --force\\nEOF",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "cat <<'EOF'\ngit push --force\nEOF"
  },
  {
@@ -524,7 +524,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "stdbuf -oL git status"
  },
  {
@@ -563,8 +563,8 @@
   "name": "env",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "env"
  },
  {
@@ -644,7 +644,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "'git' status"
  },
  {
@@ -668,7 +668,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "/usr/local/bin/git status"
  },
  {
@@ -707,16 +707,16 @@
   "name": "git -c alias.p='!git push --force' p",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "git -c alias.p='!git push --force' p"
  },
  {
   "name": "git -c core.sshCommand=evil fetch",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "git -c core.sshCommand=evil fetch"
  },
  {
@@ -724,7 +724,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git -C /tmp status"
  },
  {
@@ -732,7 +732,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git --no-pager diff"
  },
  {
@@ -763,8 +763,8 @@
   "name": "git -c pager.log=evil log",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "git -c pager.log=evil log"
  },
  {

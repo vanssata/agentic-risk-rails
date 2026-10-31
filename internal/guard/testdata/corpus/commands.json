@@ -4,7 +4,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status"
  },
  {
@@ -12,7 +12,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git diff HEAD"
  },
  {
@@ -20,7 +20,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git diff --stat"
  },
  {
@@ -131,8 +131,8 @@
   "name": "ls -la",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls -la"
  },
  {
@@ -148,7 +148,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status && git diff"
  },
  {
@@ -163,8 +163,8 @@
   "name": "git status | cat",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "git status | cat"
  },
  {
@@ -172,7 +172,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status\ngit diff"
  },
  {
@@ -268,7 +268,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "cd src && git status"
  },
  {
@@ -292,7 +292,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status &"
  },
  {
@@ -468,15 +468,15 @@
   "level": "L0",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status"
  },
  {
   "name": "ls @L0",
   "level": "L0",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls"
  }
 ]

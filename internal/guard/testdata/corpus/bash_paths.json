@@ -11,7 +11,7 @@
   "name": "cat .env.example",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
+  "fixture": "allow",
   "strict": "deny",
   "command": "cat .env.example"
  },
@@ -142,8 +142,8 @@
   "name": "ls 2>&1",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls 2>&1"
  },
  {
@@ -151,7 +151,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "command": "git status > out.txt"
  },
  {
@@ -222,7 +222,7 @@
   "name": "git add .env",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
+  "fixture": "allow",
   "strict": "deny",
   "command": "git add .env"
  },
@@ -332,8 +332,8 @@
   "name": "cat src/b.php",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "cat src/b.php",
   "step_files": []
  },

@@ -58,6 +58,15 @@ type corpusCase struct {
 }
 
 func (c corpusCase) run(t *testing.T, name string, p core.Policy, want core.Decision) {
+	v := c.eval(t, p)
+	assert.Equal(t, want, v.Decision, "%s: %s (rule %q, reason %q)", name, c.Name, v.Rule, v.Reason)
+	if c.Rule != "" {
+		assert.Contains(t, v.Rule, c.Rule, c.Name)
+	}
+	assert.NotEmpty(t, v.Reason+v.Rule, "verdict must say why")
+}
+
+func (c corpusCase) eval(t *testing.T, p core.Policy) core.Verdict {
 	root := t.TempDir()
 	root, _ = filepath.EvalSymlinks(root)
 	home := filepath.Join(t.TempDir(), "home")
@@ -100,12 +109,7 @@ func (c corpusCase) run(t *testing.T, name string, p core.Policy, want core.Deci
 	default:
 		gc.Loader, gc.Differ = fakes.Loader{Out: p}, fakes.Differ{Dir: core.Direction(c.Policy), Changes: []core.FieldChange{{Path: "enforcement.commands.allow", Direction: core.Direction(c.Policy)}}}
 	}
-	v := New().Check(context.Background(), call, gc)
-	assert.Equal(t, want, v.Decision, "%s: %s (rule %q, reason %q)", name, c.Name, v.Rule, v.Reason)
-	if c.Rule != "" {
-		assert.Contains(t, v.Rule, c.Rule, c.Name)
-	}
-	assert.NotEmpty(t, v.Reason+v.Rule, "verdict must say why")
+	return New().Check(context.Background(), call, gc)
 }
 
 func TestCorpus(t *testing.T) {
@@ -287,4 +291,21 @@ func TestMatchCommandStrictAllow(t *testing.T) {
 	} {
 		assert.Equal(t, c.want, matchCommand(c.pat, w(c.cmd), true), "%q vs %q", c.pat, c.cmd)
 	}
+}
+
+// TestEverydayDistribution logs how an everyday PHP/Symfony session fares at L1
+// (go test -v -run Everyday); it fails if the session is ask-saturated.
+func TestEverydayDistribution(t *testing.T) {
+	b, err := os.ReadFile("testdata/corpus/everyday.json")
+	require.NoError(t, err)
+	var cases []corpusCase
+	require.NoError(t, json.Unmarshal(b, &cases))
+	fixture := loadFixturePolicy(t)
+	counts := map[core.Decision]int{}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) { counts[c.eval(t, fixture).Decision]++ })
+	}
+	n := len(cases)
+	t.Logf("everyday L1 fixture: %d calls: allow %d (%d%%), ask %d (%d%%), deny %d (%d%%)", n,
+		counts[core.Allow], 100*counts[core.Allow]/n, counts[core.Ask], 100*counts[core.Ask]/n, counts[core.Deny], 100*counts[core.Deny]/n)
 }

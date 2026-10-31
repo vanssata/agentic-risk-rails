@@ -123,8 +123,8 @@
   "name": "ls *",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "ls *"
  },
  {
@@ -875,7 +875,7 @@
   "level": "L1",
   "tool": "mcp__sh__run",
   "fixture": "allow",
-  "strict": "ask",
+  "strict": "allow",
   "raw": {
    "tool_input": {
     "cmd": "git status"
@@ -1130,8 +1130,8 @@
   "name": "rm --recursive --force src/old",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "allow",
+  "strict": "allow",
   "command": "rm --recursive --force src/old"
  },
  {

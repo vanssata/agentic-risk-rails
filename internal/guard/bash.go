@@ -36,6 +36,9 @@ func checkBash(call core.ToolCall, gc core.GuardContext) core.Verdict {
 	for _, why := range a.unrecog {
 		r.add(unrecognised(why, gc))
 	}
+	for _, why := range a.denies {
+		r.add(core.Verdict{Decision: core.Deny, Reason: why, Rule: "guard.git_config"})
+	}
 	for _, c := range a.cmds {
 		v := checkCommand(c, e, gc)
 		r.add(v)
@@ -89,6 +92,10 @@ func checkCommand(c cmd, e core.EnforcementSpec, gc core.GuardContext) core.Verd
 	if inert[last[0].s] {
 		return core.Verdict{Decision: core.Allow, Reason: "inert builtin", Rule: "guard.inert"}
 	}
+	if gc.Level < core.L2 && !privileged(c) && (readOnlyCommand(last) || workspaceOp(last)) {
+		// L0/L1 only. Arguments are still path-checked, so secrets stay denied.
+		return core.Verdict{Decision: core.Allow, Reason: "known read-only or workspace command: " + text(last), Rule: "guard.readonly"}
+	}
 	d := core.Ask
 	if e.Commands.Unlisted != nil {
 		d = *e.Commands.Unlisted
@@ -137,11 +144,20 @@ func checkArgs(r *result, c cmd, call core.ToolCall, e core.EnforcementSpec, gc 
 	}
 	if name == "git" {
 		r.add(checkPush(argv, gc))
+		if gitConfigWrite(argv) {
+			r.add(core.Verdict{Decision: core.Deny, Reason: "git config key can run programs, load configuration or rewrite remotes", Rule: "guard.git_config"})
+		}
 	}
 	outW, flagVals, pos := splitArgs(argv, call, gc)
 	writes, reads := fileRoles(name, argv, pos)
 	writes = append(writes, outW...)
-	dirs := !noFileSemantics[name]
+	dirs := dirModeOf(argv)
+	if dirs != dirNone && searchesCwd(argv, pos) {
+		r.add(checkDir(".", call, gc, dirs)) // `grep -r foo` / `rg foo` search the working directory
+	}
+	if name == "rm" {
+		r.add(checkRmRoot(pos, call, gc))
+	}
 	for _, w := range writes {
 		r.add(pathArg(w, pathWrite, dirs, call, gc))
 	}
@@ -237,7 +253,7 @@ func hasFlag(argv []word, names ...string) bool {
 	return false
 }
 
-func pathArg(w word, kind pathKind, dirs bool, call core.ToolCall, gc core.GuardContext) core.Verdict {
+func pathArg(w word, kind pathKind, dirs dirMode, call core.ToolCall, gc core.GuardContext) core.Verdict {
 	if w.dyn {
 		return core.Verdict{} // already reported as unrecognised
 	}
@@ -255,8 +271,8 @@ func pathArg(w word, kind pathKind, dirs bool, call core.ToolCall, gc core.Guard
 		default:
 			r.add(checkEither(p, call, gc, true))
 		}
-		if dirs {
-			r.add(checkDir(p, call, gc))
+		if dirs != dirNone {
+			r.add(checkDir(p, call, gc, dirs))
 		}
 	}
 	return r.done()
@@ -285,4 +301,97 @@ func fileRoles(name string, argv, args []word) (writes, reads []word) {
 		return args, nil
 	}
 	return nil, args // any command may read what it is pointed at
+}
+
+// dirMode says how an existing directory used as an argument is judged.
+type dirMode int
+
+const (
+	dirNone    dirMode = iota // names only (ls, find, git add …): no content is read
+	dirContent                // reads content: secrets below the directory deny
+	dirTracked                // reads content but honours .gitignore (rg, git grep)
+)
+
+var nameOnly = opts("ls", "tree", "du", "df", "stat", "find", "mkdir", "touch", "rm", "mv", "chmod", "chown", "ln",
+	"which", "type", "basename", "dirname", "realpath", "readlink", "file", "composer", "npm", "yarn", "pnpm")
+
+func dirModeOf(argv []word) dirMode {
+	name, args := argv[0].s, argv[1:]
+	switch {
+	case noFileSemantics[name] || nameOnly[name]:
+		return dirNone
+	case name == "git":
+		switch {
+		case len(args) == 0:
+			return dirNone
+		case args[0].s == "grep":
+			// --no-index searches ignored files too unless --exclude-standard
+			if hasArg(args, "--no-exclude-standard") || (hasArg(args, "--no-index") && !hasArg(args, "--exclude-standard")) {
+				return dirContent
+			}
+			return dirTracked
+		case args[0].s == "diff" && hasArg(args, "--no-index"):
+			return dirContent
+		}
+		return dirNone
+	case name == "rg":
+		if hasArgPrefix(args, "--no-ignore", "-u", "--unrestricted") {
+			return dirContent
+		}
+		return dirTracked
+	}
+	return dirContent
+}
+
+// checkRmRoot asks before removing the repository root itself.
+func checkRmRoot(pos []word, call core.ToolCall, gc core.GuardContext) core.Verdict {
+	for _, w := range pos {
+		if w.dyn || w.glob {
+			continue
+		}
+		if t := resolve(w.s, call.Cwd, gc); t.inside && t.rel == "." {
+			return core.Verdict{Decision: askOrDeny(gc), Reason: "rm of the repository root", Rule: "guard.rm_root"}
+		}
+	}
+	return core.Verdict{}
+}
+
+// privileged: some wrapper level elevates (sudo/doas/su), so the innermost
+// command is not what it seems and gets no default allow.
+func privileged(c cmd) bool {
+	for _, f := range c.forms[:len(c.forms)-1] {
+		switch f[0].s {
+		case "sudo", "doas", "su":
+			return true
+		}
+	}
+	return false
+}
+
+// searchesCwd: a recursive search command without a path operand searches ".".
+func searchesCwd(argv, pos []word) bool {
+	name, args := argv[0].s, argv[1:]
+	recursive := false
+	switch name {
+	case "rg":
+		recursive = true
+	case "grep", "egrep", "fgrep":
+		recursive = hasArg(args, "--recursive", "--dereference-recursive") || shortClusterHas(args, 'r') || shortClusterHas(args, 'R')
+	case "git":
+		recursive = len(args) > 0 && args[0].s == "grep"
+		pos = pos[min(1, len(pos)):] // drop the subcommand
+	}
+	if !recursive {
+		return false
+	}
+	valued := 0 // -e PATTERN / -f FILE consume a positional-looking word
+	for _, a := range args {
+		if a.s == "-e" || a.s == "-f" || a.s == "--regexp" || a.s == "--file" {
+			valued++
+		}
+	}
+	if valued > 0 || hasArgPrefix(args, "--regexp=", "--file=") {
+		return len(pos) <= valued
+	}
+	return len(pos) <= 1
 }

@@ -34,6 +34,7 @@ type analysis struct {
 	cmds    []cmd
 	redirs  []redirect
 	unrecog []string
+	denies  []string // constructs denied at every level (git -c with a command-running key)
 	cwd     string   // tracked working directory
 	dirs    []string // pushd stack
 	lost    bool     // cwd no longer statically known
@@ -197,15 +198,19 @@ func (a *analysis) addRedirect(w word, write bool) {
 
 func (a *analysis) call(c *syntax.CallExpr, depth int) {
 	for _, as := range c.Assigns {
-		if as.Name != nil && dangerousEnv(as.Name.Value) {
-			a.unrecog = append(a.unrecog, "assignment to "+as.Name.Value)
+		if as.Name == nil {
+			continue
+		}
+		name := as.Name.Value
+		switch {
+		case dangerousEnv(name):
+			a.unrecog = append(a.unrecog, "assignment to "+name)
+		case len(c.Args) > 0 && !safeAssign(name, as):
+			a.unrecog = append(a.unrecog, "environment assignment before a command: "+name)
 		}
 	}
 	if len(c.Args) == 0 {
 		return
-	}
-	if len(c.Assigns) > 0 {
-		a.unrecog = append(a.unrecog, "environment assignment before a command")
 	}
 	argv := make([]word, len(c.Args))
 	for i, w := range c.Args {
@@ -330,6 +335,9 @@ func (a *analysis) gitGlobals(argv []word, cwd string) ([]word, string) {
 			i += 2
 		default:
 			a.unrecog = append(a.unrecog, "git global option "+o)
+			if o == "-c" && i+1 < len(argv) && (!argv[i+1].dyn && dangerousGitKey(argv[i+1].s)) {
+				a.denies = append(a.denies, "git -c "+argv[i+1].s+" can run programs or rewrite remotes")
+			}
 			if gitValueOpts[o] {
 				i++
 			}
@@ -406,7 +414,9 @@ func (a *analysis) unwrap(argv []word) ([]word, bool) {
 				i++
 			}
 		case w.assigns && strings.Contains(s, "=") && envNameRe.MatchString(s[:strings.IndexByte(s, '=')]):
-			a.unrecog = append(a.unrecog, "environment assignment before a command")
+			if n := s[:strings.IndexByte(s, '=')]; !safeEnvName(n) {
+				a.unrecog = append(a.unrecog, "environment assignment before a command: "+n)
+			}
 			i++
 		default:
 			goto done
@@ -548,4 +558,21 @@ func specialWrapperOpt(name, opt string) (query, opaque bool) {
 		return false, opt == "-s" || opt == "-i" || opt == "-e"
 	}
 	return false, false
+}
+
+// safeEnvName: variables that tune the application and cannot load code.
+func safeEnvName(name string) bool {
+	switch name {
+	case "APP_ENV", "APP_DEBUG", "NODE_ENV", "CI", "TZ", "LANG":
+		return true
+	}
+	return strings.HasPrefix(name, "LC_")
+}
+
+// safeAssign: a safe variable with a static scalar value.
+func safeAssign(name string, as *syntax.Assign) bool {
+	if !safeEnvName(name) || as.Array != nil || as.Append || as.Index != nil {
+		return false
+	}
+	return as.Value == nil || !wordOf(as.Value).dyn
 }

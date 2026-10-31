@@ -194,7 +194,7 @@ func secretList(gc core.GuardContext) []string {
 // checkDir treats an existing directory used as an argument as a recursive read
 // of everything below it (same rule as a Grep/Glob search root); a directory
 // outside the repository asks (denies at L2+).
-func checkDir(p string, call core.ToolCall, gc core.GuardContext) core.Verdict {
+func checkDir(p string, call core.ToolCall, gc core.GuardContext, mode dirMode) core.Verdict {
 	if ignoredDevices[p] || strings.HasPrefix(p, "/dev/fd/") {
 		return core.Verdict{}
 	}
@@ -206,7 +206,7 @@ func checkDir(p string, call core.ToolCall, gc core.GuardContext) core.Verdict {
 	if !t.inside {
 		r.add(core.Verdict{Decision: askOrDeny(gc), Reason: "directory outside the repository used as argument: " + p, Rule: "enforcement.sandbox.outside_root"})
 	}
-	r.add(searchSecrets(t, secretList(gc), nil, gc))
+	r.add(searchSecrets(t, secretList(gc), nil, newTracker(gc, mode == dirTracked), gc))
 	return r.done()
 }
 
