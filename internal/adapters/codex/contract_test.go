@@ -30,10 +30,12 @@ func contractRepo(t *testing.T) (repo, codexHome string) {
 		t.Skip("codex not installed")
 	}
 	repo = testutil.GitRepo(t, map[string]string{
-		"riskrails.yaml": "schema: 1\n",
-		".env.local":     "SECRET=1\n",
-		"src/app.txt":    "app\n",
-		".github/ci.yml": "on: push\n",
+		"riskrails.yaml":     "schema: 1\n",
+		".env.local":         "SECRET=1\n",
+		"src/app.txt":        "app\n",
+		"pkg/.env.prod":      "SECRET=2\n",
+		"pkg/riskrails.yaml": "nested\n",
+		".github/ci.yml":     "on: push\n",
 	})
 	in := core.SyncInput{Root: repo, Home: t.TempDir(), Policy: fakes.StrictPolicy(), Level: core.L2}
 	for _, g := range (Adapter{}).Generators() {
@@ -72,6 +74,8 @@ echo x >> riskrails.yaml; echo "w-riskrails=$?"
 echo x >> .github/ci.yml; echo "w-github=$?"
 echo x > src/new.txt; echo "w-src=$?"
 cat .env.local >/dev/null; echo "r-env=$?"
+cat pkg/.env.prod >/dev/null; echo "r-nested-env=$?"
+echo x >> pkg/riskrails.yaml; echo "w-nested-policy=$?"
 `
 	out, err := runCodex(t, repo, home, time.Minute, "sandbox", "sh", "-c", script)
 	require.NoError(t, err, out)
@@ -79,6 +83,9 @@ cat .env.local >/dev/null; echo "r-env=$?"
 	assert.Contains(t, out, "w-github=2", out)
 	assert.Contains(t, out, "w-src=0", "the rest of the workspace stays writable: %s", out)
 	assert.Contains(t, out, "r-env=1", ".env.local must be unreadable: %s", out)
+	assert.Contains(t, out, "r-nested-env=1", "slash-less secret pattern must cover any depth: %s", out)
+	// Known gap (codex.md): Codex cannot express read-only for a slash-less name at any depth.
+	assert.Contains(t, out, "w-nested-policy=0", "documents the residual gap: %s", out)
 	assert.Contains(t, out, "Read-only file system")
 	assert.Contains(t, out, "Permission denied")
 	b, err := os.ReadFile(filepath.Join(repo, "riskrails.yaml"))

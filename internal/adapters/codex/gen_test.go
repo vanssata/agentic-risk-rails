@@ -88,10 +88,14 @@ func TestConfigSemantics(t *testing.T) {
 	fs := cfg["permissions"].(map[string]any)["riskrails"].(map[string]any)["filesystem"].(map[string]any)
 	ws := fs[":workspace_roots"].(map[string]any)
 	assert.Equal(t, "write", ws["."])
-	assert.Equal(t, "read", ws["riskrails.yaml"])
+	assert.Equal(t, "read", ws[".codex/**"], "core.AlwaysProtected")
+	assert.Equal(t, "read", ws[".rr/**"])
 	assert.Equal(t, "read", ws[".github/**"])
 	assert.Equal(t, "deny", ws["config/secrets/**"], "$secret_reads expanded")
-	assert.Equal(t, "deny", ws[".env.local"])
+	assert.Equal(t, "deny", ws["**/.env.local"], "slash-less patterns cover any depth")
+	assert.Equal(t, "read", ws["riskrails.yaml"], "exact read path (Codex allows read only on exact paths or /**)")
+	assert.NotContains(t, ws, ".github/workflows/**", "covered by .github/** (nested rules break bwrap)")
+	assert.NotContains(t, ws, "**/.env*", ".env* cannot be expressed as read; it is dropped (gap), deny comes from secret_reads")
 	assert.Equal(t, "deny", fs["/home/test/.ssh/**"], "~ expanded to Home")
 	assert.Equal(t, "deny", fs["/home/test/.config/riskrails/**"])
 	assert.Equal(t, "read", fs["/"])
@@ -113,7 +117,26 @@ func TestStrictestAccessWins(t *testing.T) {
 	fs := filesystem(core.SyncInput{Home: "/h", Policy: core.EffectivePolicy{Policy: p}})
 	ws := fs[":workspace_roots"].(map[string]string)
 	assert.Equal(t, "deny", ws["a/**"])
-	assert.Equal(t, "deny", ws[".env*"])
+	assert.Equal(t, "deny", ws["**/.env*"])
+}
+
+func TestWsEntry(t *testing.T) {
+	tests := []struct{ in, access, want string }{
+		{".env*", "deny", "**/.env*"},
+		{"config/secrets/**", "deny", "config/secrets/**"},
+		{"riskrails.yaml", "read", "riskrails.yaml"},
+		{".github/**", "read", ".github/**"},
+		{"src/*.php", "read", "src/**"},
+		{"config/**/security.yaml", "read", "config/**"},
+		{"a/b/c*/d.txt", "read", "a/b/**"},
+		{".env*", "read", ""},
+		{"**/x.yml", "read", ""},
+	}
+	for _, tc := range tests {
+		got, ok := wsEntry(tc.in, tc.access)
+		assert.Equal(t, tc.want != "", ok, tc.in)
+		assert.Equal(t, tc.want, got, tc.in)
+	}
 }
 
 func TestHooksFile(t *testing.T) {
