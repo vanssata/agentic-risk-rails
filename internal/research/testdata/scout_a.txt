@@ -1,0 +1,17 @@
+FACTS:
+- OrderService::place calls PaymentGateway::charge synchronously | src/Order/OrderService.php:42 | [V]
+- The charge endpoint has a timeout of 30 seconds | src/Payment/Gateway.php:10 | [V]
+- Retries are enabled for the payment client | src/Payment/Gateway.php:20 | [U]
+- Doctrine flush runs inside the request listener | src/EventListener/Flush.php:8 | [V]
+READ:
+- src/Order/OrderService.php
+- src/Payment/Gateway.php
+TOUCHES:
+- src/Order/OrderService.php
+STEAL:
+- retry decorator -> PaymentGateway
+AVOID:
+- flush in listeners
+GAPS:
+- behaviour of the queue worker under load
+COST: tokens=52000 calls=11
