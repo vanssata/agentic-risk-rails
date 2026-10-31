@@ -28,11 +28,7 @@ func resolve(p, cwd string, gc core.GuardContext) target {
 		p = filepath.Join(gc.Home, p[2:])
 	}
 	if !filepath.IsAbs(p) {
-		base := gc.Root
-		if filepath.IsAbs(cwd) {
-			base = cwd
-		}
-		p = filepath.Join(base, p)
+		p = filepath.Join(cwdBase(cwd, gc), p)
 	}
 	abs := evalPrefix(filepath.Clean(p))
 	root := evalPrefix(filepath.Clean(gc.Root))
@@ -98,11 +94,11 @@ func matchesRule(list []string, t target, gc core.GuardContext) (string, bool) {
 	for _, pat := range list {
 		switch {
 		case pat == "~" || strings.HasPrefix(pat, "~/"):
-			if matchPath(quoteMeta(filepath.ToSlash(gc.Home))+strings.TrimPrefix(pat, "~"), filepath.ToSlash(t.abs)) {
+			if matchAbs(quoteMeta(filepath.ToSlash(gc.Home))+strings.TrimPrefix(pat, "~"), t.abs) {
 				return pat, true
 			}
 		case filepath.IsAbs(pat):
-			if matchPath(filepath.ToSlash(pat), filepath.ToSlash(t.abs)) {
+			if matchAbs(pat, t.abs) {
 				return pat, true
 			}
 		case t.inside && matchPath(pat, t.rel):
@@ -110,6 +106,22 @@ func matchesRule(list []string, t target, gc core.GuardContext) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// cwdBase anchors a tracked working directory: absolute as is, "~" expanded,
+// anything else relative to the repo root.
+func cwdBase(cwd string, gc core.GuardContext) string {
+	switch {
+	case cwd == "":
+		return gc.Root
+	case cwd == "~":
+		return gc.Home
+	case strings.HasPrefix(cwd, "~/"):
+		return filepath.Join(gc.Home, cwd[2:])
+	case filepath.IsAbs(cwd):
+		return cwd
+	}
+	return filepath.Join(gc.Root, cwd)
 }
 
 func isPolicyFile(t target) bool {
@@ -135,6 +147,9 @@ func checkPath(p string, write bool, call core.ToolCall, gc core.GuardContext, v
 	}
 	if viaShell && isPolicyFile(t) {
 		return core.Verdict{Decision: core.Deny, Reason: policyFile + " may only change through an Edit/Write that is policy-diffed", Rule: "enforcement.protected_paths: " + policyFile}
+	}
+	if pat, ok := matchesRule(core.AlwaysProtected, t, gc); ok {
+		return core.Verdict{Decision: core.Deny, Reason: "write to always-protected path " + p, Rule: "core.AlwaysProtected: " + pat}
 	}
 	list := append(append(append([]string{}, e.ProtectedPaths...), expandRefs(e.Sandbox.Readonly, e)...), expandRefs(e.Sandbox.NoWrite, e)...)
 	if pat, ok := matchesRule(list, t, gc); ok {
@@ -169,11 +184,7 @@ func globTargets(p string, cwd string, gc core.GuardContext) []string {
 	if strings.HasPrefix(p, "~/") {
 		pat = filepath.Join(gc.Home, p[2:])
 	} else if !filepath.IsAbs(p) {
-		base := gc.Root
-		if filepath.IsAbs(cwd) {
-			base = cwd
-		}
-		pat = filepath.Join(base, p)
+		pat = filepath.Join(cwdBase(cwd, gc), p)
 	}
 	m, err := filepath.Glob(pat)
 	if err != nil || len(m) > 200 {
@@ -193,4 +204,9 @@ func quoteMeta(s string) string {
 		sb.WriteRune(c)
 	}
 	return sb.String()
+}
+
+// matchAbs matches an absolute pattern against an absolute path.
+func matchAbs(pat, abs string) bool {
+	return matchPath(strings.TrimPrefix(filepath.ToSlash(pat), "/"), strings.TrimPrefix(filepath.ToSlash(abs), "/"))
 }

@@ -193,7 +193,7 @@ func sameModel(a, b string) bool {
 	}
 	isAlias := func(x string) bool { return x != "" && !strings.ContainsAny(x, "-.") }
 	famOf := func(alias, id string) bool {
-		return strings.Contains(id, "-"+alias+"-") || strings.HasPrefix(id, "claude-"+alias)
+		return id == "claude-"+alias || strings.HasPrefix(id, "claude-"+alias+"-")
 	}
 	return (isAlias(a) && famOf(a, b)) || (isAlias(b) && famOf(b, a))
 }
@@ -203,6 +203,9 @@ func sameModel(a, b string) bool {
 func checkModel(call core.ToolCall, gc core.GuardContext) core.Verdict {
 	if call.Model == "" {
 		return core.Verdict{Decision: core.Allow, Reason: "model inherited"}
+	}
+	if len(gc.Tiers.Models) == 0 { // tiers not resolved (yet): cannot verify
+		return core.Verdict{Decision: askOrDeny(gc), Reason: "explicit model " + call.Model + " but no effective tiers to check against", Rule: "models.effective_tiers"}
 	}
 	for _, m := range gc.Tiers.Models {
 		if sameModel(m, call.Model) {

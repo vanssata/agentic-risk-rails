@@ -17,6 +17,8 @@ const maxDepth = 5 // nested `bash -c` strings
 type cmd struct {
 	forms       [][]word
 	passthrough bool
+	xargs       bool   // stdin appends unknown arguments
+	cwd         string // working directory when the command runs ("" = repo root)
 }
 
 func (c cmd) last() []word { return c.forms[len(c.forms)-1] }
@@ -24,6 +26,7 @@ func (c cmd) last() []word { return c.forms[len(c.forms)-1] }
 type redirect struct {
 	target word
 	write  bool
+	cwd    string
 }
 
 // analysis is everything statically known about a shell string.
@@ -31,6 +34,9 @@ type analysis struct {
 	cmds    []cmd
 	redirs  []redirect
 	unrecog []string
+	cwd     string   // tracked working directory
+	dirs    []string // pushd stack
+	lost    bool     // cwd no longer statically known
 }
 
 var (
@@ -46,8 +52,8 @@ func dangerousEnv(name string) bool {
 	return dangerEnv[name] || strings.HasPrefix(name, "GIT_") || strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "DYLD_")
 }
 
-func analyze(src string, depth int) *analysis {
-	a := &analysis{}
+func analyze(src, cwd string, depth int) *analysis {
+	a := &analysis{cwd: cwd}
 	a.run(src, depth)
 	return a
 }
@@ -62,8 +68,24 @@ func (a *analysis) run(src string, depth int) {
 		a.unrecog = append(a.unrecog, "shell syntax not parseable: "+err.Error())
 		return
 	}
-	syntax.Walk(f, func(n syntax.Node) bool {
+	var visit func(syntax.Node) bool
+	visit = func(n syntax.Node) bool {
 		switch x := n.(type) {
+		case *syntax.Subshell:
+			a.scoped(func() { a.walkStmts(x.Stmts, visit) })
+			return false
+		case *syntax.CmdSubst:
+			a.scoped(func() { a.walkStmts(x.Stmts, visit) })
+			return false
+		case *syntax.ProcSubst:
+			a.scoped(func() { a.walkStmts(x.Stmts, visit) })
+			return false
+		case *syntax.BinaryCmd:
+			if x.Op == syntax.Pipe || x.Op == syntax.PipeAll { // each side runs in its own process
+				a.scoped(func() { syntax.Walk(x.X, visit) })
+				a.scoped(func() { syntax.Walk(x.Y, visit) })
+				return false
+			}
 		case *syntax.Stmt:
 			for _, r := range x.Redirs {
 				a.redirect(r)
@@ -80,7 +102,60 @@ func (a *analysis) run(src string, depth int) {
 			a.unrecog = append(a.unrecog, "function definition")
 		}
 		return true
-	})
+	}
+	syntax.Walk(f, visit)
+}
+
+func (a *analysis) walkStmts(stmts []*syntax.Stmt, v func(syntax.Node) bool) {
+	for _, s := range stmts {
+		syntax.Walk(s, v)
+	}
+}
+
+// scoped runs f in a child process scope: cd/pushd inside do not leak out.
+func (a *analysis) scoped(f func()) {
+	cwd, dirs, lost := a.cwd, a.dirs, a.lost
+	f()
+	a.cwd, a.dirs, a.lost = cwd, dirs, lost
+}
+
+// chdir updates the tracked working directory for cd/pushd/popd. A target that
+// is not static makes every later relative path unresolvable (unrecognised).
+func (a *analysis) chdir(argv []word) {
+	var dir string
+	static := false
+	for _, w := range argv[1:] {
+		if w.s == "--" || w.s == "-L" || w.s == "-P" {
+			continue
+		}
+		if static || w.dyn || w.glob || w.s == "-" || strings.HasPrefix(w.s, "+") {
+			static = false
+			break
+		}
+		dir, static = w.s, true
+	}
+	switch argv[0].s {
+	case "popd":
+		if n := len(a.dirs); n > 0 && len(argv) == 1 {
+			a.cwd, a.dirs = a.dirs[n-1], a.dirs[:n-1]
+			return
+		}
+		static = false
+	case "pushd":
+		a.dirs = append(append([]string(nil), a.dirs...), a.cwd)
+	}
+	if !static {
+		if !a.lost {
+			a.unrecog = append(a.unrecog, argv[0].s+": working directory not static")
+		}
+		a.lost = true
+		return
+	}
+	if strings.HasPrefix(dir, "/") || strings.HasPrefix(dir, "~") {
+		a.cwd = dir
+	} else {
+		a.cwd = path.Join(a.cwd, dir)
+	}
 }
 
 func (a *analysis) redirect(r *syntax.Redirect) {
@@ -117,7 +192,7 @@ func (a *analysis) addRedirect(w word, write bool) {
 		a.unrecog = append(a.unrecog, "redirect target not static")
 		return
 	}
-	a.redirs = append(a.redirs, redirect{target: w, write: write})
+	a.redirs = append(a.redirs, redirect{target: w, write: write, cwd: a.cwd})
 }
 
 func (a *analysis) call(c *syntax.CallExpr, depth int) {
@@ -140,6 +215,7 @@ func (a *analysis) call(c *syntax.CallExpr, depth int) {
 func (a *analysis) resolve(argv []word, depth int) {
 	var forms [][]word
 	cur := argv
+	xargs := false
 	for step := 0; step < 10; step++ {
 		if cur[0].dyn || cur[0].glob {
 			a.unrecog = append(a.unrecog, "command name not statically known")
@@ -159,16 +235,24 @@ func (a *analysis) resolve(argv []word, depth int) {
 			a.findExec(cur, depth)
 		default:
 			if next, ok := a.unwrap(cur); ok {
+				xargs = xargs || name == "xargs"
 				cur = next
 				continue
 			}
 		}
 		break
 	}
-	a.add(cmd{forms: forms})
+	switch cur[0].s {
+	case "cd", "pushd", "popd":
+		a.chdir(cur)
+	}
+	a.add(cmd{forms: forms, xargs: xargs})
 }
 
-func (a *analysis) add(c cmd) { a.cmds = append(a.cmds, c) }
+func (a *analysis) add(c cmd) {
+	c.cwd = a.cwd
+	a.cmds = append(a.cmds, c)
+}
 
 // head strips quoting artefacts from argv[0]: absolute paths in standard dirs
 // collapse to the basename; git global options are removed.
@@ -177,8 +261,37 @@ func (a *analysis) head(argv []word) []word {
 	if strings.HasPrefix(out[0].s, "/") && stdDirs[path.Dir(out[0].s)] {
 		out[0].s = path.Base(out[0].s)
 	}
-	if out[0].s == "git" {
+	switch out[0].s {
+	case "git":
 		out = a.gitGlobals(out)
+	case "rm":
+		out = normaliseRm(out)
+	}
+	return out
+}
+
+// normaliseRm maps long options to short ones, drops "--" and cleans absolute
+// targets, so `rm --recursive --force /`, `rm -rf -- /` and `rm -rf /*` all
+// look like `rm -f -r /`.
+func normaliseRm(argv []word) []word {
+	out := []word{argv[0]}
+	for _, w := range argv[1:] {
+		switch {
+		case w.dyn:
+		case w.s == "--":
+			continue
+		case w.s == "--recursive":
+			w.s = "-r"
+		case w.s == "--force":
+			w.s = "-f"
+		case strings.HasPrefix(w.s, "/"):
+			c := path.Clean(w.s)
+			if c == "/*" || c == "/." {
+				c = "/"
+			}
+			w.s = c
+		}
+		out = append(out, w)
 	}
 	return out
 }
@@ -333,7 +446,7 @@ func (a *analysis) shell(argv []word, forms [][]word, depth int) {
 	switch {
 	case hasC && i < len(argv) && !argv[i].dyn:
 		a.add(cmd{forms: forms, passthrough: true})
-		a.run(argv[i].s, depth+1)
+		a.scoped(func() { a.run(argv[i].s, depth+1) })
 	case hasC:
 		a.unrecog = append(a.unrecog, "shell -c string not static")
 		a.add(cmd{forms: forms, passthrough: true})

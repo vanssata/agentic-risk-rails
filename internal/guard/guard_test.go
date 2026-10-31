@@ -48,7 +48,10 @@ type corpusCase struct {
 	Symlinks  map[string]string `json:"symlinks"`
 	Files     []string          `json:"files"`
 	Protected []string          `json:"protected"` // extra protected_paths for this case
-	Policy    string            `json:"policy"`    // riskrails.yaml diff: LOOSEN | TIGHTEN | MIXED | ERROR | PARSE_ERROR | NIL
+	Raw       json.RawMessage   `json:"raw"`       // raw hook payload (Grep/Glob, MCP tools)
+	NoTiers   bool              `json:"no_tiers"`  // empty Tiers.Models (tiers not wired)
+	RepoFiles []string          `json:"repo_files"`
+	Policy    string            `json:"policy"` // riskrails.yaml diff: LOOSEN | TIGHTEN | MIXED | ERROR | PARSE_ERROR | NIL
 	Fixture   core.Decision     `json:"fixture"`
 	Strict    core.Decision     `json:"strict"`
 	Rule      string            `json:"rule"` // substring of Verdict.Rule, optional
@@ -70,13 +73,17 @@ func (c corpusCase) run(t *testing.T, name string, p core.Policy, want core.Deci
 		require.NoError(t, os.WriteFile(sub.Replace(f), nil, 0o644))
 	}
 	call := core.ToolCall{Runtime: "test", Event: "PreToolUse", Tool: c.Tool, Command: sub.Replace(c.Command),
-		Content: c.Content, URL: c.URL, Model: c.Model, Cwd: sub.Replace(c.Cwd)}
+		Content: c.Content, URL: c.URL, Model: c.Model, Cwd: sub.Replace(c.Cwd), Raw: json.RawMessage(sub.Replace(string(c.Raw)))}
 	for _, p := range c.Paths {
 		call.Paths = append(call.Paths, sub.Replace(p))
 	}
 	p.Enforcement.ProtectedPaths = append(append([]string{}, p.Enforcement.ProtectedPaths...), c.Protected...)
 	gc := core.GuardContext{Policy: effective(p), Level: c.Level, Root: root, Home: home,
 		Tiers: core.EffectiveTiers{Models: map[core.Tier]string{core.TierFast: "claude-haiku-4-5", core.TierBalanced: "sonnet", core.TierStrong: "claude-opus-5-5"}}}
+	if c.NoTiers {
+		gc.Tiers = core.EffectiveTiers{}
+	}
+	gc.RepoFiles = c.RepoFiles
 	if c.StepFiles != nil {
 		gc.StepFiles = []string{}
 		for _, f := range c.StepFiles {
@@ -184,7 +191,7 @@ func TestMatchCommand(t *testing.T) {
 		{"composer global *", "composer global require x/y", true},
 		{"git push*", "git push", true},
 	} {
-		assert.Equal(t, c.want, matchCommand(c.pat, w(c.cmd)), "%q vs %q", c.pat, c.cmd)
+		assert.Equal(t, c.want, matchCommand(c.pat, w(c.cmd), false), "%q vs %q", c.pat, c.cmd)
 	}
 }
 
@@ -194,12 +201,12 @@ func TestMatchPath(t *testing.T) {
 		want     bool
 	}{
 		{".env*", ".env.local", true},
-		{".env*", "app/.env", false},
+		{".env*", "app/.env", true},
 		{"config/secrets/**", "config/secrets/a/b", true},
 		{"config/secrets/**", "config/other", false},
 		{".github/**", ".github/workflows/ci.yml", true},
 		{"riskrails.yaml", "riskrails.yaml", true},
-		{"riskrails.yaml", "sub/riskrails.yaml", false},
+		{"riskrails.yaml", "sub/riskrails.yaml", true},
 		{"src/*.php", "src/a/b.php", false},
 	} {
 		assert.Equal(t, c.want, matchPath(c.pat, c.rel), "%q vs %q", c.pat, c.rel)
@@ -255,5 +262,29 @@ func BenchmarkCheck(b *testing.B) {
 	if len(lat) > 0 {
 		sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
 		b.ReportMetric(float64(lat[len(lat)*99/100].Microseconds()), "p99_us")
+	}
+}
+
+func TestMatchCommandStrictAllow(t *testing.T) {
+	w := func(s string) []word {
+		var out []word
+		for _, f := range strings.Fields(s) {
+			out = append(out, word{s: f})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		pat, cmd string
+		want     bool
+	}{
+		{"php bin/phpunit*", "php bin/phpunit", true},
+		{"php bin/phpunit*", "php bin/phpunit --filter X", true},
+		{"php bin/phpunit*", "php bin/phpunit.evil.php", false},
+		{"php bin/phpunit*", "php bin/phpunit/../../evil.php", false},
+		{"git diff*", "git diffstat", false},
+		{"git diff*", "git diff --stat", true},
+		{"composer install", "composer install", true},
+	} {
+		assert.Equal(t, c.want, matchCommand(c.pat, w(c.cmd), true), "%q vs %q", c.pat, c.cmd)
 	}
 }
