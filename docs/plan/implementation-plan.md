@@ -311,4 +311,6 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 
 **Guard, всекидневна сесия L1 (106 извиквания):** allow 70% / ask 20% / deny 8% (преди поправките: 21/63/15). Корпус 827 случая, p99 186 µs.
 
-**Пренесено към следващите вълни:** core: `ToolCall.Edits` (multi-file apply_patch), команда във `Verdict`/RenderHookOutput (вместо глобална променлива в Codex адаптера), `policy.DefaultRef`; W2-B: tiers в `wire.go`; W3-A: runner анкер за журнала и доверен SHA за InForce, проверка на Codex hook trust; известни граници: errata #6, #9, #12–#17.
+**Приложено след затварянето (tag `wave-1.1`):** `core.ToolCall.Edits` (guard проверява всеки файл; Codex подава multi-file apply_patch като Edits), `RenderHookOutput` получава извикването (без глобална променлива в Codex адаптера), `policy.DefaultRef` + wire.go потвърждава glob-ове върху работно копие ∪ default branch.
+
+**Пренесено към следващите вълни:** W2-B: tiers в `wire.go`; W3-A: runner анкер за журнала и доверен SHA за InForce, проверка на Codex hook trust; известни граници: errata #6, #9, #12–#17.
