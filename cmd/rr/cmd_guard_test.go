@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,4 +95,26 @@ func TestGuardStdin(t *testing.T) {
 		assert.Equal(t, c.want, v.Decision, c.in)
 		assert.Equal(t, c.code, exitCode(err), c.in)
 	}
+}
+
+func TestProjectRootIgnoresNestedRepo(t *testing.T) {
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(top, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(top, "riskrails.yaml"), []byte("schema: 1\n"), 0o644))
+	// an agent initialises a repository in a subdirectory: its .git must not become the root
+	nested := filepath.Join(top, "sub", "agent")
+	require.NoError(t, os.MkdirAll(filepath.Join(nested, ".git"), 0o755))
+	assert.Equal(t, top, projectRoot(nested))
+	assert.Equal(t, top, projectRoot(top))
+
+	t.Setenv("CLAUDE_PROJECT_DIR", top)
+	assert.Equal(t, top, projectRoot(t.TempDir()))
+}
+
+func TestProjectRootFallsBackToCwd(t *testing.T) {
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	d := t.TempDir()
+	assert.Equal(t, d, projectRoot(d))
 }

@@ -193,8 +193,8 @@
   "name": "Read {root}/app/.env.local",
   "level": "L1",
   "tool": "Read",
-  "fixture": "allow",
-  "strict": "allow",
+  "fixture": "deny",
+  "strict": "deny",
   "paths": [
    "{root}/app/.env.local"
   ]
@@ -233,8 +233,8 @@
   "name": "Write {root}/sub/riskrails.yaml",
   "level": "L1",
   "tool": "Write",
-  "fixture": "allow",
-  "strict": "allow",
+  "fixture": "deny",
+  "strict": "deny",
   "paths": [
    "{root}/sub/riskrails.yaml"
   ]
@@ -439,7 +439,7 @@
   "level": "L1",
   "tool": "Read",
   "fixture": "allow",
-  "strict": "allow",
+  "strict": "deny",
   "paths": [
    "{root}/app/.env"
   ]

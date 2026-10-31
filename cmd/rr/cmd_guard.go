@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -75,24 +74,45 @@ func decide(ctx context.Context, a core.RuntimeAdapter, event string, in io.Read
 }
 
 func check(ctx context.Context, call core.ToolCall, runtime string) core.Verdict {
-	gc, err := wiring.GuardContext(ctx, repoRoot(ctx), runtime)
+	gc, err := wiring.GuardContext(ctx, projectRoot(call.Cwd), runtime)
 	if err != nil {
 		return core.Verdict{Decision: core.Deny, Reason: "cannot build guard context: " + err.Error(), Rule: "guard.fail_closed"}
 	}
 	return guard.New().Check(ctx, call, gc)
 }
 
-// repoRoot is the git toplevel of the working directory, or the directory itself.
-func repoRoot(ctx context.Context) string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "."
+// projectRoot is where the policy lives: $CLAUDE_PROJECT_DIR if set, else the
+// OUTERMOST ancestor of the hook's working directory that holds riskrails.yaml
+// or .git. An agent can create a nested repository below the project root
+// (`git init sub`), so the nearest toplevel must never decide.
+func projectRoot(cwd string) string {
+	if d := os.Getenv("CLAUDE_PROJECT_DIR"); d != "" {
+		if abs, err := filepath.Abs(d); err == nil {
+			return abs
+		}
 	}
-	b, err := exec.CommandContext(ctx, "git", "-C", wd, "rev-parse", "--show-toplevel").Output()
-	if top := strings.TrimSpace(string(b)); err == nil && top != "" {
-		return top
+	if !filepath.IsAbs(cwd) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "."
+		}
+		cwd = wd
 	}
-	return wd
+	root := ""
+	for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {
+		for _, marker := range []string{"riskrails.yaml", ".git"} {
+			if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
+				root = d
+			}
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	if root == "" {
+		return filepath.Clean(cwd)
+	}
+	return root
 }
 
 func guardNeutral(ctx context.Context, in io.Reader, out io.Writer) error {

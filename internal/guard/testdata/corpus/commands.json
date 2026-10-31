@@ -68,7 +68,7 @@
   "level": "L1",
   "tool": "Bash",
   "fixture": "deny",
-  "strict": "ask",
+  "strict": "deny",
   "command": "git push origin main"
  },
  {
@@ -211,8 +211,8 @@
   "name": "git push origin +main",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "git push origin +main"
  },
  {

@@ -74,7 +74,7 @@ func (guard) Check(ctx context.Context, call core.ToolCall, gc core.GuardContext
 type result struct{ v core.Verdict }
 
 func (r *result) add(v core.Verdict) {
-	if v.Decision == core.Allow && v.Reason == "" && v.Rule == "" {
+	if v.Decision == "" || (v.Decision == core.Allow && v.Reason == "" && v.Rule == "") {
 		return // silent allow: nothing to report
 	}
 	if r.v.Decision == "" || v.Decision.Rank() > r.v.Decision.Rank() {
@@ -115,25 +115,18 @@ func evaluate(call core.ToolCall, gc core.GuardContext) core.Verdict {
 		for _, p := range call.Paths {
 			r.add(checkPath(p, true, call, gc, false))
 		}
-	case "read", "glob", "grep":
+	case "read":
 		for _, p := range call.Paths {
 			r.add(checkPath(p, false, call, gc, false))
 		}
+	case "glob", "grep":
+		r.add(checkSearch(call, gc))
 	case "webfetch", "websearch":
 		if call.URL != "" {
 			r.add(checkHost(hostOfURL(call.URL), call.URL, enf, gc))
 		}
 	default:
-		if call.Command != "" || tool == "bash" {
-			r.add(checkBash(call, gc))
-		}
-		for _, p := range call.Paths { // unknown tool: apply read and write rules
-			r.add(checkPath(p, true, call, gc, false))
-			r.add(checkPath(p, false, call, gc, false))
-		}
-		if call.URL != "" {
-			r.add(checkHost(hostOfURL(call.URL), call.URL, enf, gc))
-		}
+		r.add(checkUnknownTool(call, gc))
 	}
 	return r.done()
 }

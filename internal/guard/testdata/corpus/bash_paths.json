@@ -254,8 +254,8 @@
   "name": "rm -rf /*",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "ask",
-  "strict": "ask",
+  "fixture": "deny",
+  "strict": "deny",
   "command": "rm -rf /*"
  },
  {

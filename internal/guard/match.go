@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
+	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
 // word is one statically analysed shell word. dyn means the value depends on
@@ -91,7 +91,7 @@ func canon(words []word) ([]string, []bool) {
 // whitespace-separated words; a word is a glob; a final word ending in * also
 // swallows every remaining argument ("php bin/phpunit*"); a lone * in the middle
 // matches any run of words. A dynamic argv word may stand for anything.
-func matchCommand(pattern string, argv []word) bool {
+func matchCommand(pattern string, argv []word, strict bool) bool {
 	pws := make([]word, 0, 8)
 	for _, f := range strings.Fields(pattern) {
 		pws = append(pws, word{s: f})
@@ -101,10 +101,10 @@ func matchCommand(pattern string, argv []word) bool {
 		return false
 	}
 	av, dyn := canon(argv)
-	return matchWords(pw, av, dyn) || matchFlagsAnywhere(pw, av, dyn)
+	return matchWords(pw, av, dyn, strict) || (!strict && matchFlagsAnywhere(pw, av, dyn))
 }
 
-func matchWords(pw, av []string, dyn []bool) bool {
+func matchWords(pw, av []string, dyn []bool, strict bool) bool {
 	if len(pw) == 0 {
 		return len(av) == 0
 	}
@@ -115,7 +115,7 @@ func matchWords(pw, av []string, dyn []bool) bool {
 			return true
 		}
 		for k := 0; k <= len(av); k++ {
-			if matchWords(pw[1:], av[k:], dyn[k:]) {
+			if matchWords(pw[1:], av[k:], dyn[k:], strict) {
 				return true
 			}
 		}
@@ -124,14 +124,17 @@ func matchWords(pw, av []string, dyn []bool) bool {
 	if len(av) == 0 {
 		return false
 	}
-	ok := dyn[0] || globWord(p, av[0])
-	if !ok {
+	if last && strict && strings.HasSuffix(p, "*") {
+		// allow patterns: `cmd*` is `cmd` then end-of-word, never `cmd.evil`
+		return dyn[0] || globWord(strings.TrimSuffix(p, "*"), av[0])
+	}
+	if !dyn[0] && !globWord(p, av[0]) {
 		return false
 	}
 	if last && strings.HasSuffix(p, "*") {
 		return true
 	}
-	return matchWords(pw[1:], av[1:], dyn[1:])
+	return matchWords(pw[1:], av[1:], dyn[1:], strict)
 }
 
 // matchFlagsAnywhere handles `git push --force*` against `git push origin --force`:
@@ -162,11 +165,6 @@ func matchFlagsAnywhere(pw, av []string, dyn []bool) bool {
 	return true
 }
 
-// matchPath matches a root-relative slash path against a policy glob with
-// doublestar.Match, exactly as internal/policy does (`*` stops at "/", `**`
-// spans directories), so a narrowing the differ calls LOOSEN is enforced the
-// same way here.
-func matchPath(pat, rel string) bool {
-	ok, err := doublestar.Match(pat, rel)
-	return err == nil && ok
-}
+// matchPath delegates to internal/globs, the matcher shared with internal/policy,
+// so a narrowing the differ calls LOOSEN is enforced the same way here.
+func matchPath(pat, rel string) bool { return globs.Match(pat, rel) }
