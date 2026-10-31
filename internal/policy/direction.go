@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/globs"
@@ -333,14 +334,23 @@ func globRule() rule {
 // subsumes reports whether pattern q matches everything pattern p matches,
 // judged on the text alone. Conservative: false when unsure.
 func subsumes(q, p string) bool {
+	if !utf8.ValidString(q) || !utf8.ValidString(p) { // byte prefixes are not rune prefixes
+		return false
+	}
 	switch {
 	case q == p, q == "**":
 		return true
 	case strings.HasSuffix(q, "/**"):
-		return strings.HasPrefix(p, strings.TrimSuffix(q, "**"))
-	case strings.HasSuffix(q, "*"):
+		pre := strings.TrimSuffix(q, "**")
+		return len(p) > len(pre) && strings.HasPrefix(p, pre)
+	case strings.HasSuffix(q, "*") && !strings.HasSuffix(q, "**"):
+		// "pre*" covers "pre<literal>" only: a wildcard, class or "/" in the
+		// remainder of p can match what "*" cannot (it never crosses "/").
 		pre := strings.TrimSuffix(q, "*")
-		return !strings.ContainsAny(pre, "*?[{\\") && strings.HasPrefix(p, pre) && !strings.Contains(p[len(pre):], "/")
+		if !strings.HasPrefix(p, pre) || strings.ContainsAny(pre, "*?[{\\") {
+			return false
+		}
+		return !strings.ContainsAny(p[len(pre):], "*?[{\\/")
 	}
 	return false
 }

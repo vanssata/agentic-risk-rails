@@ -82,6 +82,12 @@ func TestLoadRejects(t *testing.T) {
 		"mode negative":        "risk: {modes: {light: {max: -1}}}",
 		"mode min above max":   "risk: {modes: {guarded: {min: 5, max: 2}}}",
 		"invalid glob":         "risk: {hot_paths: [\"[\"]}",
+		"dot-slash glob":       "risk: {hot_paths: [\"./x\"]}",
+		"trailing slash glob":  "enforcement: {protected_paths: [\"x/\"]}",
+		"empty glob":           "enforcement: {secret_reads: [\"\"]}",
+		"bad test glob":        "risk: {axes: {coverage: {test_globs: [\"./t\"]}}}",
+		"bad domain glob":      "risk: {domain: {money: [\"x/\"]}}",
+		"bad no_write glob":    "enforcement: {sandbox: {no_write: [\"./a\"]}}",
 		"invalid sandbox glob": "enforcement: {sandbox: {no_read: [\"a[\"]}}",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -105,7 +111,7 @@ func TestLoadCeiling(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, core.Policy{}, empty)
 
-	for _, in := range []string{"bogus: 1", "enforcement: {fail_closed: false}", "schema: 3", "autonomy: {output: merge}"} {
+	for _, in := range []string{"enforcement: {protected_paths: [\"./x\"]}", "enforcement: {sandbox: {readonly: [\"x/\"]}}", "bogus: 1", "enforcement: {fail_closed: false}", "schema: 3", "autonomy: {output: merge}"} {
 		_, err := LoadCeiling([]byte(in))
 		assert.Error(t, err, in)
 	}

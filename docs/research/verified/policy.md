@@ -25,6 +25,9 @@ Method: experiments run locally on 2026-10-31 (go 1.27.3, doublestar/v4 v4.10.4,
 ## READ
 - docs/design/research-fable.md §3.3, §3.4 (steps 1 and 3), docs/design/errata.md #3, #4, internal/core/{policy,defaults,interfaces,types}.go
 
+## TRUST
+- `refs/remotes/origin/*` and `origin/HEAD` are writable by the agent locally (`git update-ref`). Until the wave-3 runner pins a trusted SHA (or fetches), the local `InForce` is a tripwire, not a boundary. In CI, `--base` must be a SHA obtained from the hosting API. `ResolveRef` accepts only HEAD, `refs/...`, an unambiguous short name, or a full hex SHA that is not also a ref name; revision syntax (`~ ^ @ : { ..`) is rejected.
+
 ## GAPS
 - Guard (W1-C) must match globs with the same doublestar semantics as the policy differ; a different matcher reopens the narrowing hole | open | [U]
 - Which branch is "default" when `origin/HEAD` is unset is not defined by DES (circular if read from the policy itself); implemented as origin/HEAD, then `main`, then `master` | open | [U]
