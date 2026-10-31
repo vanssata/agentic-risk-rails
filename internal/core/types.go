@@ -94,23 +94,34 @@ const (
 
 var decisions = []Decision{Allow, Ask, Deny}
 
-func (d Decision) Rank() int { return indexOf(decisions, d) }
+// Rank orders decisions allow=0 < ask=1 < deny=2. Unknown or zero values rank
+// strictest (3), so a forgotten field can never read as allow.
+func (d Decision) Rank() int {
+	if i := indexOf(decisions, d); i >= 0 {
+		return i
+	}
+	return len(decisions)
+}
 
 func (d *Decision) UnmarshalText(b []byte) error {
 	v := Decision(b)
-	if v.Rank() < 0 {
+	if indexOf(decisions, v) < 0 {
 		return fmt.Errorf("unknown decision %q", b)
 	}
 	*d = v
 	return nil
 }
 
-// Stricter returns the stricter of two decisions.
+// Stricter returns the stricter of two decisions; unknown values win as deny.
 func Stricter(a, b Decision) Decision {
+	r := a
 	if b.Rank() > a.Rank() {
-		return b
+		r = b
 	}
-	return a
+	if indexOf(decisions, r) < 0 {
+		return Deny
+	}
+	return r
 }
 
 // Axis is one of the six risk axes, each scored 0..2.
@@ -126,6 +137,15 @@ const (
 )
 
 var Axes = []Axis{AxisScope, AxisBehaviour, AxisReversibility, AxisDomain, AxisNovelty, AxisCoverage}
+
+func (a *Axis) UnmarshalText(b []byte) error {
+	v := Axis(b)
+	if indexOf(Axes, v) < 0 {
+		return fmt.Errorf("unknown risk axis %q", b)
+	}
+	*a = v
+	return nil
+}
 
 // Weight is a scored task: per-axis values plus the resulting mode.
 type Weight struct {
@@ -181,6 +201,24 @@ const (
 	Loosen  Direction = "LOOSEN"
 	Mixed   Direction = "MIXED" // treated as LOOSEN by every caller
 )
+
+// Loosens is the only check callers may use: anything that is not EQUAL or
+// TIGHTEN (LOOSEN, MIXED, "" from a zero value or an error path) loosens.
+func (d Direction) Loosens() bool { return d != Equal && d != Tighten }
+
+// Refusal is the error for every REFUSE {CODE} in DES (NO_TIER, TASK_IN_FLIGHT,
+// CEILING_CHANGED, TIER_LOST, QUOTA, REVIEW_BUDGET, …). Match with errors.As.
+type Refusal struct {
+	Code   string
+	Detail string
+}
+
+func (r *Refusal) Error() string {
+	if r.Detail == "" {
+		return "REFUSE {" + r.Code + "}"
+	}
+	return "REFUSE {" + r.Code + "}: " + r.Detail
+}
 
 // ModelState is the availability of one model.
 type ModelState string

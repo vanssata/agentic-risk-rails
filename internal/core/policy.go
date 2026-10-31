@@ -8,8 +8,19 @@ import (
 
 // Policy mirrors riskrails.yaml schema 1 (DES §3.2). It holds shape only:
 // defaults, tightening and LOOSEN detection live in internal/policy.
-// Pointer scalars distinguish "absent" (→ strictest default) from zero.
+//
+// Pointer scalars distinguish "absent" from zero. Absent means:
+//   - in a project file (riskrails.yaml): the value from StrictDefaults();
+//   - in a ceiling layer (ceiling.yaml): no constraint — defaults are NOT applied.
+//
+// Inside map entries (risk.axes, risk.modes) a nil pointer means "not
+// applicable" (e.g. a band without max), not "absent" — no defaulting there.
+//
+// Ceiling-only fields (Remote) are rejected by the loader in riskrails.yaml.
+// FailClosed must never be false: the loader rejects `fail_closed: false`.
+// User-layer models.by_runtime replaces (does not tighten) the project's candidates.
 type Policy struct {
+	Remote      string          `yaml:"remote,omitempty" json:"remote,omitempty"` // ceiling-only: "owner/repo" read through the hosting API (DES §3.4.3)
 	Schema      int             `yaml:"schema" json:"schema"`
 	Project     ProjectSpec     `yaml:"project" json:"project"`
 	Risk        RiskSpec        `yaml:"risk" json:"risk"`
@@ -170,7 +181,7 @@ type ReleaseSpec struct {
 type ResearchSpec struct {
 	ByMode         map[Mode][]string `yaml:"by_mode" json:"by_mode"`
 	Tier           Tier              `yaml:"tier" json:"tier"`
-	BudgetPerScout TokenCount        `yaml:"budget_per_scout" json:"budget_per_scout"`
+	BudgetPerScout *TokenCount       `yaml:"budget_per_scout" json:"budget_per_scout"`
 	Cache          ResearchCacheSpec `yaml:"cache" json:"cache"`
 	TechDocs       TechDocsSpec      `yaml:"tech_docs" json:"tech_docs"`
 }

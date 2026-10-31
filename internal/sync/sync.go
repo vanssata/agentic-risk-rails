@@ -96,7 +96,12 @@ func Drift(root string, files []core.File) ([]string, error) {
 
 // InputProvider builds the SyncInput for a repo root. The orchestrator wires
 // the real one (policy resolver + model resolver) between waves; until then
-// generators get an empty input.
+// generators get the fully defaulted strict policy at L1.
 var InputProvider = func(_ context.Context, root string) (core.SyncInput, error) {
-	return core.SyncInput{Root: root, Level: core.L1}, nil
+	home, _ := os.UserHomeDir()
+	strict := core.StrictDefaults()
+	return core.SyncInput{
+		Root: root, Home: home, Level: core.L1,
+		Policy: core.EffectivePolicy{Policy: strict, InForce: strict},
+	}, nil
 }

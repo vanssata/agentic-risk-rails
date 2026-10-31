@@ -49,7 +49,7 @@ func TestDESExampleParsesStrictly(t *testing.T) {
 	assert.Equal(t, core.Ask, *p.Enforcement.Commands.Unlisted)
 	assert.Equal(t, core.L2, *p.Enforcement.Sandbox.RequiredFrom)
 	assert.True(t, *p.Enforcement.FailClosed)
-	assert.Equal(t, core.TokenCount(80_000), p.Research.BudgetPerScout)
+	assert.Equal(t, core.TokenCount(80_000), *p.Research.BudgetPerScout)
 	assert.False(t, *p.Research.TechDocs.Context7)
 }
 
@@ -65,6 +65,9 @@ func TestEnumValidation(t *testing.T) {
 		"enforcement:\n  commands:\n    unlisted: maybe\n",
 		"risk:\n  hard_floors: [{axis: scope, value: 2, mode: extreme}]\n",
 		"models:\n  budgets: {light: 1.5k}\n",
+		"risk:\n  axes: {scoep: {measured: refs}}\n",
+		"risk:\n  policy_file_weight: {behavior: 2}\n",
+		"risk:\n  hard_floors: [{axis: domian, value: 2, mode: full}]\n",
 	} {
 		_, err := decodeStrict(t, []byte(bad))
 		assert.Error(t, err, bad)

@@ -16,6 +16,7 @@ import (
 type Journal struct {
 	mu     sync.Mutex
 	ByTask map[string][]core.Event
+	closed map[string]bool
 	Err    error // if set, Append fails (to test audit-first callers)
 }
 
@@ -38,6 +39,29 @@ func (j *Journal) Events(_ context.Context, task string) ([]core.Event, error) {
 	return append([]core.Event(nil), j.ByTask[task]...), nil
 }
 
+// Open returns tasks that have events and were not closed.
+func (j *Journal) Open(context.Context) ([]string, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var out []string
+	for t := range j.ByTask {
+		if !j.closed[t] {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (j *Journal) Close(_ context.Context, task string) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed == nil {
+		j.closed = map[string]bool{}
+	}
+	j.closed[task] = true
+	return nil
+}
+
 // Types returns the event types recorded for a task, in order.
 func (j *Journal) Types(task string) []string {
 	evs, _ := j.Events(context.Background(), task)
@@ -58,7 +82,20 @@ func (r Resolver) Resolve(context.Context, core.PolicyLayers) (core.EffectivePol
 	return r.Out, r.Err
 }
 
-// Differ returns a fixed direction.
+// StrictPolicy is the fully defaulted effective policy for goldens and tests.
+func StrictPolicy() core.EffectivePolicy {
+	return core.EffectivePolicy{Policy: core.StrictDefaults(), InForce: core.StrictDefaults(), PolicySHA: "strict"}
+}
+
+// Loader returns a fixed policy or error.
+type Loader struct {
+	Out core.Policy
+	Err error
+}
+
+func (l Loader) Parse([]byte) (core.Policy, error) { return l.Out, l.Err }
+
+// Differ returns a fixed direction. The zero value returns "" which Loosens().
 type Differ struct {
 	Dir     core.Direction
 	Changes []core.FieldChange
@@ -141,7 +178,7 @@ func (h *Hosting) ReadFile(_ context.Context, ref, path string) ([]byte, error) 
 	}
 	b, ok := h.Files[ref+":"+path]
 	if !ok {
-		return nil, fmt.Errorf("not found: %s:%s", ref, path)
+		return nil, fmt.Errorf("%s:%s: %w", ref, path, core.ErrNotFound)
 	}
 	return b, nil
 }
@@ -166,6 +203,43 @@ func (h *Hosting) IsTeamMember(_ context.Context, team, login string) (bool, err
 }
 
 func (h *Hosting) Rulesets(context.Context, string) (json.RawMessage, error) { return h.Rules, nil }
+
+// Runtime is a RuntimeAdapter that echoes a fixed ToolCall and records verdicts.
+type Runtime struct {
+	ID       string
+	Call     core.ToolCall
+	ParseErr error
+	Gens     []core.Generator
+	Enf      core.Enforcement
+	Rendered []core.Verdict
+}
+
+func (r *Runtime) Name() string { return r.ID }
+
+func (r *Runtime) ParseHookInput(event string, in io.Reader) (core.ToolCall, error) {
+	_, _ = io.Copy(io.Discard, in)
+	c := r.Call
+	c.Runtime, c.Event = r.ID, event
+	return c, r.ParseErr
+}
+
+func (r *Runtime) RenderHookOutput(_ string, v core.Verdict, stdout, _ io.Writer) (int, error) {
+	r.Rendered = append(r.Rendered, v)
+	_, err := fmt.Fprintf(stdout, "%s %s\n", v.Decision, v.Reason)
+	if v.Decision == core.Allow || v.Decision == core.Ask {
+		return 0, err
+	}
+	return 2, err
+}
+
+func (r *Runtime) Generators() []core.Generator { return r.Gens }
+
+func (r *Runtime) Enforcement(context.Context, string) (core.Enforcement, error) {
+	if r.Enf == "" {
+		return core.EnforcementHookOnly, nil
+	}
+	return r.Enf, nil
+}
 
 // Generator renders fixed files.
 type Generator struct {
