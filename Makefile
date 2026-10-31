@@ -9,7 +9,7 @@ test:
 	$(GO) test ./... -race
 
 fmt:
-	@out=$$(gofmt -l . | grep -v '^testdata/'); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	@out=$$(gofmt -l $$(git ls-files '*.go')); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 lint:
 	golangci-lint run ./...

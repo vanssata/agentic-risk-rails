@@ -4,3 +4,4 @@
 .rr/index.json
 *.test
 *.out
+.claude/worktrees/
