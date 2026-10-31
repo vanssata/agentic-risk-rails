@@ -1,0 +1,74 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/.env*)",
+      "Edit(/config/secrets/**)",
+      "Edit(/.github/workflows/**)",
+      "Edit(/riskrails.yaml)",
+      "Read(/.env.local)",
+      "Read(/.env.prod)",
+      "Read(/config/secrets/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/riskrails/**)",
+      "Read(~/.cache/riskrails/**)",
+      "Bash(git push --force*)",
+      "Bash(git push * main)",
+      "Bash(rm -rf /)",
+      "Bash(composer global *)",
+      "Bash(php bin/console doctrine:schema:drop*)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(git commit*)",
+      "Bash(php bin/console doctrine:migrations:migrate*)",
+      "Bash(composer require*)"
+    ],
+    "allow": [
+      "Bash(composer install)",
+      "Bash(php bin/phpunit*)",
+      "Bash(php bin/console cache:clear)",
+      "Bash(git status)",
+      "Bash(git diff*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rr guard --runtime claude --event PreToolUse",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        ".env.local",
+        ".env.prod",
+        "config/secrets/**",
+        "/home/test/.ssh/**",
+        "/home/test/.aws/**",
+        "/home/test/.config/riskrails/**",
+        "/home/test/.cache/riskrails/**"
+      ],
+      "denyWrite": [
+        "riskrails.yaml",
+        ".git/config",
+        ".git/refs/remotes/**",
+        ".github/**",
+        "/home/test/.config/riskrails/**",
+        "/home/test/.cache/riskrails/**"
+      ]
+    }
+  }
+}
