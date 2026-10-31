@@ -33,6 +33,7 @@ var gitHardening = []string{
 	"-c", "protocol.allow=never",
 	"-c", "credential.helper=",
 	"-c", "diff.external=",
+	"-c", "core.attributesFile=/dev/null",
 	"--no-pager",
 }
 
@@ -44,6 +45,7 @@ func gitEnv() []string {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_ATTR_NOSYSTEM=1",
 		"LC_ALL=C",
 	}
 	for _, k := range []string{"PATH", "HOME", "TMPDIR", "SYSTEMROOT"} {
