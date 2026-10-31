@@ -18,3 +18,4 @@
 | 12 | §8.1–8.2 (Codex) | PreToolUse не поддържа `ask` | Ask ⇒ deny на всяко ниво под Codex; L0/L1 `unlisted: ask` блокира | W1-E, [V] |
 | 13 | §3.2 `egress` (Codex) | allow-list за домейни не е налагаем без експерименталния `network_proxy`; мрежата е изцяло off | под Codex egress = всичко off; отворен въпрос за P3 | W1-E |
 | 14 | §6 (Codex) | `.git` е read-only в sandbox-а ⇒ агентът не може да commit-ва | commit-ът е на runner-а/хоста | W1-E |
+| 15 | §3.4 стъпка 0 (Codex) | permission profile: glob пътища поддържат само `deny`; `read` (read-only) иска точен път или `dir/**`; вложени read-only правила с липсваща цел чупят bwrap | read-only за slash-less globs (`.env*`, вложени `riskrails.yaml`) отпада под Codex → покрити само от fail-open hook; secret reads (deny) покриват всяка дълбочина | W1-E fix 1, [V] `codex sandbox` |
