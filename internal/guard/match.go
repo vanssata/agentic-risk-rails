@@ -124,6 +124,9 @@ func matchWords(pw, av []string, dyn []bool, strict bool) bool {
 	if len(av) == 0 {
 		return false
 	}
+	if !strict && skipOption(pw, av, dyn) {
+		return true
+	}
 	if last && strict && strings.HasSuffix(p, "*") {
 		// allow patterns: `cmd*` is `cmd` then end-of-word, never `cmd.evil`
 		return dyn[0] || globWord(strings.TrimSuffix(p, "*"), av[0])
@@ -135,6 +138,15 @@ func matchWords(pw, av []string, dyn []bool, strict bool) bool {
 		return true
 	}
 	return matchWords(pw[1:], av[1:], dyn[1:], strict)
+}
+
+// skipOption (deny/ask only): an option token, and optionally one value after
+// it, may sit between the words of a pattern (`php -d x=1 bin/console ...`).
+func skipOption(pw, av []string, dyn []bool) bool {
+	if dyn[0] || !strings.HasPrefix(av[0], "-") || strings.HasPrefix(pw[0], "-") {
+		return false
+	}
+	return matchWords(pw, av[1:], dyn[1:], false) || (len(av) > 1 && matchWords(pw, av[2:], dyn[2:], false))
 }
 
 // matchFlagsAnywhere handles `git push --force*` against `git push origin --force`:

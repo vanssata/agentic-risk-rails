@@ -204,6 +204,9 @@ func (a *analysis) call(c *syntax.CallExpr, depth int) {
 	if len(c.Args) == 0 {
 		return
 	}
+	if len(c.Assigns) > 0 {
+		a.unrecog = append(a.unrecog, "environment assignment before a command")
+	}
 	argv := make([]word, len(c.Args))
 	for i, w := range c.Args {
 		argv[i] = wordOf(w)
@@ -215,6 +218,7 @@ func (a *analysis) call(c *syntax.CallExpr, depth int) {
 func (a *analysis) resolve(argv []word, depth int) {
 	var forms [][]word
 	cur := argv
+	cwd := a.cwd
 	xargs := false
 	for step := 0; step < 10; step++ {
 		if cur[0].dyn || cur[0].glob {
@@ -222,7 +226,7 @@ func (a *analysis) resolve(argv []word, depth int) {
 			a.add(cmd{forms: append(forms, cur)})
 			return
 		}
-		cur = a.head(cur)
+		cur, cwd = a.head(cur, cwd)
 		forms = append(forms, cur)
 		name := cur[0].s
 		switch {
@@ -246,7 +250,7 @@ func (a *analysis) resolve(argv []word, depth int) {
 	case "cd", "pushd", "popd":
 		a.chdir(cur)
 	}
-	a.add(cmd{forms: forms, xargs: xargs})
+	a.cmds = append(a.cmds, cmd{forms: forms, xargs: xargs, cwd: cwd})
 }
 
 func (a *analysis) add(c cmd) {
@@ -256,18 +260,18 @@ func (a *analysis) add(c cmd) {
 
 // head strips quoting artefacts from argv[0]: absolute paths in standard dirs
 // collapse to the basename; git global options are removed.
-func (a *analysis) head(argv []word) []word {
+func (a *analysis) head(argv []word, cwd string) ([]word, string) {
 	out := append([]word(nil), argv...)
 	if strings.HasPrefix(out[0].s, "/") && stdDirs[path.Dir(out[0].s)] {
 		out[0].s = path.Base(out[0].s)
 	}
 	switch out[0].s {
 	case "git":
-		out = a.gitGlobals(out)
+		out, cwd = a.gitGlobals(out, cwd)
 	case "rm":
 		out = normaliseRm(out)
 	}
-	return out
+	return out, cwd
 }
 
 // normaliseRm maps long options to short ones, drops "--" and cleans absolute
@@ -284,6 +288,10 @@ func normaliseRm(argv []word) []word {
 			w.s = "-r"
 		case w.s == "--force":
 			w.s = "-f"
+		case isShortCluster(w.s):
+			w.s = strings.ReplaceAll(w.s, "R", "r")
+		case w.s == "~" || w.s == "~/":
+			w.s = "/" // the home directory is as bad as the root
 		case strings.HasPrefix(w.s, "/"):
 			c := path.Clean(w.s)
 			if c == "/*" || c == "/." {
@@ -296,50 +304,42 @@ func normaliseRm(argv []word) []word {
 	return out
 }
 
-var gitValueOpts = map[string]bool{"-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true, "--super-prefix": true, "--config-env": true}
+// gitValueOpts are git global options that consume the next word.
+var gitValueOpts = opts("-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--exec-path")
 
-func dangerousGitConfig(kv string) bool {
-	k := strings.ToLower(kv)
-	if i := strings.IndexByte(k, '='); i >= 0 {
-		k = k[:i]
-	}
-	for _, p := range []string{"alias.", "pager.", "url.", "protocol."} {
-		if strings.HasPrefix(k, p) {
-			return true
-		}
-	}
-	for _, s := range []string{".command", ".cmd", ".program", ".helper", ".textconv", ".sshcommand", ".fsmonitor", ".hookspath", ".editor", ".pager", ".askpass", ".external"} {
-		if strings.HasSuffix(k, s) {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *analysis) gitGlobals(argv []word) []word {
+// gitGlobals handles the options before the git subcommand. `-C <dir>` acts as
+// a cd for this command only (static directories); --no-pager and
+// --no-optional-locks are harmless; every other global option is unrecognised.
+// The handled options are removed so patterns match `git <subcommand> ...`.
+func (a *analysis) gitGlobals(argv []word, cwd string) ([]word, string) {
 	out := []word{argv[0]}
 	i := 1
 	for i < len(argv) && strings.HasPrefix(argv[i].s, "-") && !argv[i].dyn {
 		o := argv[i].s
-		switch {
-		case o == "-c":
-			if i+1 >= len(argv) || argv[i+1].dyn || dangerousGitConfig(argv[i+1].s) {
-				a.unrecog = append(a.unrecog, "git -c with alias or command-running config")
+		switch o {
+		case "--no-pager", "--no-optional-locks":
+			i++
+		case "-C":
+			if i+1 >= len(argv) || argv[i+1].dyn || argv[i+1].glob {
+				a.unrecog = append(a.unrecog, "git -C with a directory that is not static")
+			} else if d := argv[i+1].s; strings.HasPrefix(d, "/") || strings.HasPrefix(d, "~") {
+				cwd = d
+			} else {
+				cwd = path.Join(cwd, d)
 			}
 			i += 2
-		case strings.HasPrefix(o, "--exec-path"):
-			a.unrecog = append(a.unrecog, "git --exec-path")
-			i++
-		case gitValueOpts[o]:
-			i += 2
 		default:
+			a.unrecog = append(a.unrecog, "git global option "+o)
+			if gitValueOpts[o] {
+				i++
+			}
 			i++
 		}
 	}
 	if i > len(argv) {
 		i = len(argv)
 	}
-	return append(out, argv[i:]...)
+	return append(out, argv[i:]...), cwd
 }
 
 // wrapper describes how to skip options of a command that runs its argument.
@@ -406,9 +406,7 @@ func (a *analysis) unwrap(argv []word) ([]word, bool) {
 				i++
 			}
 		case w.assigns && strings.Contains(s, "=") && envNameRe.MatchString(s[:strings.IndexByte(s, '=')]):
-			if dangerousEnv(s[:strings.IndexByte(s, '=')]) {
-				a.unrecog = append(a.unrecog, "assignment to "+s[:strings.IndexByte(s, '=')])
-			}
+			a.unrecog = append(a.unrecog, "environment assignment before a command")
 			i++
 		default:
 			goto done

@@ -411,7 +411,7 @@
   "name": "FOO=bar git status",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "allow",
+  "fixture": "ask",
   "strict": "ask",
   "command": "FOO=bar git status"
  },
@@ -539,7 +539,7 @@
   "name": "env FOO=bar php bin/phpunit",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "allow",
+  "fixture": "ask",
   "strict": "ask",
   "command": "env FOO=bar php bin/phpunit"
  },
@@ -771,7 +771,7 @@
   "name": "git --git-dir=.git status",
   "level": "L1",
   "tool": "Bash",
-  "fixture": "allow",
+  "fixture": "ask",
   "strict": "ask",
   "command": "git --git-dir=.git status"
  },
