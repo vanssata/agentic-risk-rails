@@ -10,10 +10,12 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
 // Load strictly parses a project riskrails.yaml and fills every absent field
@@ -91,7 +93,69 @@ func validate(p *core.Policy, ceiling bool) error {
 	only("autonomy.output", p.Autonomy.Output, "pr_only")
 	only("enforcement.commands.parser", p.Enforcement.Commands.Parser, "ast")
 	only("autonomy.kill_switch.on_read_error", p.Autonomy.KillSwitch.OnReadError, "halt")
+	validateNumbers(p, bad)
+	validateGlobs(p, bad)
 	return errors.Join(errs...)
+}
+
+func validateNumbers(p *core.Policy, bad func(string, ...any)) {
+	atLeast1 := func(path string, v *int) {
+		if v != nil && *v < 1 {
+			bad("%s must be >= 1, got %d", path, *v)
+		}
+	}
+	atLeast1("autonomy.unattended.max_wall_minutes", p.Autonomy.Unattended.MaxWallMinutes)
+	atLeast1("autonomy.unattended.max_tasks_per_day", p.Autonomy.Unattended.MaxTasksPerDay)
+	atLeast1("autonomy.kill_switch.poll_seconds", p.Autonomy.KillSwitch.PollSeconds)
+	atLeast1("models.probe.ttl_hours", p.Models.Probe.TTLHours)
+	atLeast1("verify.suite_budget", p.Verify.SuiteBudget)
+	for m, b := range p.Models.Budgets {
+		if b < 1 {
+			bad("models.budgets.%s must be >= 1, got %d", m, b)
+		}
+	}
+	if b := p.Research.BudgetPerScout; b != nil && *b < 1 {
+		bad("research.budget_per_scout must be >= 1, got %d", *b)
+	}
+	for a, s := range p.Risk.Axes {
+		for i, v := range s.Bands {
+			if v < 0 || (i > 0 && v <= s.Bands[i-1]) {
+				bad("risk.axes.%s.bands must be non-negative and strictly increasing, got %v", a, s.Bands)
+				break
+			}
+		}
+	}
+	for m, b := range p.Risk.Modes {
+		if (b.Min != nil && *b.Min < 0) || (b.Max != nil && *b.Max < 0) || (b.Min != nil && b.Max != nil && *b.Min > *b.Max) {
+			bad("risk.modes.%s needs 0 <= min <= max", m)
+		}
+	}
+}
+
+// validateGlobs rejects syntactically invalid path patterns: an invalid
+// deny pattern would silently match nothing.
+func validateGlobs(p *core.Policy, bad func(string, ...any)) {
+	check := func(path string, list []string) {
+		for _, g := range list {
+			if !strings.HasPrefix(g, "$") && !globs.Valid(g) {
+				bad("%s: invalid glob %q", path, g)
+			}
+		}
+	}
+	check("risk.hot_paths", p.Risk.HotPaths)
+	for k, l := range p.Risk.Domain {
+		check("risk.domain."+k, l)
+	}
+	check("risk.reversibility.needs_step", p.Risk.Reversibility.NeedsStep)
+	check("risk.reversibility.irreversible", p.Risk.Reversibility.Irreversible)
+	check("enforcement.protected_paths", p.Enforcement.ProtectedPaths)
+	check("enforcement.secret_reads", p.Enforcement.SecretReads)
+	check("enforcement.sandbox.readonly", p.Enforcement.Sandbox.Readonly)
+	check("enforcement.sandbox.no_read", p.Enforcement.Sandbox.NoRead)
+	check("enforcement.sandbox.no_write", p.Enforcement.Sandbox.NoWrite)
+	for a, s := range p.Risk.Axes {
+		check("risk.axes."+string(a)+".test_globs", s.TestGlobs)
+	}
 }
 
 // applyDefaults fills every absent field of p from core.StrictDefaults().

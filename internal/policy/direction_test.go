@@ -277,11 +277,11 @@ func TestNarrowingPaymentGlobIsLoosen(t *testing.T) {
 	require.Len(t, ch, 1)
 	assert.Equal(t, "risk.hot_paths", ch[0].Path)
 
-	// with no nested file the narrower pattern still covers every file
+	// narrowing is LOOSEN even when it matches the same files today
 	flat := []string{"src/Payment/Charge.php"}
 	d, _, err = Diff(base, cand, flat)
 	require.NoError(t, err)
-	assert.Equal(t, core.Tighten, d) // *.php still covers the only file; the added pattern tightens
+	assert.Equal(t, core.Loosen, d)
 
 	// widening is fine
 	d, _, err = Diff(cand, base, treeFiles)
@@ -362,13 +362,58 @@ func TestMapEntriesAddedOrRemoved(t *testing.T) {
 	assert.True(t, d.Loosens())
 }
 
-func TestDiffBadPatternIsAnError(t *testing.T) {
-	base := core.StrictDefaults()
-	cand := core.StrictDefaults()
-	cand.Risk.HotPaths = []string{"["}
+func TestNarrowingMatchingSameFilesIsLoosen(t *testing.T) {
+	for name, tc := range map[string]struct {
+		base, cand []string
+		files      []string
+	}{
+		"single file":      {[]string{"migrations/**"}, []string{"migrations/001.sql"}, []string{"migrations/001.sql"}},
+		"split wildcard":   {[]string{"src/Pay*/**"}, []string{"src/Payment/**", "src/Payroll/**"}, []string{"src/Payment/a.php", "src/Payroll/b.php"}},
+		"star to explicit": {[]string{"src/**"}, []string{"src/Payment/**", "src/Util/**"}, []string{"src/Payment/a.php", "src/Util/b.php"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base, cand := core.StrictDefaults(), core.StrictDefaults()
+			base.Risk.HotPaths, cand.Risk.HotPaths = tc.base, tc.cand
+			d, _, err := Diff(base, cand, tc.files)
+			require.NoError(t, err)
+			assert.True(t, d.Loosens())
+		})
+	}
+	// broader cover is fine
+	base, cand := core.StrictDefaults(), core.StrictDefaults()
+	base.Risk.HotPaths, cand.Risk.HotPaths = []string{"src/Payment/**"}, []string{"src/**"}
 	d, _, err := Diff(base, cand, treeFiles)
-	require.Error(t, err)
+	require.NoError(t, err)
+	assert.Equal(t, core.Tighten, d)
+	cand.Risk.HotPaths = []string{"**"}
+	d, _, err = Diff(base, cand, treeFiles)
+	require.NoError(t, err)
+	assert.Equal(t, core.Tighten, d)
+}
+
+func TestAllowEntrySubsumedByBaseAddsNothing(t *testing.T) {
+	base, cand := core.StrictDefaults(), core.StrictDefaults()
+	base.Enforcement.Commands.Allow = []string{"git diff*"}
+	cand.Enforcement.Commands.Allow = []string{"git diff*", "git diff --stat"}
+	d, _, err := Diff(base, cand, treeFiles)
+	require.NoError(t, err)
+	assert.Equal(t, core.Equal, d)
+
+	cand.Enforcement.Commands.Allow = []string{"git diff*", "git push"}
+	d, _, err = Diff(base, cand, treeFiles)
+	require.NoError(t, err)
 	assert.True(t, d.Loosens())
+}
+
+func TestHardFloorFullIrreversibleToProgrammeLoosens(t *testing.T) {
+	base, cand := core.StrictDefaults(), core.StrictDefaults()
+	cand.Risk.HardFloors[2].Mode = core.ModeProgramme // was full_irreversible
+	d, _, err := Diff(base, cand, treeFiles)
+	require.NoError(t, err)
+	assert.True(t, d.Loosens())
+	d, _, err = Diff(cand, base, treeFiles)
+	require.NoError(t, err)
+	assert.Equal(t, core.Tighten, d)
 }
 
 func TestHardFloorCoverage(t *testing.T) {

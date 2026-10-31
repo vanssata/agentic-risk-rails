@@ -128,11 +128,24 @@ func TestResolveWorkingTree(t *testing.T) {
 		d := copyPolicy(def)
 		d.Risk.HotPaths = []string{"src/Payment/**"}
 		wt := copyPolicy(d)
-		wt.Risk.HotPaths = []string{"src/**"}
+		wt.Risk.HotPaths = []string{"src/Payment/*.php"}
 		ep, err := New().Resolve(context.Background(), core.PolicyLayers{DefaultBranch: layer(d), WorkingTree: layer(wt)})
 		require.NoError(t, err)
 		assert.NotEmpty(t, ep.Ignored)
 	})
+}
+
+func TestCeilingOpaqueFieldSurvivesIdenticalWorkingTree(t *testing.T) {
+	def := core.StrictDefaults()
+	def.Release.PublishVia = "ci_oidc"
+	usr, err := LoadCeiling([]byte("release: {publish_via: manual_gate}\n"))
+	require.NoError(t, err)
+	ep, err := resolver().Resolve(context.Background(), core.PolicyLayers{
+		DefaultBranch: layer(def), WorkingTree: layer(copyPolicy(def)), User: layer(usr),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "manual_gate", ep.Policy.Release.PublishVia)
+	assert.Contains(t, ep.Clamped, "release.publish_via (user)")
 }
 
 func TestResolveDoesNotMutateLayers(t *testing.T) {

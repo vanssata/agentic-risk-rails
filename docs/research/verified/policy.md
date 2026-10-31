@@ -1,5 +1,7 @@
 # Verified facts: policy (W1-A)
 
+Note: no claim below has a web URL. Every FACT is a local experiment, tagged `exp [V]`, with the command or test case named in the claim (no `exp` claim is [U]).
+
 Method: experiments run locally on 2026-10-31 (go 1.27.3, doublestar/v4 v4.10.4, yaml.v3 v3.0.1, system git). Source "exp" = reproducible test in the session; the exact cases are listed in each claim.
 
 ## FACTS

@@ -46,17 +46,9 @@ func (s *Service) Resolve(ctx context.Context, l core.PolicyLayers) (core.Effect
 	inForce := projectPolicy(l.DefaultBranch)
 	eff := copyPolicy(inForce)
 
-	// Opaque fields: the layer applied last wins, so enterprise goes after user.
-	var clamped []string
-	for _, c := range []struct {
-		name  string
-		layer *core.Layer
-	}{{"user", l.User}, {"enterprise", l.Enterprise}} {
-		if c.layer != nil {
-			clamped = append(clamped, tightenTo(&eff, c.layer.Policy, c.name)...)
-		}
-	}
-
+	// Order: in force, working tree, user, enterprise. Opaque fields take the
+	// layer applied last, so the ceilings must come after the working tree
+	// (which can only equal them there) and enterprise after user.
 	var ignored []string
 	if l.WorkingTree != nil {
 		wt := projectPolicy(l.WorkingTree)
@@ -79,6 +71,16 @@ func (s *Service) Resolve(ctx context.Context, l core.PolicyLayers) (core.Effect
 			}
 		} else {
 			tightenTo(&eff, wt, "working tree")
+		}
+	}
+
+	var clamped []string
+	for _, c := range []struct {
+		name  string
+		layer *core.Layer
+	}{{"user", l.User}, {"enterprise", l.Enterprise}} {
+		if c.layer != nil {
+			clamped = append(clamped, tightenTo(&eff, c.layer.Policy, c.name)...)
 		}
 	}
 

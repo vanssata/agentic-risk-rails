@@ -26,37 +26,93 @@ func gitOut(ctx context.Context, root string, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// ListFiles returns `git ls-files` of the checkout, for glob-set comparison.
-func ListFiles(ctx context.Context, root string) ([]string, error) {
-	out, err := gitOut(ctx, root, "ls-files", "-z")
-	if err != nil {
-		return nil, err
-	}
+func splitNUL(out []byte) []string {
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
 		if f != "" {
 			files = append(files, f)
 		}
 	}
-	return files, nil
+	return files
 }
 
-// ReadAtRef loads riskrails.yaml as committed at ref. A ref without the file
-// yields StrictDefaults (DES §3.1); an unknown ref is an error.
-func ReadAtRef(ctx context.Context, root, ref string) (core.Layer, error) {
-	if ref == "" || strings.HasPrefix(ref, "-") {
-		return core.Layer{}, fmt.Errorf("policy: invalid ref %q", ref)
+// ListFiles returns the tracked and untracked (not ignored) files of the
+// checkout, for glob-set comparison.
+func ListFiles(ctx context.Context, root string) ([]string, error) {
+	out, err := gitOut(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
 	}
-	source := "git:" + ref + ":" + policyFile
+	return splitNUL(out), nil
+}
+
+// ListFilesAt returns the files of the tree at ref. The index is under the
+// agent's control (`git rm --cached`); a committed tree is not.
+func ListFilesAt(ctx context.Context, root, ref string) ([]string, error) {
+	sha, err := ResolveRef(ctx, root, ref)
+	if err != nil {
+		return nil, err
+	}
+	out, err := gitOut(ctx, root, "ls-tree", "-r", "-z", "--name-only", sha)
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(out), nil
+}
+
+// ResolveRef turns a user-supplied ref into a commit SHA. A short name that
+// exists in more than one namespace (a tag `origin/main` next to the remote
+// branch) is ambiguous and rejected, so a forged tag can never stand in for a
+// branch. Fully qualified refs, HEAD forms and SHAs are accepted as they are.
+func ResolveRef(ctx context.Context, root, name string) (string, error) {
+	if name == "" || strings.HasPrefix(name, "-") {
+		return "", fmt.Errorf("policy: invalid ref %q", name)
+	}
+	target := name
+	if !strings.HasPrefix(name, "refs/") {
+		var found []string
+		for _, ns := range []string{"refs/heads/", "refs/tags/", "refs/remotes/"} {
+			if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", ns+name); err == nil {
+				found = append(found, ns+name)
+			}
+		}
+		switch len(found) {
+		case 0:
+		case 1:
+			target = found[0]
+		default:
+			return "", fmt.Errorf("policy: ref %q is ambiguous (%s); use a fully qualified ref", name, strings.Join(found, ", "))
+		}
+	}
+	out, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", target+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("policy: unknown ref %q", name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func displayRef(ref string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
+}
+
+// ReadAtRef loads riskrails.yaml as committed at ref (see ResolveRef). A ref
+// without the file yields StrictDefaults (DES §3.1); an unknown or ambiguous
+// ref is an error.
+func ReadAtRef(ctx context.Context, root, ref string) (core.Layer, error) {
+	sha, err := ResolveRef(ctx, root, ref)
+	if err != nil {
+		return core.Layer{}, err
+	}
+	source := "git:" + displayRef(ref) + ":" + policyFile
 	// `git show` exits 128 both for a bad ref and for an absent file; ls-tree tells them apart.
-	listed, err := gitOut(ctx, root, "ls-tree", "--name-only", ref, "--", policyFile)
+	listed, err := gitOut(ctx, root, "ls-tree", "--name-only", sha, "--", policyFile)
 	if err != nil {
 		return core.Layer{}, fmt.Errorf("policy: %w", err)
 	}
 	if len(bytes.TrimSpace(listed)) == 0 {
 		return core.Layer{Policy: core.StrictDefaults(), Source: source + " (absent: strict defaults)"}, nil
 	}
-	raw, err := gitOut(ctx, root, "show", ref+":"+policyFile)
+	raw, err := gitOut(ctx, root, "show", sha+":"+policyFile)
 	if err != nil {
 		return core.Layer{}, fmt.Errorf("policy: %w", err)
 	}
@@ -68,19 +124,21 @@ func ReadAtRef(ctx context.Context, root, ref string) (core.Layer, error) {
 }
 
 // InForce reads the policy in force: riskrails.yaml of the default branch.
-// The branch is origin/HEAD, else main, else master; origin/<branch> is
-// preferred and the local branch is the fallback when there is no remote
-// (DES §3.4 step 3). No such branch or no file there ⇒ StrictDefaults.
+// The branch is origin/HEAD, else main, else master; refs/remotes/origin/<b>
+// is preferred and refs/heads/<b> is the fallback when there is no remote
+// (DES §3.4 step 3). Only fully qualified refs are used, so tags cannot shadow
+// them. No such branch => StrictDefaults.
 func InForce(ctx context.Context, root string) (core.Layer, error) {
+	const remote = "refs/remotes/origin/"
 	var refs []string
-	if out, err := gitOut(ctx, root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		remote := strings.TrimSpace(string(out))
-		refs = []string{remote, strings.TrimPrefix(remote, "origin/")}
+	if out, err := gitOut(ctx, root, "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
+		r := strings.TrimSpace(string(out))
+		refs = []string{r, "refs/heads/" + strings.TrimPrefix(r, remote)}
 	} else {
-		refs = []string{"origin/main", "main", "origin/master", "master"}
+		refs = []string{remote + "main", "refs/heads/main", remote + "master", "refs/heads/master"}
 	}
 	for _, ref := range refs {
-		if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+		if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", ref); err == nil {
 			return ReadAtRef(ctx, root, ref)
 		}
 	}
