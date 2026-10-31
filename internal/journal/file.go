@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -66,8 +67,10 @@ func (j *fileJournal) lock() (unlock func(), err error) {
 	return func() { _ = f.Close() }, nil // closing releases the flock
 }
 
+var taskIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
 func validTask(t string) error {
-	if t == "" || t == "." || t == ".." || strings.ContainsAny(t, `/\`+"\x00") || strings.HasPrefix(t, ".") {
+	if !taskIDRe.MatchString(t) || strings.HasSuffix(t, ".jsonl") {
 		return fmt.Errorf("journal: invalid task id %q", t)
 	}
 	return nil
@@ -206,15 +209,38 @@ func (j *fileJournal) Close(ctx context.Context, task string) error {
 	if !exists(src) {
 		return fmt.Errorf("journal: task %q is not open", task)
 	}
+	if err := Verify(src); err != nil {
+		return err
+	}
 	events, err := ReadFile(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(TasksDir(j.root), task), 0o755); err != nil {
+	for i, e := range events {
+		if _, ok := Lookup(e.Type); !ok {
+			return fmt.Errorf("journal: %s line %d: unregistered type %q", src, i+1, e.Type)
+		}
+		if e.Task != task {
+			return fmt.Errorf("journal: %s line %d: event of task %q in file of task %q", src, i+1, e.Task, task)
+		}
+	}
+	head, err := HeadHash(src)
+	if err != nil {
 		return err
 	}
-	md := filepath.Join(TasksDir(j.root), task, "task.md")
-	if err := os.WriteFile(md, []byte(projection.TaskMD(projection.Summarize(events))), 0o644); err != nil {
+	sum := projection.Summarize(events)
+	sum.Head = head
+	taskDir := filepath.Join(TasksDir(j.root), task)
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		return err
+	}
+	if err := writeSynced(filepath.Join(taskDir, "task.md"), []byte(projection.TaskMD(sum))); err != nil {
+		return err
+	}
+	if err := fsyncDir(taskDir); err != nil {
+		return err
+	}
+	if err := fsyncDir(TasksDir(j.root)); err != nil {
 		return err
 	}
 	if err := os.Rename(src, filepath.Join(TasksDir(j.root), task+".jsonl")); err != nil {
@@ -235,6 +261,9 @@ func Verify(path string) error {
 	if err != nil {
 		return err
 	}
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		return fmt.Errorf("%s: %w", path, ErrTornTail)
+	}
 	prev := GenesisPrev
 	for i, l := range splitLines(data) {
 		var e core.Event
@@ -251,3 +280,72 @@ func Verify(path string) error {
 
 // ErrChainBroken is wrapped by Verify when prev_sha256 does not match.
 var ErrChainBroken = errors.New("hash chain broken")
+
+// ErrTornTail means the file does not end in a newline (a crash mid-write).
+var ErrTornTail = errors.New("torn tail: last line is not newline-terminated")
+
+// HashLine is the chain hash of one line's exact bytes (no newline).
+func HashLine(l []byte) string { return hashHex(l) }
+
+// HeadHash is the sha256 of the last line of a journal file: the anchor Close records.
+func HeadHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	lines := splitLines(data)
+	if len(lines) == 0 {
+		return GenesisPrev, nil
+	}
+	return hashHex(lines[len(lines)-1]), nil
+}
+
+// ReadHead returns the head hash recorded in a closed task's task.md.
+func ReadHead(root, task string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(TasksDir(root), task, "task.md"))
+	if err != nil {
+		return "", err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if h, ok := strings.CutPrefix(l, "- head: "); ok {
+			return strings.TrimSpace(h), nil
+		}
+	}
+	return "", fmt.Errorf("journal: no head hash in task.md of %q", task)
+}
+
+// Repair truncates a trailing partial line, but only if that partial line is
+// not valid JSON. It reports whether the file was changed.
+func Repair(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if len(data) == 0 || data[len(data)-1] == '\n' {
+		return false, nil
+	}
+	cut := bytes.LastIndexByte(data, '\n') + 1
+	if json.Valid(data[cut:]) {
+		return false, fmt.Errorf("%s: unterminated last line is valid JSON; not truncating", path)
+	}
+	if err := os.Truncate(path, int64(cut)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func writeSynced(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}

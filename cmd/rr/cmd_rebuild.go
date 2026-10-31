@@ -13,14 +13,18 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/projection"
 )
 
-func summaries(dir string) ([]projection.Summary, error) {
+func summaries(root, dir string) ([]projection.Summary, error) {
 	out := []projection.Summary{}
 	for _, p := range taskFiles(dir) {
 		events, err := journal.ReadFile(p)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, projection.Summarize(events))
+		s := projection.Summarize(events)
+		if dir == journal.TasksDir(root) { // closed: keep the anchor recorded at close
+			s.Head, _ = journal.ReadHead(root, s.Task)
+		}
+		out = append(out, s)
 	}
 	return out, nil
 }
@@ -47,11 +51,11 @@ func init() {
 			Use:   "rebuild",
 			Short: "Regenerate .rr/index.json and the state cache from journal files",
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				closed, err := summaries(journal.TasksDir(root))
+				closed, err := summaries(root, journal.TasksDir(root))
 				if err != nil {
 					return err
 				}
-				open, err := summaries(journal.RunDir(root))
+				open, err := summaries(root, journal.RunDir(root))
 				if err != nil {
 					return err
 				}

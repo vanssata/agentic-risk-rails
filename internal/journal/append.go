@@ -18,6 +18,9 @@ func (j *fileJournal) prepare(e core.Event, path string) (prev string, created b
 		if err != nil {
 			return "", false, err
 		}
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			return "", false, fmt.Errorf("%s: %w; run rr doctor --repair", path, ErrTornTail)
+		}
 		lines := splitLines(data)
 		if len(lines) == 0 {
 			return GenesisPrev, false, nil

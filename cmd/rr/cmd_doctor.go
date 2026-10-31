@@ -14,6 +14,7 @@ import (
 func init() {
 	cli.Register(func() *cobra.Command {
 		var root string
+		var repair bool
 		c := &cobra.Command{
 			Use:   "doctor",
 			Short: "Verify journal chains, task.md files and required events",
@@ -21,6 +22,14 @@ func init() {
 				out := cmd.OutOrStdout()
 				var problems []string
 				for _, p := range taskFiles(journal.RunDir(root)) {
+					if repair {
+						fixed, err := journal.Repair(p)
+						if err != nil {
+							problems = append(problems, err.Error())
+						} else if fixed {
+							fmt.Fprintln(out, "repaired:", p)
+						}
+					}
 					if err := journal.Verify(p); err != nil {
 						problems = append(problems, err.Error())
 					}
@@ -32,6 +41,11 @@ func init() {
 					task := taskName(p)
 					if _, err := os.Stat(filepath.Join(journal.TasksDir(root), task, "task.md")); err != nil {
 						problems = append(problems, fmt.Sprintf("%s: task.md missing", task))
+					}
+					want, err := journal.ReadHead(root, task)
+					got, gerr := journal.HeadHash(p)
+					if err != nil || gerr != nil || want != got {
+						problems = append(problems, fmt.Sprintf("%s: head hash does not match the anchor in task.md (edited or truncated after close)", task))
 					}
 					events, err := journal.ReadFile(p)
 					if err != nil {
@@ -59,6 +73,7 @@ func init() {
 			},
 		}
 		wd, _ := os.Getwd()
+		c.Flags().BoolVar(&repair, "repair", false, "truncate a trailing partial (non-JSON) line of open tasks")
 		c.Flags().StringVar(&root, "root", wd, "repository root")
 		return c
 	})

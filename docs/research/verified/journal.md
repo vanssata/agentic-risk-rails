@@ -22,6 +22,9 @@ man7 write(2), flock(2), fsync(2); DeepWiki page via search snippet.
 - prev_sha256 = hex sha256 of the previous line's exact bytes without the newline; first line: sha256 of the empty string.
 - Verify reports the line whose prev_sha256 does not match, i.e. editing line N is reported at line N+1.
 
+- Anchoring: Close verifies the chain first and records the head hash (sha256 of the last line) in task.md (`- head: <hex>`) and .rr/index.json; `rr doctor` recomputes it, so post-close edits, last-line edits and tail truncation of CLOSED tasks are detected. An OPEN task's tail is NOT anchored by this module: editing or truncating the last lines of an open task is undetectable until close. Only the runner (wave 3) holds an external anchor for open tasks.
+- Torn tail: Append refuses a file not ending in "\n"; `rr doctor --repair` truncates a trailing partial line only if it is not valid JSON.
+
 ## GAPS
 - macOS F_FULLFSYNC not used/verified. Tampering with the LAST line is not detectable by the chain alone (needs an external anchor at close/runner).
 - AI-DLC repo itself not read; event count unverified.
