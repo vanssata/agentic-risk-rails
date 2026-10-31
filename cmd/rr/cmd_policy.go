@@ -47,10 +47,16 @@ func (f *policyFlags) compare(ctx context.Context) (core.Direction, []core.Field
 	case !errors.Is(err, fs.ErrNotExist):
 		return core.Loosen, nil, err
 	}
+	// The index is agent-controlled: compare over the base tree plus the checkout.
 	files, err := policy.ListFiles(ctx, f.root)
 	if err != nil {
 		return core.Loosen, nil, err
 	}
+	baseFiles, err := policy.ListFilesAt(ctx, f.root, f.base)
+	if err != nil {
+		return core.Loosen, nil, err
+	}
+	files = append(files, baseFiles...)
 	return policy.Diff(base.Policy, cand, files)
 }
 

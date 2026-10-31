@@ -76,6 +76,40 @@ func TestInForceInvalidPolicyIsAnError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestForgedTagCannotShadowRemoteRef(t *testing.T) {
+	root := testutil.GitRepo(t, map[string]string{"riskrails.yaml": "autonomy: {ceiling: L1}\n"})
+	run(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "riskrails.yaml"), []byte("autonomy: {ceiling: L4}\n"), 0o644))
+	run(t, root, "commit", "-qam", "loosen")
+	run(t, root, "tag", "origin/main", "HEAD") // forged: points at the loosened commit
+
+	l, err := InForce(context.Background(), root)
+	require.NoError(t, err)
+	assert.Equal(t, core.L1, *l.Policy.Autonomy.Ceiling, "InForce uses fully qualified refs")
+
+	_, err = ReadAtRef(context.Background(), root, "origin/main")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ambiguous")
+	l, err = ReadAtRef(context.Background(), root, "refs/remotes/origin/main")
+	require.NoError(t, err)
+	assert.Equal(t, core.L1, *l.Policy.Autonomy.Ceiling)
+}
+
+func TestListFilesAtIgnoresTheIndex(t *testing.T) {
+	root := testutil.GitRepo(t, map[string]string{"secrets/a": "", "secrets/b": ""})
+	run(t, root, "rm", "-q", "--cached", "secrets/b")
+	idx, err := ListFiles(context.Background(), root)
+	require.NoError(t, err)
+	assert.Contains(t, idx, "secrets/b", "untracked-but-present files are listed")
+	require.NoError(t, os.Remove(filepath.Join(root, "secrets", "b")))
+	idx, err = ListFiles(context.Background(), root)
+	require.NoError(t, err)
+	assert.NotContains(t, idx, "secrets/b")
+	at, err := ListFilesAt(context.Background(), root, "main")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"secrets/a", "secrets/b"}, at)
+}
+
 func TestReadAtRefRejectsBadRefs(t *testing.T) {
 	root := testutil.GitRepo(t, map[string]string{"a": "x"})
 	for _, ref := range []string{"", "--output=x", "nope"} {

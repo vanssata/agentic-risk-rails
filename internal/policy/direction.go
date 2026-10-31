@@ -7,9 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
-
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
 // This file holds the direction table (DES §3.4 step 1): for every policy
@@ -279,7 +278,11 @@ func intersect(a, b []string) []string {
 func setRule(moreStricter bool) rule {
 	return rule{
 		cmp: func(_ *cmpCtx, b, c reflect.Value) (core.Direction, string, error) {
-			rem, add := diffSets(strs(b), strs(c))
+			bl := strs(b)
+			rem, add := diffSets(bl, strs(c))
+			if !moreStricter { // a new allow entry already covered by a base entry adds nothing
+				add = slices.DeleteFunc(add, func(a string) bool { return subsumedByAny(bl, a) })
+			}
 			return setDirection(moreStricter, rem, add)
 		},
 		merge: func(a, b reflect.Value) reflect.Value {
@@ -305,10 +308,11 @@ func setDirection(moreStricter bool, removed, added []string) (core.Direction, s
 	return core.Equal, "", nil
 }
 
-// globRule compares deny-semantics glob lists by the set of files they match
-// over ctx.files. A dropped pattern must have its matched files still matched
-// by a remaining pattern; a dropped pattern that matches no file cannot be
-// verified and counts as LOOSEN (a future file would lose protection).
+// globRule compares deny-semantics glob lists. Every base pattern must be
+// textually present in the candidate or subsumed by a broader candidate
+// pattern; anything else is LOOSEN whatever the file sets say (narrowing can
+// match the same files today and fewer tomorrow). The file sets only confirm a
+// syntactic cover.
 func globRule() rule {
 	return rule{
 		cmp: func(x *cmpCtx, b, c reflect.Value) (core.Direction, string, error) {
@@ -316,11 +320,7 @@ func globRule() rule {
 			rem, add := diffSets(bl, cl)
 			var lost []string
 			for _, p := range rem {
-				ok, err := stillCovered(p, cl, x.files)
-				if err != nil {
-					return core.Loosen, "", err
-				}
-				if !ok {
+				if !subsumedByAny(cl, p) || !stillMatched(p, cl, x.files) {
 					lost = append(lost, p)
 				}
 			}
@@ -328,6 +328,25 @@ func globRule() rule {
 		},
 		merge: setRule(true).merge,
 	}
+}
+
+// subsumes reports whether pattern q matches everything pattern p matches,
+// judged on the text alone. Conservative: false when unsure.
+func subsumes(q, p string) bool {
+	switch {
+	case q == p, q == "**":
+		return true
+	case strings.HasSuffix(q, "/**"):
+		return strings.HasPrefix(p, strings.TrimSuffix(q, "**"))
+	case strings.HasSuffix(q, "*"):
+		pre := strings.TrimSuffix(q, "*")
+		return !strings.ContainsAny(pre, "*?[{\\") && strings.HasPrefix(p, pre) && !strings.Contains(p[len(pre):], "/")
+	}
+	return false
+}
+
+func subsumedByAny(list []string, p string) bool {
+	return slices.ContainsFunc(list, func(q string) bool { return subsumes(q, p) })
 }
 
 // expand resolves "$secret_reads" and "$protected_paths" references in
@@ -347,33 +366,14 @@ func expand(list []string, p *core.Policy) []string {
 	return out
 }
 
-func stillCovered(p string, remaining, files []string) (bool, error) {
-	matched := 0
+// stillMatched confirms that every file matched by p is matched by a remaining pattern.
+func stillMatched(p string, remaining, files []string) bool {
 	for _, f := range files {
-		ok, err := doublestar.Match(p, f)
-		if err != nil {
-			return false, fmt.Errorf("pattern %q: %w", p, err)
-		}
-		if !ok {
-			continue
-		}
-		matched++
-		hit := false
-		for _, q := range remaining {
-			m, err := doublestar.Match(q, f)
-			if err != nil {
-				return false, fmt.Errorf("pattern %q: %w", q, err)
-			}
-			if m {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			return false, nil
+		if globs.Match(p, f) && !slices.ContainsFunc(remaining, func(q string) bool { return globs.Match(q, f) }) {
+			return false
 		}
 	}
-	return matched > 0, nil
+	return true
 }
 
 // perKey applies elem to every key of a map. zeroAbsent: a missing key reads as
@@ -486,6 +486,12 @@ func bandsRule() rule {
 	}
 }
 
+// floorModeRank orders the modes a hard floor may force; full_irreversible
+// (the human gate) is strictest.
+var floorModeRank = map[core.Mode]int{
+	core.ModeLight: 0, core.ModeGuarded: 1, core.ModeFull: 2, core.ModeProgramme: 3, core.ModeFullIrreversible: 4,
+}
+
 // hardFloorsRule: a floor g covers f when it triggers on the same axes at an
 // equal or lower value and forces an equal or heavier mode.
 func hardFloorsRule() rule {
@@ -498,7 +504,7 @@ func hardFloorsRule() rule {
 		return strings.Join(axes, "+")
 	}
 	covers := func(g, f core.HardFloor) bool {
-		return key(g) == key(f) && g.Value <= f.Value && g.Mode.Rank() >= f.Mode.Rank() &&
+		return key(g) == key(f) && g.Value <= f.Value && floorModeRank[g.Mode] >= floorModeRank[f.Mode] &&
 			(f.Review == "" || g.Review == f.Review)
 	}
 	floors := func(v reflect.Value) []core.HardFloor { return v.Interface().([]core.HardFloor) }
