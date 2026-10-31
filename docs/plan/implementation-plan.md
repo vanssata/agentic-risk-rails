@@ -292,3 +292,23 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 | Агент пише извън OWNS | spec-compliance review го хваща (BLOCKER); при merge `git diff --stat` се проверява срещу OWNS |
 | Транскриптите на собственика съдържат чувствителни данни | W2-D само ги чете за структура; fixture-ите са синтетични; нищо реално не влиза в repo-то |
 | Бюджет на токени | след всяка вълна `rr cost` (от вълна 2) или task notifications; решение на собственика преди следващата вълна |
+
+---
+
+## 10. Статус: вълна 1 затворена (2026-11-01, tag `wave-1`)
+
+**Ревю:** рунд 1 (3× Sonnet: guard атака, policy/journal атака, spec compliance) → поправки; рунд 2 (2× Sonnet, нови) → поправки; рунд 3 (Opus) → SHIP_WITH_FIXES, BLOCKER поправен (`.git/**` + изолиран git), поправки за използваемост.
+
+**Gate 1 (P0):**
+
+| Критерий | Статус |
+|---|---|
+| LOOSEN edit от агент е отказан | ✅ тестове + e2e с бинара |
+| sandbox: запис в `riskrails.yaml` ⇒ грешка | ✅ Codex (`codex sandbox`, EROFS/EACCES, RR_CONTRACT); ⚠️ Claude — sandbox-ът не стартира в тази среда, тестът е skip |
+| `rr sync --check` зелен за Claude + Codex | ✅ локално върху fixture; ⏳ в CI на самото repo — вълна 4 (dogfooding) |
+| `rr status` върху fixture | ✅ работи; ⏳ задачи се отварят от `rr task` — вълна 4 |
+| PHP проект в light/guarded под реални Claude/Codex | ⏳ изисква triage + `rr task` (вълни 2 и 4) |
+
+**Guard, всекидневна сесия L1 (106 извиквания):** allow 70% / ask 20% / deny 8% (преди поправките: 21/63/15). Корпус 827 случая, p99 186 µs.
+
+**Пренесено към следващите вълни:** core: `ToolCall.Edits` (multi-file apply_patch), команда във `Verdict`/RenderHookOutput (вместо глобална променлива в Codex адаптера), `policy.DefaultRef`; W2-B: tiers в `wire.go`; W3-A: runner анкер за журнала и доверен SHA за InForce, проверка на Codex hook trust; известни граници: errata #6, #9, #12–#17.
