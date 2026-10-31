@@ -11,32 +11,42 @@ package globs
 
 import (
 	"path"
+	"runtime"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// FoldCase makes slash-less patterns case-insensitive (set on case-insensitive hosts).
-var FoldCase = false
+// FoldCase makes matching case-insensitive. It defaults to true on hosts whose
+// default filesystems are case-insensitive (macOS, Windows), so `.env` also
+// protects `.ENV` there.
+var FoldCase = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // Match reports whether rel (repo-relative, "/"-separated) matches pattern.
 // An invalid pattern never matches; callers with deny semantics must also
 // reject invalid patterns at load time (policy does).
 func Match(pattern, rel string) bool {
 	rel = strings.TrimPrefix(path.Clean("/"+rel), "/")
+	if FoldCase {
+		pattern, rel = strings.ToLower(pattern), strings.ToLower(rel)
+	}
 	if ok, err := doublestar.Match(pattern, rel); err == nil && ok {
 		return true
 	}
 	if strings.Contains(pattern, "/") {
 		return false
 	}
-	base := path.Base(rel)
-	if FoldCase {
-		pattern, base = strings.ToLower(pattern), strings.ToLower(base)
-	}
-	ok, err := doublestar.Match(pattern, base)
+	ok, err := doublestar.Match(pattern, path.Base(rel))
 	return err == nil && ok
 }
 
-// Valid reports whether pattern is syntactically valid.
-func Valid(pattern string) bool { return doublestar.ValidatePattern(pattern) }
+// Valid reports whether pattern is syntactically valid and in a form Match can
+// ever satisfy for repo-relative paths: no "./" prefix, no trailing "/", no
+// empty pattern. Absolute ("/…") and home ("~/…") patterns are valid; callers
+// match those against absolute paths.
+func Valid(pattern string) bool {
+	if pattern == "" || strings.HasPrefix(pattern, "./") || strings.HasSuffix(pattern, "/") {
+		return false
+	}
+	return doublestar.ValidatePattern(pattern)
+}

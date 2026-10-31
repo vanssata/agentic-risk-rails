@@ -26,3 +26,22 @@ func TestMatch(t *testing.T) {
 		assert.Equal(t, c.want, globs.Match(c.pat, c.rel), "%s ~ %s", c.pat, c.rel)
 	}
 }
+
+func TestValid(t *testing.T) {
+	for p, want := range map[string]bool{
+		"secrets/**": true, "~/.ssh/**": true, "/etc/x": true, ".env*": true,
+		"": false, "./secrets/**": false, "secrets/": false, "[": false,
+	} {
+		assert.Equal(t, want, globs.Valid(p), p)
+	}
+}
+
+func TestFoldCase(t *testing.T) {
+	old := globs.FoldCase
+	defer func() { globs.FoldCase = old }()
+	globs.FoldCase = true
+	assert.True(t, globs.Match(".env", "dir/.ENV"))
+	assert.True(t, globs.Match("secrets/**", "Secrets/a"))
+	globs.FoldCase = false
+	assert.False(t, globs.Match("secrets/**", "Secrets/a"))
+}
