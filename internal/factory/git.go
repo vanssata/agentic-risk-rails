@@ -3,6 +3,7 @@ package factory
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,57 +107,89 @@ func removeWorktree(ctx context.Context, root string, w worktree, branch string)
 	_, _ = git(ctx, root, "branch", "-D", branch)
 }
 
-// filterPaths lists the non-ignored files of w that carry a `filter` attribute.
-// Clean/smudge filters run program text from config, which is not trusted: a
-// step touching such a file is refused before any command that could run one.
-func filterPaths(ctx context.Context, w worktree) ([]string, error) {
+var errNotRegular = errors.New("staged entry is not a regular file")
+
+// builtinMerge are the merge attribute values that run no configured driver.
+var builtinMerge = map[string]bool{"unspecified": true, "set": true, "unset": true, "text": true, "binary": true, "union": true}
+
+// attrPaths lists the non-ignored files of w that carry a `filter` attribute
+// (clean/smudge programs come from untrusted config) or a custom `merge`
+// driver. `diff` is queried too, but its drivers are inert here: external diff
+// and textconv are disabled and diff is run with --no-ext-diff --no-textconv.
+func attrPaths(ctx context.Context, w worktree) ([]string, error) {
 	list, err := w.git(ctx, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil || list == "" {
 		return nil, err
 	}
-	out, err := run(ctx, w.dir, list, w.args([]string{"check-attr", "--stdin", "-z", "filter"})...)
+	out, err := run(ctx, w.dir, list, w.args([]string{"check-attr", "--stdin", "-z", "filter", "merge", "diff"})...)
 	if err != nil {
 		return nil, err
 	}
 	f := strings.Split(out, "\x00")
 	var bad []string
 	for i := 0; i+2 < len(f); i += 3 {
-		if f[i+2] != "unspecified" {
-			bad = append(bad, f[i])
+		path, attr, val := f[i], f[i+1], f[i+2]
+		if (attr == "filter" && val != "unspecified") || (attr == "merge" && !builtinMerge[val]) {
+			bad = append(bad, path)
 		}
 	}
 	return bad, nil
 }
 
-// changedFiles lists paths modified, added, deleted or untracked in w.
-func changedFiles(ctx context.Context, w worktree) ([]string, error) {
-	out, err := w.git(ctx, "status", "--porcelain", "-z", "--untracked-files=all")
+// statusFiles lists paths modified, added, deleted or untracked in w, and
+// separately the ignored ones (worker-written files git would never commit).
+func statusFiles(ctx context.Context, w worktree) (changed, ignored []string, err error) {
+	out, err := w.git(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--ignored")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var files []string
 	parts := strings.Split(out, "\x00")
 	for i := 0; i < len(parts); i++ {
 		p := parts[i]
 		if len(p) < 4 {
 			continue
 		}
-		files = append(files, p[3:])
+		if p[:2] == "!!" {
+			ignored = append(ignored, p[3:])
+			continue
+		}
+		changed = append(changed, p[3:])
 		if p[0] == 'R' || p[0] == 'C' { // the next entry is the rename source
 			i++
 			if i < len(parts) {
-				files = append(files, parts[i])
+				changed = append(changed, parts[i])
 			}
 		}
 	}
-	return files, nil
+	return changed, ignored, nil
 }
 
-// stage stages exactly files (adds, edits and deletes) and returns the staged diff.
-func stage(ctx context.Context, w worktree, files []string) (string, error) {
+// stage stages exactly files (adds, edits and deletes) and returns the staged
+// tree id. Only regular files (modes 100644/100755) or deletions may be staged:
+// a symlink (120000) or gitlink (160000) is an error.
+func stage(ctx context.Context, w worktree, files []string) (tree string, err error) {
 	if _, err := w.git(ctx, append([]string{"add", "-A", "--"}, files...)...); err != nil {
 		return "", err
 	}
+	raw, err := w.git(ctx, "diff", "--cached", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv")
+	if err != nil {
+		return "", err
+	}
+	for _, tok := range strings.Split(raw, "\x00") {
+		if !strings.HasPrefix(tok, ":") {
+			continue
+		}
+		f := strings.Fields(tok)
+		if len(f) < 2 || (f[1] != "100644" && f[1] != "100755" && f[1] != "000000") {
+			return "", fmt.Errorf("%w: %s", errNotRegular, tok)
+		}
+	}
+	out, err := w.git(ctx, "write-tree")
+	return strings.TrimSpace(out), err
+}
+
+// diff returns the staged diff, for the reviewers.
+func diff(ctx context.Context, w worktree) (string, error) {
 	return w.git(ctx, "diff", "--cached", "--no-ext-diff", "--no-textconv")
 }
 

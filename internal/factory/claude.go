@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -19,7 +20,7 @@ type ClaudeRunner struct {
 	Bin            string // default "claude"
 	Models         map[core.Tier]string
 	PermissionMode string        // default acceptEdits
-	ReadOnly       bool          // reviewers: plan mode and no Edit/Write/Bash tools
+	readOnly       bool          // set by ReadOnly(): reviewers get a read-only tool allowlist
 	Timeout        time.Duration // per worker; 0 = none
 }
 
@@ -32,6 +33,13 @@ type claudeResult struct {
 	RawUsage map[string]any `json:"usage"`
 }
 
+// ReadOnly returns a copy that can only read: plan mode, a Read/Grep/Glob tool
+// allowlist, user-level settings only and no MCP servers.
+func (c ClaudeRunner) ReadOnly() core.WorkerRunner {
+	c.readOnly = true
+	return c
+}
+
 func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.WorkerReport, error) {
 	model, ok := c.Models[spec.Tier]
 	if !ok {
@@ -41,7 +49,7 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if bin == "" {
 		bin = "claude"
 	}
-	if c.ReadOnly {
+	if c.readOnly {
 		mode = "plan"
 	}
 	if mode == "" {
@@ -51,8 +59,11 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if spec.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(spec.MaxTurns))
 	}
-	if c.ReadOnly {
-		args = append(args, "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash")
+	if c.readOnly {
+		// allowlist of read tools; project/local settings and MCP servers are
+		// worker-writable (even when git-ignored), so only user settings load.
+		args = append(args, "--tools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
+			"--setting-sources", "user", "--strict-mcp-config")
 	}
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -60,6 +71,8 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 		defer cancel()
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) } // the whole group
 	cmd.WaitDelay = time.Second
 	cmd.Dir = spec.Worktree
 	cmd.Stdin = strings.NewReader(spec.Brief)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -37,6 +38,11 @@ func Parse(raw []byte) (Plan, error) {
 	}
 	return p, nil
 }
+
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._-]*$`)
+
+// ValidID: step ids and task names become branch and directory names.
+func ValidID(id string) bool { return idPattern.MatchString(id) && id != "." && id != ".." }
 
 // Check validates ids, after references, cycles and file ownership: two steps
 // sharing a file must be ordered by (transitive) after.
@@ -71,6 +77,9 @@ func analyse(p Plan) (Plan, []int, error) {
 	for i, s := range p.Steps {
 		if s.ID == "" {
 			return p, nil, errors.New("plan: step without id")
+		}
+		if !ValidID(s.ID) {
+			return p, nil, fmt.Errorf("plan: invalid step id %q", s.ID)
 		}
 		if _, dup := idx[s.ID]; dup {
 			return p, nil, fmt.Errorf("plan: duplicate step %q", s.ID)

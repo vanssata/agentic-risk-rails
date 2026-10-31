@@ -30,10 +30,14 @@ type Config struct {
 	Budget    core.TokenCount
 }
 
+// ReadOnlyRunner yields a runner that cannot modify the worktree. The factory
+// never calls a reviewer except through it.
+type ReadOnlyRunner interface{ ReadOnly() core.WorkerRunner }
+
 type Factory struct {
 	Config
 	Implementer core.WorkerRunner
-	Reviewer    core.WorkerRunner
+	Reviewer    ReadOnlyRunner // structural: reviewers only ever run through ReadOnly()
 	Journal     core.Journal
 
 	mu sync.Mutex // serialises cherry-picks into Root
@@ -73,6 +77,9 @@ func (f *Factory) emit(ctx context.Context, typ string, data any) error {
 // budget) stops its wave: steps not yet started are skipped and no later wave
 // starts. It returns the results of every step that ran.
 func (f *Factory) RunWaves(ctx context.Context, p plan.Plan) ([]Result, error) {
+	if !plan.ValidID(f.Task) {
+		return nil, fmt.Errorf("factory: invalid task id %q", f.Task)
+	}
 	waves, err := plan.Waves(p)
 	if err != nil {
 		return nil, err

@@ -2,8 +2,10 @@ package factory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -72,9 +74,6 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 		return block("REVIEW_BUDGET: %d review rounds failed, a human decides", MaxReviewRounds)
 	}
 
-	if _, err := stage(ctx, w, st.Files); err != nil {
-		return res, err
-	}
 	sha, err := commit(ctx, w, "step "+st.ID)
 	if err != nil {
 		return res, err
@@ -97,7 +96,7 @@ func (f *Factory) runStep(ctx context.Context, wi int, st plan.Step) (res Result
 }
 
 // checkScope returns why the worktree may not be reviewed or committed ("" if
-// fine): a filter attribute, a change outside the step's files, or a symlink
+// fine): a filter or merge attribute, a change outside the step's files, or a symlink
 // in a changed path. A violation is journalled.
 func (f *Factory) checkScope(ctx context.Context, w worktree, st plan.Step) (string, error) {
 	why, err := scopeViolation(ctx, w, st)
@@ -108,21 +107,47 @@ func (f *Factory) checkScope(ctx context.Context, w worktree, st plan.Step) (str
 	return why, f.emit(ctx, "scope_violation", map[string]any{"step": st.ID, "reason": why})
 }
 
+// verify is the last gate before commit: the worktree must still be in scope
+// and stage to exactly the tree the reviewers saw. "" means commit the index.
+func (f *Factory) verify(ctx context.Context, w worktree, st plan.Step, reviewed string) (string, error) {
+	if why, err := f.checkScope(ctx, w, st); err != nil || why != "" {
+		return why, err
+	}
+	tree, err := stage(ctx, w, st.Files)
+	why := ""
+	switch {
+	case errors.Is(err, errNotRegular):
+		why = "scope: " + err.Error()
+	case err != nil:
+		return "", err
+	case tree != reviewed:
+		why = "scope: worktree changed after review"
+	default:
+		return "", nil
+	}
+	return why, f.emit(ctx, "scope_violation", map[string]any{"step": st.ID, "reason": why})
+}
+
 func scopeViolation(ctx context.Context, w worktree, st plan.Step) (string, error) {
-	bad, err := filterPaths(ctx, w)
+	bad, err := attrPaths(ctx, w)
 	if err != nil {
 		return "", err
 	}
 	if len(bad) > 0 {
-		return "filter attribute on " + strings.Join(bad, ", "), nil
+		return "filter or merge attribute on " + strings.Join(bad, ", "), nil
 	}
-	changed, err := changedFiles(ctx, w)
+	changed, ignored, err := statusFiles(ctx, w)
 	if err != nil {
 		return "", err
 	}
+	for _, p := range ignored {
+		if steersClaude(p) {
+			return "ignored file that configures the agent: " + p, nil
+		}
+	}
 	for _, c := range changed {
-		if p := symlinked(w.dir, c); p != "" {
-			return "symlink in changed path " + p, nil
+		if why := badPath(w.dir, c); why != "" {
+			return why, nil
 		}
 	}
 	if out := outside(changed, st.Files); len(out) > 0 {
@@ -131,17 +156,35 @@ func scopeViolation(ctx context.Context, w worktree, st plan.Step) (string, erro
 	return "", nil
 }
 
-// symlinked returns rel if rel or any parent directory of it (below dir) is a symlink.
-func symlinked(dir, rel string) string {
+// steersClaude: ignored paths a `claude -p` would read as configuration.
+func steersClaude(p string) bool {
+	p = strings.TrimSuffix(filepath.ToSlash(p), "/")
+	if p == ".claude" || strings.HasPrefix(p, ".claude/") || strings.Contains(p, "/.claude/") {
+		return true
+	}
+	switch path.Base(p) {
+	case ".mcp.json", "CLAUDE.md", "AGENTS.md":
+		return true
+	}
+	return false
+}
+
+// badPath rejects a changed path that is, or lies below, a symlink, or that is
+// a directory (a nested repository would be committed as a gitlink).
+func badPath(dir, rel string) string {
+	rel = strings.TrimSuffix(filepath.ToSlash(rel), "/")
 	cur := dir
-	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+	for _, part := range strings.Split(rel, "/") {
 		cur = filepath.Join(cur, part)
 		fi, err := os.Lstat(cur)
 		if err != nil {
 			return "" // deleted or never existed
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return rel
+			return "symlink in changed path " + rel
+		}
+		if fi.IsDir() && cur == filepath.Join(dir, filepath.FromSlash(rel)) {
+			return "changed path is a directory (nested repository?): " + rel
 		}
 	}
 	return ""

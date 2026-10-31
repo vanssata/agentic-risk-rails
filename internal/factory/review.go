@@ -53,12 +53,13 @@ func (f *Factory) review(ctx context.Context, st plan.Step, w worktree, brief st
 	for round := 1; round <= MaxReviewRounds; round++ {
 		rounds = round
 		tier, indep := f.roundTier(round)
-		findings, err := f.reviewRound(ctx, st, w, brief, round, tier, indep)
+		findings, tree, err := f.reviewRound(ctx, st, w, brief, round, tier, indep)
 		if err != nil {
 			return false, rounds, "", err
 		}
 		if findings == "" {
-			return true, rounds, "", nil
+			blocked, err := f.verify(ctx, w, st, tree)
+			return blocked == "" && err == nil, rounds, blocked, err
 		}
 		if round == MaxReviewRounds {
 			return false, rounds, "", nil
@@ -78,30 +79,34 @@ func (f *Factory) review(ctx context.Context, st plan.Step, w worktree, brief st
 }
 
 // reviewRound returns the findings of the first failing stage, "" if both pass.
-func (f *Factory) reviewRound(ctx context.Context, st plan.Step, w worktree, brief string, round int, tier core.Tier, indep bool) (string, error) {
-	diff, err := stage(ctx, w, st.Files)
+func (f *Factory) reviewRound(ctx context.Context, st plan.Step, w worktree, brief string, round int, tier core.Tier, indep bool) (findings, tree string, err error) {
+	tree, err = stage(ctx, w, st.Files)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	patch, err := diff(ctx, w)
+	if err != nil {
+		return "", "", err
 	}
 	for _, role := range stages {
 		b := fmt.Sprintf("%s\nREVIEW (%s, round %d). You are read-only. Reply with FINDINGS by severity, then a line `VERDICT: PASS` or `VERDICT: FAIL` (exactly one VERDICT line), and as the LAST line `STATUS: DONE`.\n", brief, role, round)
 		if indep {
 			b += "You are a second, independent reviewer: ignore earlier verdicts.\n"
 		}
-		rep, err := f.Reviewer.Run(ctx, core.WorkerSpec{Role: role, Tier: tier, Brief: b + "\nDIFF:\n" + diff, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
+		rep, err := f.Reviewer.ReadOnly().Run(ctx, core.WorkerSpec{Role: role, Tier: tier, Brief: b + "\nDIFF:\n" + patch, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
 		if err != nil {
-			return "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
+			return "", "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 		}
 		verdict := "FAIL"
 		if pass(rep) {
 			verdict = "PASS"
 		}
 		if err := f.emit(ctx, "review_verdict", map[string]any{"step": st.ID, "stage": role, "round": round, "tier": tier, "verdict": verdict}); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if verdict == "FAIL" {
-			return role + ":\n" + rep.Body, nil
+			return role + ":\n" + rep.Body, tree, nil
 		}
 	}
-	return "", nil
+	return "", tree, nil
 }

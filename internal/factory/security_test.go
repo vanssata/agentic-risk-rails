@@ -16,21 +16,6 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
-// evilRepo returns a git dir whose attributes and config would run `touch marker`
-// as a clean filter on every file.
-func evilRepo(t *testing.T, marker string) string {
-	t.Helper()
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("* filter=pwn\n"), 0o644))
-	cfg, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o644)
-	require.NoError(t, err)
-	_, err = cfg.WriteString("[filter \"pwn\"]\n\tclean = touch " + marker + "; cat\n")
-	require.NoError(t, err)
-	require.NoError(t, cfg.Close())
-	return filepath.Join(dir, ".git")
-}
-
 func runOne(t *testing.T, f *Factory) Result {
 	t.Helper()
 	res, err := f.RunWaves(context.Background(), plan.Plan{Steps: []plan.Step{step("a")}})
@@ -40,14 +25,26 @@ func runOne(t *testing.T, f *Factory) Result {
 }
 
 func TestWorktreeGitFileIsNeverTrusted(t *testing.T) {
+	// The planted gitdir is a clone of Root whose index is read-tree'd from HEAD
+	// for the worktree, so a scope check that trusted it would pass; its
+	// attributes and config run `touch marker` as clean filter on every file.
 	marker := filepath.Join(t.TempDir(), "pwned")
-	evil := evilRepo(t, marker)
-	impl := runnerFunc(func(s core.WorkerSpec) core.WorkerReport {
+	f, _ := newFactory(t, nil, reviews(pass1))
+	evilDir := t.TempDir()
+	testutil.Git(t, evilDir, "clone", "-q", "--no-checkout", f.Root, ".")
+	evil := filepath.Join(evilDir, ".git")
+	require.NoError(t, os.WriteFile(filepath.Join(evil, "info", "attributes"), []byte("* filter=pwn\n"), 0o644))
+	cfg, err := os.OpenFile(filepath.Join(evil, "config"), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = cfg.WriteString("[filter \"pwn\"]\n\tclean = touch " + marker + "; cat\n")
+	require.NoError(t, err)
+	require.NoError(t, cfg.Close())
+	f.Implementer = runnerFunc(func(s core.WorkerSpec) core.WorkerReport {
 		_ = os.WriteFile(filepath.Join(s.Worktree, "a.txt"), []byte("x\n"), 0o644)
+		testutil.Git(t, s.Worktree, "--git-dir="+evil, "--work-tree="+s.Worktree, "read-tree", "HEAD")
 		_ = os.WriteFile(filepath.Join(s.Worktree, ".git"), []byte("gitdir: "+evil+"\n"), 0o644)
 		return rep(core.StatusDone, "ok")
 	})
-	f, _ := newFactory(t, impl, reviews(pass1))
 	res := runOne(t, f)
 	assert.NoFileExists(t, marker, "the filter of the planted gitdir must not run on the host")
 	assert.True(t, res.OK(), res.Blocked)
@@ -76,7 +73,7 @@ func TestInTreeFilterAttributeIsRefused(t *testing.T) {
 	res := runOne(t, f)
 	assert.NoFileExists(t, marker)
 	assert.False(t, res.OK())
-	assert.Contains(t, res.Blocked, "filter attribute")
+	assert.Contains(t, res.Blocked, "attribute")
 	assert.Contains(t, j.Types("t1"), "scope_violation")
 }
 
@@ -190,13 +187,17 @@ func TestClaudeRunnerReadOnlyAndTimeout(t *testing.T) {
 	wt := t.TempDir()
 	bin := testutil.FakeBin(t, "claude", `echo "$@" > args.txt
 printf '%s\n' '{"result":"VERDICT: PASS\nSTATUS: DONE"}'`)
-	r := ClaudeRunner{Bin: bin, ReadOnly: true, PermissionMode: "acceptEdits", Models: map[core.Tier]string{core.TierBalanced: "sonnet"}}
-	got, err := r.Run(context.Background(), core.WorkerSpec{Tier: core.TierBalanced, Worktree: wt})
+	r := ClaudeRunner{Bin: bin, PermissionMode: "acceptEdits", Models: map[core.Tier]string{core.TierBalanced: "sonnet"}}
+	got, err := r.ReadOnly().Run(context.Background(), core.WorkerSpec{Tier: core.TierBalanced, Worktree: wt})
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusDone, got.Status)
 	args, _ := os.ReadFile(filepath.Join(wt, "args.txt"))
-	assert.Contains(t, string(args), "--permission-mode plan")
-	assert.Contains(t, string(args), "--disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash")
+	for _, want := range []string{"--permission-mode plan", "--tools Read,Grep,Glob", "--disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash", "--setting-sources user", "--strict-mcp-config"} {
+		assert.Contains(t, string(args), want)
+	}
+	_, _ = r.Run(context.Background(), core.WorkerSpec{Tier: core.TierBalanced, Worktree: wt})
+	args, _ = os.ReadFile(filepath.Join(wt, "args.txt"))
+	assert.NotContains(t, string(args), "--tools", "the plain runner is not restricted")
 
 	slow := testutil.FakeBin(t, "claude", "exec sleep 10")
 	start := time.Now()
@@ -205,6 +206,118 @@ printf '%s\n' '{"result":"VERDICT: PASS\nSTATUS: DONE"}'`)
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusBlocked, got.Status)
 	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
+func alive(pid string) bool {
+	b, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return false
+	}
+	s := string(b)
+	return s[strings.LastIndex(s, ")")+2] != 'Z'
+}
+
+func TestTimeoutKillsProcessGroup(t *testing.T) {
+	wt := t.TempDir()
+	bin := testutil.FakeBin(t, "claude", "sleep 30 &\necho $! > pid\nwait")
+	r := ClaudeRunner{Bin: bin, Timeout: 300 * time.Millisecond, Models: map[core.Tier]string{core.TierBalanced: "sonnet"}}
+	got, err := r.Run(context.Background(), core.WorkerSpec{Tier: core.TierBalanced, Worktree: wt})
+	require.NoError(t, err)
+	assert.Equal(t, core.StatusBlocked, got.Status)
+	pid, err := os.ReadFile(filepath.Join(wt, "pid"))
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return !alive(strings.TrimSpace(string(pid))) }, 3*time.Second, 50*time.Millisecond, "the background child must die with the group")
+}
+
+func TestReviewerCannotChangeWhatIsCommitted(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(wt string)
+		want   string
+	}{
+		{"content changed", func(wt string) { _ = os.WriteFile(filepath.Join(wt, "a.txt"), []byte("changed\n"), 0o644) }, "changed after review"},
+		{"became a symlink", func(wt string) {
+			_ = os.Remove(filepath.Join(wt, "a.txt"))
+			_ = os.Symlink("/etc/passwd", filepath.Join(wt, "a.txt"))
+		}, "symlink"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f, j := newFactory(t, &writer{}, nil)
+			f.Reviewer = ro{runnerFunc(func(s core.WorkerSpec) core.WorkerReport {
+				tc.mutate(s.Worktree)
+				return rep(core.StatusDone, pass1)
+			})}
+			res := runOne(t, f)
+			assert.False(t, res.OK())
+			assert.Contains(t, res.Blocked, tc.want)
+			assert.Contains(t, j.Types("t1"), "scope_violation")
+			assert.NoFileExists(t, filepath.Join(f.Root, "a.txt"))
+		})
+	}
+}
+
+func TestScopeRejects(t *testing.T) {
+	tests := []struct {
+		name  string
+		repo  map[string]string
+		write func(t *testing.T, wt string)
+		want  string
+	}{
+		{"nested repository", nil, func(t *testing.T, wt string) {
+			d := filepath.Join(wt, "a.txt")
+			require.NoError(t, os.MkdirAll(d, 0o755))
+			testutil.Git(t, d, "init", "-q")
+			require.NoError(t, os.WriteFile(filepath.Join(d, "f"), []byte("x"), 0o644))
+			testutil.Git(t, d, "add", "f")
+			testutil.Git(t, d, "-c", "user.name=x", "-c", "user.email=x@x", "commit", "-q", "-m", "x")
+		}, "directory"},
+		{"ignored .claude settings", map[string]string{".gitignore": ".claude/\n"}, func(t *testing.T, wt string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(wt, ".claude"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(wt, ".claude", "settings.local.json"), []byte("{}"), 0o644))
+		}, "configures the agent"},
+		{"ignored .mcp.json", map[string]string{".gitignore": ".mcp.json\n"}, func(t *testing.T, wt string) {
+			require.NoError(t, os.WriteFile(filepath.Join(wt, ".mcp.json"), []byte("{}"), 0o644))
+		}, "configures the agent"},
+		{"ignored nested CLAUDE.md", map[string]string{".gitignore": "CLAUDE.md\n"}, func(t *testing.T, wt string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(wt, "sub"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(wt, "sub", "CLAUDE.md"), []byte("x"), 0o644))
+		}, "configures the agent"},
+		{"custom merge driver", map[string]string{".gitattributes": "*.txt merge=evil\n"}, func(t *testing.T, wt string) {
+			require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("x"), 0o644))
+		}, "attribute"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := newFactory(t, runnerFunc(func(s core.WorkerSpec) core.WorkerReport {
+				if s.Role == "implementer" {
+					tc.write(t, s.Worktree)
+				}
+				return rep(core.StatusDone, "ok")
+			}), reviews(pass1))
+			if tc.repo != nil {
+				tc.repo["README.md"] = "x\n"
+				f.Root = testutil.GitRepo(t, tc.repo)
+			}
+			res := runOne(t, f)
+			assert.False(t, res.OK())
+			assert.Contains(t, res.Blocked, tc.want)
+		})
+	}
+}
+
+func TestIDValidation(t *testing.T) {
+	for _, id := range []string{"-rf", "a/b", "..", ".", "a b", "", "x\n"} {
+		assert.False(t, plan.ValidID(id), id)
+	}
+	for _, id := range []string{"a", "step-1", "s_2.x", "A9"} {
+		assert.True(t, plan.ValidID(id), id)
+	}
+	assert.Error(t, plan.Check(plan.Plan{Steps: []plan.Step{{ID: "-x", Files: []string{"a"}}}}))
+	f, _ := newFactory(t, &writer{}, reviews(pass1))
+	f.Task = "--bad"
+	_, err := f.RunWaves(context.Background(), plan.Plan{Steps: []plan.Step{step("a")}})
+	assert.Error(t, err)
 }
 
 func TestStatusOfLastLineOnly(t *testing.T) {

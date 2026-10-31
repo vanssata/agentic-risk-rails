@@ -72,6 +72,11 @@ func step(id string, after ...string) plan.Step {
 	return plan.Step{ID: id, Brief: "do " + id, Files: []string{id + ".txt"}, After: after}
 }
 
+// ro adapts a fake reviewer to ReadOnlyRunner.
+type ro struct{ core.WorkerRunner }
+
+func (r ro) ReadOnly() core.WorkerRunner { return r.WorkerRunner }
+
 func newFactory(t *testing.T, impl, reviewer core.WorkerRunner) (*Factory, *fakes.Journal) {
 	t.Helper()
 	j := &fakes.Journal{}
@@ -81,7 +86,7 @@ func newFactory(t *testing.T, impl, reviewer core.WorkerRunner) (*Factory, *fake
 			Tier: core.TierBalanced, Effective: map[core.Tier]string{core.TierBalanced: "sonnet", core.TierStrong: "opus"},
 			Parallel: 2, MaxTurns: 30,
 		},
-		Implementer: impl, Reviewer: reviewer, Journal: j,
+		Implementer: impl, Reviewer: ro{reviewer}, Journal: j,
 	}, j
 }
 

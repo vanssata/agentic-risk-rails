@@ -13,6 +13,9 @@ Field names of the `--output-format json` result object (`result`, `is_error`, `
 Codex `agents.max_concurrent_threads_per_session`: max concurrently open spawned-agent threads excluding primary; no numeric default listed (Codex picks) | https://learn.chatgpt.com/docs/config-file/config-reference | [V]
 Superpowers implementer prompt: report written to a report file; final message <15 lines with status, commits, test summary, concerns, report path. Statuses: DONE_WITH_CONCERNS = completed with doubts; BLOCKED = cannot complete; NEEDS_CONTEXT = missing info; DONE is not defined on that page | https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/implementer-prompt.md | [V]
 
+`--tools "<list>"` restricts the built-in tool set (`""` none, `"Read,Grep,Glob"` an allowlist); `--disallowedTools` removes tools; `--setting-sources user,project,local` selects settings sources; `--strict-mcp-config` = only MCP servers from `--mcp-config` (none given => none) | https://code.claude.com/docs/en/cli-reference and `claude --help` 2.1.316 | [V] flags exist; [U] that `--tools` is honoured under `-p` plan mode (contract test needed)
+Read-only reviewer = `--permission-mode plan --tools Read,Grep,Glob --disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash --setting-sources user --strict-mcp-config`; only the reviewer runner is locked to user settings (implementers/fixers need the project's generated hooks) | design decision | -
+
 ## READ
 sub-agents (first 100k chars), cli-reference (flag table), Codex config-reference (first 100k chars; `agents.max_depth` not seen), Superpowers implementer-prompt.md. Local: `claude --help`.
 
