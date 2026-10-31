@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rr guard --runtime codex --event PreToolUse || exit 2",
+            "timeout": 10,
+            "statusMessage": "rr guard"
+          }
+        ]
+      }
+    ]
+  }
+}
