@@ -1,8 +1,8 @@
 package main
 
 // Orchestrator wiring after wave 1: the real policy resolver replaces the
-// strict stand-ins in internal/wiring and internal/sync. Model tiers are wired
-// in wave 2 (W2-B); until then Tiers is empty and agents inherit the session model.
+// strict stand-ins in internal/wiring and internal/sync. Model tiers come from the
+// committed .rr/tiers.lock, validated against the policy's candidates (W2-B).
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/models"
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
 	"github.com/vanssata/agentic-risk-rails/internal/wiring"
@@ -97,7 +98,7 @@ func unionSorted(a, b []string) []string {
 	return out
 }
 
-func guardContext(ctx context.Context, root, _ string) (core.GuardContext, error) {
+func guardContext(ctx context.Context, root, runtime string) (core.GuardContext, error) {
 	r, err := resolve(ctx, root)
 	if err != nil {
 		return core.GuardContext{}, err
@@ -105,6 +106,7 @@ func guardContext(ctx context.Context, root, _ string) (core.GuardContext, error
 	return core.GuardContext{
 		Policy: r.eff, Level: r.level, Root: r.root, Home: r.home,
 		RepoFiles: r.files, Loader: r.svc, Differ: r.svc,
+		Tiers: models.ForSync(ctx, r.eff.Policy.Models, r.root)[runtime],
 	}, nil
 }
 
@@ -113,5 +115,6 @@ func syncInput(ctx context.Context, root string) (core.SyncInput, error) {
 	if err != nil {
 		return core.SyncInput{}, err
 	}
-	return core.SyncInput{Root: r.root, Home: r.home, Policy: r.eff, Level: r.level}, nil
+	return core.SyncInput{Root: r.root, Home: r.home, Policy: r.eff, Level: r.level,
+		Tiers: models.ForSync(ctx, r.eff.Policy.Models, r.root)}, nil
 }

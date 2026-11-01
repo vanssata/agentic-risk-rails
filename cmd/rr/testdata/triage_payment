@@ -1,0 +1,9 @@
+scope=2: src/Payment/PaymentService.php matches hot_paths src/Payment/**
+behaviour=1: declared
+reversibility=0: git revert returns everything
+domain=2: src/Payment/PaymentService.php is money (src/Payment/**)
+novelty=0: declared
+coverage=0: 1 of 1 code files have a test
+W=5 -> guarded
+hard floor domain>=2 -> full (review: security)
+W 5 -> full

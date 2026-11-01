@@ -153,6 +153,9 @@ type Weight struct {
 	Mode     Mode         `json:"mode"`
 	Reasons  []string     `json:"reasons,omitempty"`
 	Measured bool         `json:"measured"` // false = declared-only (before a diff exists)
+	// Irreversible is set whenever a full_irreversible hard floor holds, even if
+	// a programme trigger ranks the mode higher; autonomy then forces L0 (DES §8.1).
+	Irreversible bool `json:"irreversible,omitempty"`
 }
 
 func (w Weight) Total() int {
