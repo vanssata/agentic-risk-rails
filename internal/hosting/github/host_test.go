@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -104,20 +106,74 @@ func TestPushRefusesBadBranches(t *testing.T) {
 	assert.Error(t, noTok.Push(context.Background(), root, "rr/ok"))
 }
 
-func TestPushRefusesPoisonedConfig(t *testing.T) {
+// pushFixture: a source repo with rr/x, a tag and main, and an empty bare target.
+func pushFixture(t *testing.T) (c *Client, src, target string) {
+	t.Helper()
+	src = testutil.GitRepo(t, map[string]string{"a": "1"})
+	testutil.Git(t, src, "branch", "rr/x")
+	testutil.Git(t, src, "tag", "v9")
+	target = t.TempDir()
+	testutil.Git(t, target, "init", "-q", "--bare")
 	c, err := newAt("acme/shop", "tok", "")
 	require.NoError(t, err)
-	for _, kv := range [][2]string{
-		{"url.https://evil/.insteadOf", "https://github.com/"},
-		{"http.proxy", "http://evil:1"},
-		{"include.path", "/tmp/x"},
-	} {
-		root := testutil.GitRepo(t, map[string]string{"a": "1"})
-		testutil.Git(t, root, "config", kv[0], kv[1])
-		err := c.Push(context.Background(), root, "rr/ok")
-		require.Error(t, err, kv[0])
-		assert.Contains(t, err.Error(), "refused")
-	}
+	c.pushURL = "file://" + target
+	return c, src, target
+}
+
+func targetRefs(t *testing.T, target string) []string {
+	t.Helper()
+	return strings.Fields(testutil.Git(t, target, "for-each-ref", "--format=%(refname)"))
+}
+
+func TestPushCreatesOnlyBranch(t *testing.T) {
+	c, src, target := pushFixture(t)
+	require.NoError(t, c.Push(context.Background(), src, "rr/x"))
+	assert.Equal(t, []string{"refs/heads/rr/x"}, targetRefs(t, target))
+}
+
+func TestPushIgnoresPoisonedSourceConfig(t *testing.T) {
+	c, src, target := pushFixture(t)
+	testutil.Git(t, src, "config", "push.followTags", "true")
+	testutil.Git(t, src, "config", "push.gpgSign", "true")
+	testutil.Git(t, src, "config", "push.pushOption", "x=y")
+	testutil.Git(t, src, "config", "http.proxy", "http://127.0.0.1:1")
+	testutil.Git(t, src, "config", "url.https://evil/.insteadOf", "file://")
+	testutil.Git(t, src, "config", "protocol.allow", "never")
+	testutil.Git(t, src, "config", "core.hooksPath", filepath.Join(src, "hooks"))
+	testutil.Git(t, src, "config", "extensions.worktreeConfig", "true")
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "config.worktree"),
+		[]byte("[http]\n\tproxy = http://127.0.0.1:1\n[url \"https://evil/\"]\n\tinsteadOf = file://\n[push]\n\tfollowTags = true\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "hooks"), 0o755))
+	marker := filepath.Join(t.TempDir(), "ran")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "hooks", "pre-push"), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+
+	require.NoError(t, c.Push(context.Background(), src, "rr/x"))
+	assert.Equal(t, []string{"refs/heads/rr/x"}, targetRefs(t, target), "no tags")
+	assert.NoFileExists(t, marker)
+}
+
+func TestPushRefusesForeignObjects(t *testing.T) {
+	c, src, _ := pushFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "objects", "info", "alternates"), []byte("/tmp/other/objects\n"), 0o644))
+	err := c.Push(context.Background(), src, "rr/x")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refused")
+
+	c, src, _ = pushFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".git", "commondir"), []byte("../x\n"), 0o644))
+	assert.Error(t, c.Push(context.Background(), src, "rr/x"))
+
+	// a .git file (linked worktree) is refused too
+	c, src, _ = pushFixture(t)
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, ".git"), []byte("gitdir: "+filepath.Join(src, ".git")+"\n"), 0o644))
+	assert.Error(t, c.Push(context.Background(), other, "rr/x"))
+}
+
+func TestPushMissingBranchFails(t *testing.T) {
+	c, src, target := pushFixture(t)
+	assert.Error(t, c.Push(context.Background(), src, "rr/nope"))
+	assert.Empty(t, targetRefs(t, target))
 }
 
 func TestPushCmdTokenOnlyInEnv(t *testing.T) {

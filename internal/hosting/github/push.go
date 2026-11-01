@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/gitx"
@@ -14,8 +16,11 @@ import (
 
 // Push pushes refs/heads/<branch> of the repository at root to
 // https://github.com/<owner>/<repo>.git. Only rr/* branches, never forced.
-// The remote URL is built here, never read from the (agent-controlled)
-// .git/config; the token goes to the child git only through GIT_CONFIG_*
+//
+// The agent controls root's config (.git/config, config.worktree, alternates),
+// so nothing is pushed from root: the branch is fetched into a fresh bare
+// repository with our own (empty) config and pushed from there. The remote URL
+// is built here, and the token reaches the child git only through GIT_CONFIG_*
 // environment variables, not argv or the URL.
 func (c *Client) Push(ctx context.Context, root, branch string) error {
 	if c.token == "" {
@@ -24,10 +29,29 @@ func (c *Client) Push(ctx context.Context, root, branch string) error {
 	if err := checkBranch(ctx, branch); err != nil {
 		return err
 	}
-	if err := checkRepoConfig(ctx, root); err != nil {
+	src, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("github: push refused: %w", err)
+	}
+	if err := checkSource(src); err != nil {
 		return err
 	}
-	cmd := c.pushCmd(ctx, root, branch)
+	tmp, err := os.MkdirTemp("", "rr-push-")
+	if err != nil {
+		return fmt.Errorf("github: push: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	if _, err := gitx.Run(ctx, "", "init", "-q", "--bare", "--template=", tmp); err != nil {
+		return fmt.Errorf("github: push: %w", err)
+	}
+	// upload-pack runs in root and reads its config; the -c hardening reaches it via
+	// GIT_CONFIG_PARAMETERS, and uploadpack.packObjectsHook is ignored in repo config [V].
+	ref := "refs/heads/" + branch
+	if _, err := gitx.Run(ctx, "", "-C", tmp, "-c", "protocol.file.allow=always",
+		"fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", src, ref+":"+ref); err != nil {
+		return fmt.Errorf("github: push %s: %w", branch, err)
+	}
+	cmd := c.pushCmd(ctx, tmp, branch)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
@@ -47,30 +71,40 @@ func checkBranch(ctx context.Context, branch string) error {
 	return nil
 }
 
-// checkRepoConfig refuses a repository whose config could redirect or
-// intercept the push (url.*.insteadOf, http.* such as proxy or CA).
-func checkRepoConfig(ctx context.Context, root string) error {
-	out, err := gitx.Run(ctx, "", "-C", root, "config", "--list", "--local", "--includes")
-	if err != nil {
-		return fmt.Errorf("github: push refused: %w", err)
+// checkSource refuses a repository whose objects may come from elsewhere:
+// a linked worktree (.git file, commondir) or alternates.
+func checkSource(root string) error {
+	g := filepath.Join(root, ".git")
+	if fi, err := os.Stat(g); err != nil || !fi.IsDir() {
+		return fmt.Errorf("github: push refused: %s is not a plain git directory", g)
 	}
-	for _, l := range strings.Split(string(out), "\n") {
-		k := strings.ToLower(l)
-		if strings.HasPrefix(k, "url.") || strings.HasPrefix(k, "http.") || strings.HasPrefix(k, "include") {
-			return fmt.Errorf("github: push refused: repository config sets %s", strings.SplitN(l, "=", 2)[0])
+	for _, p := range []string{"commondir", "objects/info/alternates", "objects/info/http-alternates"} {
+		if _, err := os.Lstat(filepath.Join(g, p)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("github: push refused: %s present", p)
 		}
 	}
 	return nil
 }
 
-func (c *Client) pushCmd(ctx context.Context, root, branch string) *exec.Cmd {
+func (c *Client) pushCmd(ctx context.Context, dir, branch string) *exec.Cmd {
+	url := fmt.Sprintf("https://github.com/%s/%s.git", c.owner, c.repo)
+	if c.pushURL != "" { // tests only
+		url = c.pushURL
+	}
+	fileAllow := "never"
+	if c.pushURL != "" {
+		fileAllow = "always"
+	}
 	args := append([]string{}, gitx.Hardening...)
 	args = append(args,
 		"-c", "protocol.https.allow=always",
+		"-c", "protocol.file.allow="+fileAllow,
 		"-c", "http.sslVerify=true",
-		"-C", root,
-		"push", "--no-verify", "--no-recurse-submodules",
-		fmt.Sprintf("https://github.com/%s/%s.git", c.owner, c.repo),
+		"-c", "push.followTags=false",
+		"-c", "push.gpgSign=false",
+		"-C", dir,
+		"push", "--no-verify", "--no-follow-tags", "--no-signed", "--no-recurse-submodules",
+		url,
 		"refs/heads/"+branch+":refs/heads/"+branch, // no leading "+": never forced
 	)
 	cmd := exec.CommandContext(ctx, "git", args...)

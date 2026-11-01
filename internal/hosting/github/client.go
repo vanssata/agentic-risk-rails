@@ -24,6 +24,7 @@ type Client struct {
 	gh          *gh.Client
 	owner, repo string
 	token       string
+	pushURL     string // tests only: replaces the github.com remote
 }
 
 var _ core.Hosting = (*Client)(nil)
