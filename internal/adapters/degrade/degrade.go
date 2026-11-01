@@ -39,7 +39,7 @@ func (Gen) Name() string { return "degrade" }
 // markers is never touched.
 func (Gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	files := []core.File{{Path: ".githooks/pre-commit", Content: precommit.Script, Mode: 0o755}}
-	block := section(in.Policy.Policy)
+	block := section(in.Policy.Policy, in.Level)
 	old, err := os.ReadFile(filepath.Join(in.Root, "AGENTS.md"))
 	switch {
 	case os.IsNotExist(err):
@@ -84,15 +84,20 @@ func list(title string, items []string) string {
 	return "- " + title + ": `" + strings.Join(items, "`, `") + "`\n"
 }
 
-func section(p core.Policy) string {
+// At L≥2 there is no human to ask: ask commands are listed as forbidden (DES §8.2).
+func section(p core.Policy, l core.Level) string {
 	e := p.Enforcement
+	deny, ask := e.Commands.Deny, e.Commands.Ask
+	if l >= core.L2 {
+		deny, ask = append(append([]string{}, deny...), ask...), nil
+	}
 	var b strings.Builder
 	b.WriteString(begin + "\n## RiskRails rules (degrade mode)\n\n")
 	b.WriteString("This runtime has no enforcing hook, so these rules are advice to you and are enforced only by CI and branch protection. Autonomy is capped at L1: you act under human supervision.\n\n")
 	b.WriteString(list("Never write", Protected(e)))
 	b.WriteString(list("Never read", e.SecretReads))
-	b.WriteString(list("Forbidden commands", e.Commands.Deny))
-	b.WriteString(list("Ask the human first", e.Commands.Ask))
+	b.WriteString(list("Forbidden commands", deny))
+	b.WriteString(list("Ask the human first", ask))
 	b.WriteString("\nBefore committing run `rr guard --staged`; before opening a PR run `rr verify` and `rr policy check`. ")
 	b.WriteString("Enable the commit hook once per clone with `git config core.hooksPath .githooks`. `git commit --no-verify` bypasses it; CI will still reject the change.\n")
 	b.WriteString(end + "\n")

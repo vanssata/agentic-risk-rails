@@ -61,12 +61,19 @@ func (permGen) Render(_ context.Context, in core.SyncInput) ([]core.File, error)
 	if e.Commands.Unlisted != nil {
 		unlisted = string(*e.Commands.Unlisted)
 	}
+	ask := "ask"
+	if in.Level >= core.L2 { // no human to ask at L≥2 (DES §8.2)
+		ask = "deny"
+		if unlisted == "ask" {
+			unlisted = "deny"
+		}
+	}
 	bash := ordered{{"*", unlisted}}
 	for _, c := range e.Commands.Allow {
 		bash = append(bash, pair{c, "allow"})
 	}
 	for _, c := range e.Commands.Ask {
-		bash = append(bash, pair{c, "ask"})
+		bash = append(bash, pair{c, ask})
 	}
 	for _, c := range e.Commands.Deny {
 		bash = append(bash, pair{c, "deny"})

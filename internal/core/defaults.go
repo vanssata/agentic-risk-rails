@@ -17,7 +17,7 @@ var AlwaysProtected = []string{
 	".agents/**", // generated skills
 	".githooks/**",
 	".mcp.json",
-	".git/**", // all of it: commondir, info/, objects/info/alternates, modules/ … can re-point git
+	".git/**",    // all of it: commondir, info/, objects/info/alternates, modules/ … can re-point git
 	".github/**", // workflows, hooks, CODEOWNERS, rulesets (DES §3.4 step 0)
 }
 
