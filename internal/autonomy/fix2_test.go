@@ -21,6 +21,7 @@ func TestIgnoredFilesDoNotSurviveIntoTheNextTask(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(e.root, ".gitignore"), []byte(".rr/\nnode_modules/\n.env\n"), 0o644))
 			testutil.Git(t, e.root, "add", "-A")
 			testutil.Git(t, e.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ignore")
+			e.syncTip(t)
 			var leaked []string
 			e.worker.fn = func(_ context.Context, n int, _ core.WorkerSpec) (core.WorkerReport, error) {
 				if n == 1 {
@@ -71,7 +72,7 @@ func TestSymlinkGitlinkAndTypeChangeInDiffAreBlocked(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "blocked", out[0].Status)
 			assert.Contains(t, blockedReason(t, e), "symlink/gitlink in diff")
-			assert.Empty(t, e.pushed)
+			assert.Empty(t, e.host.Pushed)
 		})
 	}
 }
@@ -81,14 +82,14 @@ func TestFailedDockerRunRemovesTheContainer(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	testutil.FakeBin(t, "docker", `echo "$@" >> `+log+`
 if [ "$1" = run ]; then exit 1; fi`)
-	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Network: "n", Models: map[core.Tier]string{core.TierFast: "haiku"}}
+	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Network: "n", ProxyURL: "http://p:3128", PolicyFile: policyFile(t), Models: map[core.Tier]string{core.TierFast: "haiku"}}
 	rep, err := d.Run(t.Context(), core.WorkerSpec{Tier: core.TierFast})
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusBlocked, rep.Status)
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	require.Len(t, lines, 2, string(b))
-	name := strings.Fields(lines[0])[5] // run --rm --pull never --name <name>
+	name := strings.Fields(lines[0])[6] // run --rm --init --pull never --name <name>
 	assert.Equal(t, "rm -f "+name, lines[1])
 }
 

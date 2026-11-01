@@ -29,7 +29,7 @@ func init() {
 		var root string
 		c := &cobra.Command{
 			Use:   "mcp",
-			Short: "Serve triage, affected, research and status as read-only MCP tools over stdio",
+			Short: "Serve triage, research and status as read-only MCP tools over stdio",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				return mcp.NewServer(root, runSelf).Run(cmd.Context(), &sdk.StdioTransport{})

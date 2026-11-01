@@ -76,6 +76,33 @@ func TestResolveClampsToPartialCeilings(t *testing.T) {
 	assert.Equal(t, hex.EncodeToString(sum[:]), ep.CeilingSHA)
 }
 
+func TestResolveProjectRuntimesMergeIsUnionAndNilAbsorbs(t *testing.T) {
+	project := core.StrictDefaults()
+	project.Project.Runtimes = []string{"codex"}
+	ceil := func(rts ...string) *core.Layer {
+		p := core.Policy{}
+		p.Project.Runtimes = rts
+		return layer(p)
+	}
+	for _, c := range []struct {
+		name    string
+		project []string
+		ceiling *core.Layer
+		want    []string
+	}{
+		{"union", []string{"codex"}, ceil("claude"), []string{"codex", "claude"}},
+		{"ceiling without field leaves list", []string{"codex"}, ceil(), []string{"codex"}},
+		{"nil project absorbs", nil, ceil("claude"), nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			project.Project.Runtimes = c.project
+			ep, err := New().Resolve(context.Background(), core.PolicyLayers{User: c.ceiling, DefaultBranch: layer(project)})
+			require.NoError(t, err)
+			assert.Equal(t, c.want, ep.Policy.Project.Runtimes)
+		})
+	}
+}
+
 func TestResolveEnterpriseByRuntimeBeatsUser(t *testing.T) {
 	ent, err := LoadCeiling([]byte("models:\n  by_runtime: {claude: {FAST: [ent-model]}}\n"))
 	require.NoError(t, err)

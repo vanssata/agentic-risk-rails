@@ -1,5 +1,11 @@
 package core
 
+// AlwaysDeniedCommands are rr commands an agent must never run, whatever the
+// policy says: they open, widen or close a task as the human (errata #18–#26:
+// close is host-only and human/runner-started). Patterns match like
+// commands.deny (wrappers such as env and sh -c are unwrapped first).
+var AlwaysDeniedCommands = []string{"rr task*"}
+
 // AlwaysProtected are paths no policy can unprotect: rr's own control files,
 // runtime hook configs and git internals an agent could use to disable or
 // re-point enforcement. Guard denies agent writes to them and generators add

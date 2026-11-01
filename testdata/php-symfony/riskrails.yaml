@@ -4,6 +4,7 @@ project:
   name: shop-backend
   stack: [php, symfony, doctrine, phpunit]
   default_branch: main             # политиката „в сила“ се чете оттук (§3.4)
+  # runtimes: [claude, codex]      # (errata #43) липсва = всички; премахване на runtime = LOOSEN
 
 risk:
   axes:                            # 0..2 всяка; измерените са под, декларацията само вдига

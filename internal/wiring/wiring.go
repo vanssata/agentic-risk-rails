@@ -1,9 +1,7 @@
 // Package wiring holds the injection points that connect modules built in
 // parallel. Defaults are strict stand-ins; the orchestrator replaces them with
-// real implementations between waves (and W4-A owns the final wiring).
-//
-// Not yet defined (deferred to W3-A/W4-A): where a hook process learns the
-// current task, Level and StepFiles. Until then: no task, L1, scope guard off.
+// real implementations (cmd/rr/wire.go replaces GuardContext with the
+// flow-aware one that learns the task in flight, Level and StepFiles).
 package wiring
 
 import (

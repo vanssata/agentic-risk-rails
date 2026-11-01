@@ -36,6 +36,9 @@ type ProjectSpec struct {
 	Name          string   `yaml:"name" json:"name"`
 	Stack         []string `yaml:"stack" json:"stack"`
 	DefaultBranch string   `yaml:"default_branch" json:"default_branch"`
+	// Runtimes limits which runtime adapters' generators rr sync renders.
+	// nil (absent) = every registered runtime. Dropping a runtime is LOOSEN.
+	Runtimes []string `yaml:"runtimes,omitempty" json:"runtimes,omitempty"`
 }
 
 type RiskSpec struct {

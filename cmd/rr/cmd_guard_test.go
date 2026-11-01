@@ -52,6 +52,7 @@ func exitCode(err error) int {
 }
 
 func TestGuardRuntime(t *testing.T) {
+	denRT.Rendered = nil // package-level fake: keep -count>1 independent
 	out, err := runGuard(t, "{}", "--runtime", "guardtest-ok", "--event", "PreToolUse")
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(out, "allow"), out)

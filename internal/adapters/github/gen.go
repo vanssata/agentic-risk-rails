@@ -25,8 +25,9 @@ const (
 	codeownersPath = ".github/CODEOWNERS"
 	rulesetPath    = ".github/rulesets/default-branch.json"
 
-	// rrVersion is the rr release the workflows install; refreshed on release (GAP).
-	rrVersion = "v4.0.0"
+	// rrVersion is the rr release the workflows install. The module path has no
+	// /vN suffix, so the version must stay v0.x/v1.x (Go rejects v2+ without it).
+	rrVersion = "v0.4.0"
 	// goVersion is the toolchain the workflows build rr with (the go.mod version at release).
 	goVersion = "1.27.3"
 	// Action pins [V]: gh api repos/actions/<name>/commits/<tag> (docs:
@@ -107,7 +108,10 @@ func (gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ Check, Branch, RR, Checkout, SetupGo, GoVersion string }{hosting.PolicyCheck, branch, rrVersion, checkoutSHA, setupGoSHA, goVersion}
+	data := struct {
+		Check, Branch, RR, Checkout, SetupGo, GoVersion string
+		Nightly                                         bool
+	}{hosting.PolicyCheck, branch, rrVersion, checkoutSHA, setupGoSHA, goVersion, p.Verify.NightlyFull != nil && *p.Verify.NightlyFull}
 	verify, err := render("rr-verify.yml.tmpl", data)
 	if err != nil {
 		return nil, err

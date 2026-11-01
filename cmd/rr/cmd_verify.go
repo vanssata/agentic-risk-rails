@@ -55,7 +55,7 @@ func init() {
 	cli.Register(func() *cobra.Command {
 		var f verifyFlags
 		var task string
-		var closing bool
+		var closing, full bool
 		c := &cobra.Command{
 			Use:   "verify",
 			Short: "Run the tests for the task's changes (affected, or full when policy requires)",
@@ -63,6 +63,25 @@ func init() {
 				spec, err := f.spec(cmd.Context())
 				if err != nil {
 					return err
+				}
+				if full != (task == "") {
+					return errors.New("give exactly one of --task <id> or --full")
+				}
+				if full { // CI on a clean checkout: the whole suite, no task journal
+					rep, err := verify.Run(cmd.Context(), verify.Input{
+						Root: f.root, Spec: spec, Mode: core.ModeFull, Closing: true, Actor: core.ActorCI,
+						Tree: func(ctx context.Context) (string, error) { return verify.TreeFingerprint(ctx, f.root) },
+					})
+					if err != nil {
+						return err
+					}
+					if err := printJSON(cmd, rep); err != nil {
+						return err
+					}
+					if !rep.Passed {
+						return errors.New("verify failed")
+					}
+					return nil
 				}
 				events, trust, err := taskTrust(cmd.Context(), f.root, task)
 				if err != nil {
@@ -96,7 +115,7 @@ func init() {
 		f.bind(c)
 		c.PersistentFlags().StringVar(&task, "task", "", "task id (journal)")
 		c.Flags().BoolVar(&closing, "close", false, "closing run: always full (advisory when started by an agent: only the host run counts for close)")
-		_ = c.MarkPersistentFlagRequired("task")
+		c.Flags().BoolVar(&full, "full", false, "whole suite without a task (CI); never counts for a task's close")
 
 		// facts takes every trust input (scope, base_sha, baseline) from the task journal only.
 		facts := &cobra.Command{

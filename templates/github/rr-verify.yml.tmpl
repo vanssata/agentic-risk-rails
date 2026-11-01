@@ -2,6 +2,10 @@
 name: rr-verify
 on:
   pull_request:
+{{- if .Nightly}}
+  schedule:
+    - cron: "17 2 * * *"
+{{- end}}
 permissions:
   contents: read
 jobs:
@@ -15,4 +19,4 @@ jobs:
       - run: go install github.com/vanssata/agentic-risk-rails/cmd/rr@{{.RR}}
         working-directory: ${{"{{"}} runner.temp {{"}}"}}
       - run: rr sync --check
-      - run: rr verify
+      - run: rr verify --full

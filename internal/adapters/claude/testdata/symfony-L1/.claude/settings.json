@@ -52,7 +52,8 @@
       "Bash(php bin/phpunit*)",
       "Bash(php bin/console cache:clear)",
       "Bash(git status)",
-      "Bash(git diff*)"
+      "Bash(git diff*)",
+      "mcp__rr__*"
     ]
   },
   "hooks": {
@@ -114,5 +115,8 @@
         "/home/test/.cache/riskrails/**"
       ]
     }
-  }
+  },
+  "enabledMcpjsonServers": [
+    "rr"
+  ]
 }

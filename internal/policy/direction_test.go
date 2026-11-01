@@ -39,6 +39,8 @@ func (c strictCase) policies() (base, strict core.Policy) {
 }
 
 var strictCases = []strictCase{
+	{path: "project.runtimes", prep: func(p *core.Policy) { p.Project.Runtimes = []string{"claude"} },
+		strict: func(p *core.Policy) { p.Project.Runtimes = []string{"claude", "codex"} }},
 	{path: "risk.axes.*.declared", strict: func(p *core.Policy) {
 		s := p.Risk.Axes[core.AxisScope]
 		s.Declared = ptr(true)
@@ -169,6 +171,28 @@ func TestDiffStrictCasesBothDirections(t *testing.T) {
 				}
 				assert.Regexp(t, pathRegexp(c.path), x.Path)
 			}
+		})
+	}
+}
+
+func TestProjectRuntimesNilIsAllIsStrictest(t *testing.T) {
+	nilP, one, none := core.StrictDefaults(), core.StrictDefaults(), core.StrictDefaults()
+	one.Project.Runtimes = []string{"claude"}
+	none.Project.Runtimes = []string{}
+	for _, c := range []struct {
+		name     string
+		from, to core.Policy
+		want     core.Direction
+	}{
+		{"nil to list loosens", nilP, one, core.Loosen},
+		{"list to nil tightens", one, nilP, core.Tighten},
+		{"list to empty loosens", one, none, core.Loosen},
+		{"nil to nil equal", nilP, nilP, core.Equal},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d, ch, err := Diff(c.from, c.to, treeFiles)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, d, "%v", ch)
 		})
 	}
 }

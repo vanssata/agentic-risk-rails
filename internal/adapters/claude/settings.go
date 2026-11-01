@@ -15,6 +15,8 @@ type settingsDoc struct {
 	Permissions permissionsDoc `json:"permissions"`
 	Hooks       hooksDoc       `json:"hooks"`
 	Sandbox     sandboxDoc     `json:"sandbox"`
+	// EnabledMCPServers pre-approves the project .mcp.json entry for rr mcp.
+	EnabledMCPServers []string `json:"enabledMcpjsonServers"`
 }
 
 type permissionsDoc struct {
@@ -97,7 +99,7 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 		Permissions: permissionsDoc{
 			Deny:  dedupe(deny),
 			Ask:   dedupe(ask),
-			Allow: dedupe(wrap("Bash", e.Commands.Allow)),
+			Allow: dedupe(append(wrap("Bash", e.Commands.Allow), "mcp__"+mcpServer+"__*")),
 		},
 		Hooks: hooksDoc{PreToolUse: []hookGroup{{
 			Matcher: "*",
@@ -106,7 +108,8 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 				Timeout: hookTimeoutSeconds, OnFailure: "block",
 			}},
 		}}},
-		Sandbox: sandboxDoc{Enabled: true, FailIfUnavailable: required, Filesystem: fs},
+		Sandbox:           sandboxDoc{Enabled: true, FailIfUnavailable: required, Filesystem: fs},
+		EnabledMCPServers: []string{mcpServer},
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

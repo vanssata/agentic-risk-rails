@@ -24,9 +24,7 @@ func Register(a core.RuntimeAdapter) {
 		panic(fmt.Sprintf("runtimes: %q registered twice", a.Name()))
 	}
 	reg[a.Name()] = a
-	for _, g := range a.Generators() {
-		rrsync.Register(g)
-	}
+	rrsync.RegisterRuntime(a.Name(), a.Generators()...)
 }
 
 func Lookup(name string) (core.RuntimeAdapter, bool) {

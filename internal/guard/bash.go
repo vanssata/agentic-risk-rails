@@ -67,6 +67,9 @@ func text(argv []word) string {
 // `cmd*` never extends the word `cmd` itself.
 func checkCommand(c cmd, e core.EnforcementSpec, gc core.GuardContext) core.Verdict {
 	for _, f := range c.forms {
+		if pat, bad := alwaysDenied(f, c.xargs); bad {
+			return core.Verdict{Decision: core.Deny, Reason: "rr task commands are for the human or the runner: " + text(f), Rule: "core.AlwaysDeniedCommands: " + pat}
+		}
 		for _, pat := range e.Commands.Deny {
 			if matchCommand(pat, f, false) {
 				return core.Verdict{Decision: core.Deny, Reason: "command denied: " + text(f), Rule: "enforcement.commands.deny: " + pat}
@@ -161,6 +164,9 @@ func checkArgs(r *result, c cmd, call core.ToolCall, e core.EnforcementSpec, gc 
 	for _, w := range writes {
 		r.add(pathArg(w, pathWrite, dirs, call, gc))
 	}
+	for _, w := range outW {
+		r.add(pathArg(w, pathEither, dirs, call, gc)) // an output file is also a path: secrets stay denied
+	}
 	for _, w := range reads {
 		if !w.dyn && strings.ContainsAny(w.s, " \t") {
 			continue // prose such as a commit message, not a path
@@ -202,16 +208,28 @@ func splitArgs(argv []word, call core.ToolCall, gc core.GuardContext) (outW, fla
 		switch {
 		case eq && v != "":
 			flagVals = append(flagVals, val(v))
-		case short && len(w.s) > 2 && w.s[1] == 'o' && shortOutput[argv[0].s]:
-			outW = append(outW, val(w.s[2:]))
-		case w.s == "-o" && shortOutput[argv[0].s] && i+1 < len(argv):
-			outW = append(outW, argv[i+1])
-			i++
-		case !short && !eq && i+1 < len(argv) && !strings.HasPrefix(argv[i+1].s, "-") && !argv[i+1].dyn && pathLike(argv[i+1].s, call, gc):
-			flagVals = append(flagVals, argv[i+1])
+			if outputFlag(w.s[:len(w.s)-len(v)-1], v, argv, call, gc) {
+				outW = append(outW, val(v))
+			}
+		case short && w.s[1] == 'o' && shortOutputOf(argv) && (len(w.s) > 2 || i+1 < len(argv)):
+			if len(w.s) > 2 {
+				outW = append(outW, val(w.s[2:]))
+			} else {
+				outW = append(outW, argv[i+1])
+				i++
+			}
+		case !short && !eq && i+1 < len(argv) && !strings.HasPrefix(argv[i+1].s, "-"):
+			next := argv[i+1]
+			switch {
+			case outputFlag(w.s, next.s, argv, call, gc):
+				outW = append(outW, next)
+				i++
+			case !next.dyn && pathLike(next.s, call, gc):
+				flagVals = append(flagVals, next)
+			}
 		}
 	}
-	return
+	return outW, flagVals, pos
 }
 
 // checkPush denies pushes that target the default branch or force with "+".

@@ -25,7 +25,7 @@ func init() { runtimes.Register(Adapter{}) }
 func (Adapter) Name() string { return Name }
 
 func (Adapter) Generators() []core.Generator {
-	return []core.Generator{settingsGen{}, agentsGen{}}
+	return []core.Generator{settingsGen{}, agentsGen{}, mcpGen{}}
 }
 
 type hookOutput struct {

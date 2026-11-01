@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 )
 
 // Marker in a file excludes it from the simplify pass.
@@ -56,46 +58,20 @@ func Run(ctx context.Context, root string, files []string) Report {
 
 // hostCmd finds name only in safePath(root) and gives it an allowlisted environment.
 func hostCmd(ctx context.Context, root, name string, args ...string) (*exec.Cmd, bool) {
-	dirs := safePath(root)
-	for _, d := range dirs {
-		p := filepath.Join(d, name)
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
-			c := exec.CommandContext(ctx, p, args...)
-			c.Dir = root
-			c.Env = []string{"PATH=" + strings.Join(dirs, string(filepath.ListSeparator))}
-			for _, k := range []string{"HOME", "LANG", "TMPDIR"} {
-				if v, ok := os.LookupEnv(k); ok {
-					c.Env = append(c.Env, k+"="+v)
-				}
-			}
-			return c, true
+	dirs := hostexec.SafePath(root)
+	p, found := hostexec.Lookup(dirs, name)
+	if !found {
+		return nil, false
+	}
+	c := exec.CommandContext(ctx, p, args...)
+	c.Dir = root
+	c.Env = []string{"PATH=" + strings.Join(dirs, string(filepath.ListSeparator))}
+	for _, k := range []string{"HOME", "LANG", "TMPDIR"} {
+		if v, ok := os.LookupEnv(k); ok {
+			c.Env = append(c.Env, k+"="+v)
 		}
 	}
-	return nil, false
-}
-
-// safePath is PATH reduced to absolute directories outside root.
-// same rule as verify.safePath; dedup in wave 4
-func safePath(root string) []string {
-	evalRoot := evalOr(root)
-	var dirs []string
-	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
-		if !filepath.IsAbs(d) {
-			continue
-		}
-		rel, err := filepath.Rel(evalRoot, evalOr(d))
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
-func evalOr(p string) string {
-	if e, err := filepath.EvalSymlinks(p); err == nil {
-		return e
-	}
-	return p
+	return c, true
 }
 
 func skipped(name, why string) ToolReport {

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +42,35 @@ func TestGolden(t *testing.T) {
 	require.Len(t, files, 4)
 	for _, f := range files {
 		testutil.Golden(t, filepath.ToSlash(f.Path), f.Content)
+	}
+}
+
+func TestRRVersionIsInstallable(t *testing.T) {
+	mod, err := os.ReadFile("../../../go.mod")
+	require.NoError(t, err)
+	m := regexp.MustCompile(`(?m)^module\s+(\S+)`).FindSubmatch(mod)
+	require.NotNil(t, m)
+	major := regexp.MustCompile(`^v(\d+)\.\d+\.\d+$`).FindStringSubmatch(rrVersion)
+	require.NotNil(t, major, "rrVersion must be vMAJOR.MINOR.PATCH")
+	if major[1] != "0" && major[1] != "1" {
+		assert.Regexp(t, `/v`+major[1]+`$`, string(m[1]), "v2+ needs a /vN module path suffix")
+	}
+	files, err := gen{}.Render(context.Background(), input(t, t.TempDir()))
+	require.NoError(t, err)
+	for _, f := range files[2:] {
+		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.0\n")
+	}
+}
+
+func TestNightlySchedule(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		in := input(t, t.TempDir())
+		in.Policy.Policy.Verify.NightlyFull = &on
+		files, err := gen{}.Render(context.Background(), in)
+		require.NoError(t, err)
+		v := string(files[2].Content)
+		assert.Equal(t, on, strings.Contains(v, "schedule:"))
+		assert.Contains(t, v, "rr verify --full\n", "PR and nightly runs: the whole suite, no task")
 	}
 }
 

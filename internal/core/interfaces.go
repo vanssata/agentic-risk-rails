@@ -324,9 +324,18 @@ type PullRequest struct {
 var ErrNotFound = errors.New("not found")
 
 // Hosting is read through the API from outside the agent sandbox.
+//
+//   - OpenDraftPR applies labels to the new PR; an error applying them is an error.
+//   - Push pushes refs/heads/<branch> of the local repository at root to the
+//     hosted repository with the hosting credentials (never available to the
+//     agent). It refuses any branch outside rr/* and never force-pushes.
+//   - BranchSHA returns the tip commit of branch on the hosted repository;
+//     ErrNotFound if the branch does not exist.
 type Hosting interface {
 	ReadFile(ctx context.Context, ref, path string) ([]byte, error)
-	OpenDraftPR(ctx context.Context, head, base, title, body string) (PullRequest, error)
+	OpenDraftPR(ctx context.Context, head, base, title, body string, labels []string) (PullRequest, error)
+	Push(ctx context.Context, root, branch string) error
+	BranchSHA(ctx context.Context, branch string) (string, error)
 	PullRequest(ctx context.Context, n int) (PullRequest, error)
 	Reviews(ctx context.Context, pr int) ([]Review, error)
 	IsTeamMember(ctx context.Context, team, login string) (bool, error)

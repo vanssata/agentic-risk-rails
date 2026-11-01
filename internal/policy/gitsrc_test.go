@@ -55,6 +55,24 @@ func TestInForceFollowsOriginHEAD(t *testing.T) {
 	assert.Equal(t, "git:origin/trunk:riskrails.yaml", l.Source)
 }
 
+func TestDefaultRefForPrefersConfiguredBranch(t *testing.T) {
+	root := testutil.GitRepo(t, map[string]string{"riskrails.yaml": "project: {default_branch: trunk}\n"})
+	ctx := context.Background()
+	run(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	run(t, root, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+	ref, ok := DefaultRefFor(ctx, root, "trunk")
+	assert.True(t, ok)
+	assert.Equal(t, "refs/remotes/origin/trunk", ref)
+	ref, _ = DefaultRefFor(ctx, root, "")
+	assert.Equal(t, "refs/remotes/origin/main", ref)
+	ref, _ = DefaultRefFor(ctx, root, "absent")
+	assert.Equal(t, "refs/remotes/origin/main", ref, "unknown configured branch falls back")
+
+	l, err := InForce(ctx, root)
+	require.NoError(t, err)
+	assert.Equal(t, "git:origin/trunk:riskrails.yaml", l.Source)
+}
+
 func TestInForceAbsentFileIsStrictDefaults(t *testing.T) {
 	root := testutil.GitRepo(t, map[string]string{"README.md": "x"})
 	l, err := InForce(context.Background(), root)
