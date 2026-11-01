@@ -1,7 +1,6 @@
 package verify
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,37 +9,21 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/vanssata/agentic-risk-rails/internal/gitx"
 	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
-// vcs runs the version-control binary the way every rr call must (errata #16):
-// hardened config, no inherited GIT_* variables, no global/system config.
+// vcs runs hardened git (internal/gitx, errata #16) in root.
 func vcs(ctx context.Context, root string, args ...string) (string, error) {
-	hard := []string{
-		"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
-		"-c", "core.sshCommand=false", "-c", "core.askPass=false", "-c", "core.alternateRefsCommand=",
-		"-c", "core.untrackedCache=false", "-c", "core.attributesFile=/dev/null",
-		"-c", "protocol.allow=never", "-c", "credential.helper=", "-c", "diff.external=", "--no-pager",
+	out, err := gitx.Run(ctx, "", append([]string{"-C", root}, args...)...)
+	if err != nil {
+		return "", fmt.Errorf("verify: %w", err)
 	}
-	c := exec.CommandContext(ctx, "git", append(hard, args...)...)
-	c.Dir = root
-	c.Env = []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C"}
-	for _, k := range []string{"PATH", "HOME", "TMPDIR", "SYSTEMROOT"} {
-		if v, ok := os.LookupEnv(k); ok {
-			c.Env = append(c.Env, k+"="+v)
-		}
-	}
-	var out, stderr bytes.Buffer
-	c.Stdout, c.Stderr = &out, &stderr
-	if err := c.Run(); err != nil {
-		return "", fmt.Errorf("verify: vcs %s: %w: %s", args[0], err, stderr.String())
-	}
-	return out.String(), nil
+	return string(out), nil
 }
 
 func nul(s string) []string {
