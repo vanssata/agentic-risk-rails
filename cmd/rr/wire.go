@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/flow"
 	"github.com/vanssata/agentic-risk-rails/internal/models"
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
@@ -54,11 +55,20 @@ func resolve(ctx context.Context, root string) (resolved, error) {
 	if err != nil {
 		return resolved{}, err
 	}
-	inForce, err := policy.InForce(ctx, abs)
+	// The runner's container gets the default branch's policy from the Hosting API
+	// (RR_POLICY_IN_FORCE); there it replaces the local, agent-writable git refs.
+	inForce, err := flow.InForceFromEnv(abs, os.LookupEnv)
 	if err != nil {
 		return resolved{}, err
 	}
-	layers := core.PolicyLayers{Enterprise: ent, User: user, DefaultBranch: &inForce}
+	if inForce == nil {
+		l, err := policy.InForce(ctx, abs)
+		if err != nil {
+			return resolved{}, err
+		}
+		inForce = &l
+	}
+	layers := core.PolicyLayers{Enterprise: ent, User: user, DefaultBranch: inForce}
 
 	wt := filepath.Join(abs, "riskrails.yaml")
 	if b, err := os.ReadFile(wt); err == nil {
@@ -103,11 +113,27 @@ func guardContext(ctx context.Context, root, runtime string) (core.GuardContext,
 	if err != nil {
 		return core.GuardContext{}, err
 	}
-	return core.GuardContext{
+	gc := core.GuardContext{
 		Policy: r.eff, Level: r.level, Root: r.root, Home: r.home,
 		RepoFiles: r.files, Loader: r.svc, Differ: r.svc,
 		Tiers: models.ForSync(ctx, r.eff.Policy.Models, r.root)[runtime],
-	}, nil
+	}
+	// A task in flight brings its level and arms the scope guard. Every error here is a deny.
+	h, ok, err := flow.TaskHook(ctx, r.root, r.files)
+	if err != nil {
+		return core.GuardContext{}, err
+	}
+	if ok {
+		gc.Level, gc.StepFiles = h.Level, h.StepFiles
+	}
+	// The runner's environment can only tighten.
+	if gc.Level, err = flow.TightenLevel(gc.Level, os.LookupEnv); err != nil {
+		return core.GuardContext{}, err
+	}
+	if err := flow.CheckHalt(os.LookupEnv); err != nil {
+		return core.GuardContext{}, err
+	}
+	return gc, nil
 }
 
 func syncInput(ctx context.Context, root string) (core.SyncInput, error) {
