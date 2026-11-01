@@ -69,17 +69,39 @@ func TestHumanApprovedUserOwnerAndErrors(t *testing.T) {
 	assert.False(t, ok, "no code owners ⇒ nobody can approve")
 }
 
-func TestOwnersAndBots(t *testing.T) {
-	co := []byte("# c\n* @acme/all\nriskrails.yaml @acme/owners\n/riskrails.yaml @acme/last # x\nsrc/ @bot-user\n")
-	assert.Equal(t, []string{"@acme/last"}, Owners(co, "riskrails.yaml"))
-	assert.Nil(t, Owners([]byte("src/ @x\n"), "riskrails.yaml"))
-	assert.Empty(t, BotOwners(co))
+func TestOwners(t *testing.T) {
+	tests := []struct {
+		name, file string
+		want       []string
+		err        bool
+	}{
+		{"exact then comment", "# c\n* @acme/all\nriskrails.yaml @acme/owners\n/riskrails.yaml @acme/last # x\n", []string{"@acme/last"}, false},
+		{"later wildcard wins", "riskrails.yaml @acme/owners\n*.yaml @other\n", []string{"@other"}, false},
+		{"later root star wins", "riskrails.yaml @acme/owners\n/* @root\n", []string{"@root"}, false},
+		{"anchored dir does not match", "riskrails.yaml @acme/owners\n/src/ @other\n", []string{"@acme/owners"}, false},
+		{"doublestar", "riskrails.yaml @a\n**/*.yaml @b\n", []string{"@b"}, false},
+		{"other path", "sub/riskrails.yaml @a\n", nil, false},
+		{"no match", "src/ @x\n", nil, false},
+		{"negation", "* @a\n!riskrails.yaml @b\n", nil, true},
+		{"range", "[ab].yaml @a\n", nil, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Owners([]byte(tc.file), "riskrails.yaml")
+			assert.Equal(t, tc.err, err != nil)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestBotOwners(t *testing.T) {
+	assert.Empty(t, BotOwners([]byte("riskrails.yaml @acme/owners\n")))
 	assert.Equal(t, []string{"@rr-app[bot]", "@apps/rr"}, BotOwners([]byte("riskrails.yaml @acme/o @rr-app[bot]\nx @apps/rr\n")))
 }
 
 func TestMissingRules(t *testing.T) {
 	good := `[{"type":"pull_request","parameters":{"require_code_owner_review":true,"dismiss_stale_reviews_on_push":true,"require_last_push_approval":true,"required_approving_review_count":1}},
-	{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"rr-policy-check"}]}}]`
+	{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"rr-policy-check","integration_id":15368}]}}]`
 	m, err := MissingRules([]byte(good), "rr-policy-check")
 	require.NoError(t, err)
 	assert.Empty(t, m)
@@ -91,7 +113,12 @@ func TestMissingRules(t *testing.T) {
 	weak := `[{"type":"pull_request","parameters":{"require_code_owner_review":true,"required_approving_review_count":0}}]`
 	m, err = MissingRules([]byte(weak), "rr-policy-check")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"dismiss_stale_reviews_on_push", "require_last_push_approval", "required_approving_review_count>=1", "required_status_check rr-policy-check"}, m)
+	assert.Equal(t, []string{"dismiss_stale_reviews_on_push", "require_last_push_approval", "required_approving_review_count>=1", "required_status_check rr-policy-check from integration 15368"}, m)
+
+	wrongApp := `[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"rr-policy-check","integration_id":1}]}}]`
+	m, err = MissingRules([]byte(wrongApp), "rr-policy-check")
+	require.NoError(t, err)
+	assert.Contains(t, m, "required_status_check rr-policy-check from integration 15368")
 
 	_, err = MissingRules([]byte(`{`), "x")
 	assert.Error(t, err)

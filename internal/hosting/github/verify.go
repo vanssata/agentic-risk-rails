@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 )
@@ -15,22 +18,53 @@ import (
 // generated rr-policy-check workflow.
 const PolicyCheck = "rr-policy-check"
 
-// Owners returns the owners of path in a CODEOWNERS file (last matching line
-// wins). Only exact path and "*" patterns are understood; no match ⇒ nil.
-func Owners(codeowners []byte, path string) []string {
+// ActionsAppID is the GitHub Actions app; pinning it stops another app or a
+// plain status from satisfying the check. [V] https://api.github.com/apps/github-actions
+const ActionsAppID = 15368
+
+// Owners returns the owners of path in a CODEOWNERS file, last matching line
+// wins. Supported patterns: leading "/", "*", "**", a trailing "/" for a
+// directory. Any line GitHub would skip or interpret differently (negation
+// "!", ranges "[ ]", escapes) is an error: what cannot be evaluated is red.
+func Owners(codeowners []byte, path string) ([]string, error) {
 	var owners []string
 	sc := bufio.NewScanner(bytes.NewReader(codeowners))
 	for sc.Scan() {
 		line, _, _ := strings.Cut(sc.Text(), "#")
 		f := strings.Fields(line)
-		if len(f) < 2 {
+		if len(f) == 0 {
 			continue
 		}
-		if p := strings.TrimPrefix(f[0], "/"); p == path || p == "*" {
-			owners = f[1:]
+		ok, err := matches(f[0], path)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			owners = f[1:] // a pattern with no owner clears ownership
 		}
 	}
-	return owners
+	return owners, nil
+}
+
+func matches(pat, path string) (bool, error) {
+	if strings.HasPrefix(pat, "!") || strings.ContainsAny(pat, "[]\\") {
+		return false, fmt.Errorf("github: unsupported CODEOWNERS pattern %q", pat)
+	}
+	dir := strings.HasSuffix(pat, "/")
+	pat = strings.TrimSuffix(pat, "/")
+	if !strings.HasPrefix(pat, "/") && !strings.Contains(pat, "/") {
+		pat = "**/" + pat // gitignore: a slash-free pattern matches at any depth
+	}
+	pat = strings.TrimPrefix(pat, "/")
+	if !dir {
+		if ok, err := doublestar.Match(pat, path); err != nil || ok {
+			return ok, err
+		}
+	}
+	if dir || !strings.Contains(pat, "*") { // a directory owns its contents
+		return doublestar.Match(pat+"/**", path)
+	}
+	return false, nil
 }
 
 // BotOwners lists owners in CODEOWNERS that are bot identities. The runner's
@@ -102,7 +136,8 @@ func MissingRules(raw json.RawMessage, check string) ([]string, error) {
 			LastPush     bool `json:"require_last_push_approval"`
 			Approvals    int  `json:"required_approving_review_count"`
 			StatusChecks []struct {
-				Context string `json:"context"`
+				Context       string `json:"context"`
+				IntegrationID int    `json:"integration_id"`
 			} `json:"required_status_checks"`
 		} `json:"parameters"`
 	}
@@ -119,7 +154,7 @@ func MissingRules(raw json.RawMessage, check string) ([]string, error) {
 			count = count || p.Approvals >= 1
 		case "required_status_checks":
 			for _, s := range p.StatusChecks {
-				status = status || s.Context == check
+				status = status || (s.Context == check && s.IntegrationID == ActionsAppID)
 			}
 		}
 	}
@@ -133,7 +168,7 @@ func MissingRules(raw json.RawMessage, check string) ([]string, error) {
 		{stale, "dismiss_stale_reviews_on_push"},
 		{last, "require_last_push_approval"},
 		{count, "required_approving_review_count>=1"},
-		{status, "required_status_check " + check},
+		{status, "required_status_check " + check + " from integration " + strconv.Itoa(ActionsAppID)},
 	} {
 		if !c.ok {
 			missing = append(missing, c.name)

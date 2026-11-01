@@ -2,8 +2,7 @@
 # riskrails.yaml line: it is kept on regeneration and decides who may approve
 # a policy loosening (rr policy check).
 riskrails.yaml @acme/code-owners
-.github/CODEOWNERS @acme/code-owners
-.github/rulesets/default-branch.json @acme/code-owners
+/.github/ @acme/code-owners
 .env* @acme/code-owners
 config/secrets/** @acme/code-owners
 .github/workflows/** @acme/code-owners

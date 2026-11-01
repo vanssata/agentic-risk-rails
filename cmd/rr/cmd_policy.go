@@ -126,7 +126,11 @@ func init() {
 					if err != nil {
 						return err
 					}
-					ok, err := loosenApproved(cmd.Context(), h, cf.base, prNumber(cf.pr), cmd.OutOrStdout())
+					heads, err := localHeads(cmd.Context(), cf.root)
+					if err != nil {
+						return err
+					}
+					ok, err := loosenApproved(cmd.Context(), h, cf.base, prNumber(cf.pr), heads, cmd.OutOrStdout())
 					if err != nil {
 						return err // an unverifiable approval is red
 					}

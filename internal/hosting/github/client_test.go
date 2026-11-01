@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,12 +41,18 @@ func server(t *testing.T) *Client {
 	})
 	mux.HandleFunc("/repos/acme/shop/rules/branches/main", serve("rules.json"))
 	mux.HandleFunc("/orgs/acme/teams/owners/memberships/bob", serve("membership.json"))
+	mux.HandleFunc("/orgs/acme/teams/owners/memberships/denied", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	mux.HandleFunc("/repos/acme/shop/rulesets/1", serve("ruleset.json"))
+	mux.HandleFunc("/repos/acme/shop/rulesets/2", serve("ruleset_nobypass.json"))
+	mux.HandleFunc("/repos/acme/shop/rulesets/3", serve("ruleset_bypass.json"))
 	mux.HandleFunc("/repos/acme/shop/contents/boom", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	c, err := New("acme/shop", "tok", srv.URL)
+	c, err := newAt("acme/shop", "tok", srv.URL)
 	require.NoError(t, err)
 	return c
 }
@@ -82,7 +90,7 @@ func TestReviewsPullTeamRules(t *testing.T) {
 
 	pr, err := c.PullRequest(ctx, 7)
 	require.NoError(t, err)
-	assert.Equal(t, core.PullRequest{Number: 7, Author: "alice", URL: "https://example.test/pull/7", HeadSHA: "abc123"}, pr)
+	assert.Equal(t, PR{core.PullRequest{Number: 7, Author: "alice", URL: "https://example.test/pull/7", HeadSHA: "abc123"}, "main"}, pr)
 
 	ok, err := c.IsTeamMember(ctx, "owners", "bob")
 	require.NoError(t, err)
@@ -90,6 +98,10 @@ func TestReviewsPullTeamRules(t *testing.T) {
 	ok, err = c.IsTeamMember(ctx, "acme/owners", "nobody")
 	require.NoError(t, err)
 	assert.False(t, ok, "404 = not a member")
+
+	_, err = c.IsTeamMember(ctx, "acme/owners", "denied")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "members:read")
 
 	raw, err := c.Rulesets(ctx, "main")
 	require.NoError(t, err)
@@ -113,4 +125,33 @@ func TestTokenFromEnv(t *testing.T) {
 	assert.Equal(t, "g", TokenFromEnv())
 	t.Setenv("RR_GITHUB_TOKEN", "r")
 	assert.Equal(t, "r", TokenFromEnv())
+}
+
+func TestNewRequiresHTTPS(t *testing.T) {
+	_, err := New("acme/shop", "tok", "http://evil.test")
+	assert.Error(t, err)
+	_, err = New("acme/shop", "tok", "https://ghe.example/api/v3")
+	assert.NoError(t, err)
+}
+
+func TestBypassActors(t *testing.T) {
+	c := server(t)
+	ctx := context.Background()
+	rules := func(id int) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`[{"type":"deletion","ruleset_id":%d,"ruleset_source_type":"Repository","ruleset_source":"acme/shop"}]`, id))
+	}
+	got, err := c.BypassActors(ctx, rules(1))
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	got, err = c.BypassActors(ctx, rules(3))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ruleset 3: RepositoryRole 5"}, got)
+
+	_, err = c.BypassActors(ctx, rules(2))
+	assert.ErrorContains(t, err, "bypass_actors not returned")
+	_, err = c.BypassActors(ctx, rules(9)) // 404
+	assert.Error(t, err)
+	_, err = c.BypassActors(ctx, json.RawMessage(`[{"type":"deletion"}]`))
+	assert.ErrorContains(t, err, "ruleset_id")
 }

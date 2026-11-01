@@ -25,4 +25,13 @@ Checked 2026-11-01 against docs.github.com. [V] = read on the page; [U] = not co
 - [U] `pull_request_review` events run on the merge ref; the status attaches to that run, not necessarily the PR head SHA. The `pull_request` run is re-triggered by the human via "Re-run".
 
 ## COST
-Policy check: 1 PR read + ceil(reviews/100) review pages + at most 1 membership call per distinct approver + 1 contents read. Sync remote: 1 call.
+Policy check: 1 PR read + ceil(reviews/100) review pages + at most 1 membership call per distinct approver + 1 contents read. Sync remote: 1 call for rules + 1 per distinct ruleset + 1 contents read.
+
+## ROUND 1 ADDITIONS
+- [V] GitHub Actions app id is 15368 (`gh api apps/github-actions` returns id 15368, slug github-actions; the docs page https://docs.github.com/en/rest/apps/apps#get-an-app documents the endpoint, not the value). `required_status_checks[].integration_id` is "the optional integration ID that this status check must originate from" (https://docs.github.com/en/rest/repos/rules). The generated ruleset and `MissingRules` pin it.
+- [V] `GET /repos/{o}/{r}/rulesets/{id}` returns `bypass_actors` only if the caller has write access to the ruleset (https://docs.github.com/en/rest/repos/rules). Field absent means unverifiable, so L>=2 is refused.
+- [U] `ruleset_id`, `ruleset_source_type`, `ruleset_source` on `rules/branches` items are not on the docs page (observed API behaviour); a rule without `ruleset_id` is a refusal. Org rulesets are read with `GET /orgs/{org}/rulesets/{id}` [U].
+- [V] Team membership needs org `members:read`, which the default GITHUB_TOKEN lacks, so the workflow uses `secrets.RR_GITHUB_TOKEN` (https://docs.github.com/en/rest/teams/members). 403 = token lacks the scope (error); 404 = not a member or team invisible (not a member, red).
+- [V] Action pins resolved with `gh api repos/actions/<name>/commits/<tag> --jq .sha` (https://docs.github.com/en/rest/commits/commits): actions/checkout v5 = fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09, actions/setup-go v6 = 924ae3a1cded613372ab5595356fb5720e22ba16.
+- [V] `pull_request_target` runs the workflow file from the base branch (https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows); checked-out PR code must never be executed there.
+- GAP: the rr version in the templates is a constant refreshed on release; an approval submitted after the check ran needs a re-run of the job.

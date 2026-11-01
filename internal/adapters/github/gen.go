@@ -23,6 +23,13 @@ func init() { rrsync.Register(gen{}) }
 const (
 	codeownersPath = ".github/CODEOWNERS"
 	rulesetPath    = ".github/rulesets/default-branch.json"
+
+	// rrVersion is the rr release the workflows install; refreshed on release (GAP).
+	rrVersion = "v4.0.0"
+	// Action pins [V]: gh api repos/actions/<name>/commits/<tag> (docs:
+	// https://docs.github.com/en/rest/commits/commits#get-a-commit).
+	checkoutSHA = "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" // actions/checkout v5
+	setupGoSHA  = "924ae3a1cded613372ab5595356fb5720e22ba16" // actions/setup-go v6
 )
 
 type gen struct{}
@@ -32,11 +39,15 @@ func (gen) Name() string { return "github" }
 // team returns the code-owner team: the one on the existing riskrails.yaml
 // line of CODEOWNERS (hand-edited, kept), else @<owner of ceiling remote>/code-owners.
 // core has no field for the team (CORE_CHANGE_REQUEST); OWNER marks an unset org.
-func team(in core.SyncInput) string {
+func team(in core.SyncInput) (string, error) {
 	if b, err := os.ReadFile(filepath.Join(in.Root, codeownersPath)); err == nil {
-		for _, o := range hosting.Owners(b, "riskrails.yaml") {
+		owners, err := hosting.Owners(b, "riskrails.yaml")
+		if err != nil {
+			return "", err
+		}
+		for _, o := range owners {
 			if strings.Contains(o, "/") {
-				return o
+				return o, nil
 			}
 		}
 	}
@@ -44,7 +55,7 @@ func team(in core.SyncInput) string {
 	if org == "" {
 		org = "OWNER"
 	}
-	return "@" + org + "/code-owners"
+	return "@" + org + "/code-owners", nil
 }
 
 func render(name string, data any) ([]byte, error) {
@@ -68,20 +79,26 @@ func (gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 
 	seen := map[string]bool{}
 	var paths []string
-	for _, s := range append([]string{"riskrails.yaml", codeownersPath, rulesetPath}, p.Enforcement.ProtectedPaths...) {
+	// "/.github/" is always owned: a PR must not be able to replace the
+	// policy-check workflow, CODEOWNERS or the ruleset without code-owner review.
+	for _, s := range append([]string{"riskrails.yaml", "/.github/"}, p.Enforcement.ProtectedPaths...) {
 		if !seen[s] && !strings.HasPrefix(s, "~") && !strings.Contains(s, "$") {
 			seen[s] = true
 			paths = append(paths, s)
 		}
 	}
-	owners, err := render("CODEOWNERS.tmpl", struct {
-		Team  string
-		Paths []string
-	}{team(in), paths})
+	tm, err := team(in)
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ Check, Branch string }{hosting.PolicyCheck, branch}
+	owners, err := render("CODEOWNERS.tmpl", struct {
+		Team  string
+		Paths []string
+	}{tm, paths})
+	if err != nil {
+		return nil, err
+	}
+	data := struct{ Check, Branch, RR, Checkout, SetupGo string }{hosting.PolicyCheck, branch, rrVersion, checkoutSHA, setupGoSHA}
 	verify, err := render("rr-verify.yml.tmpl", data)
 	if err != nil {
 		return nil, err
@@ -127,7 +144,7 @@ func ruleset() ([]byte, error) {
 			}},
 			{Type: "required_status_checks", Parameters: map[string]any{
 				"strict_required_status_checks_policy": true,
-				"required_status_checks":               []map[string]string{{"context": hosting.PolicyCheck}},
+				"required_status_checks":               []map[string]any{{"context": hosting.PolicyCheck, "integration_id": hosting.ActionsAppID}},
 			}},
 		},
 	}

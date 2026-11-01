@@ -32,7 +32,8 @@
       "parameters": {
         "required_status_checks": [
           {
-            "context": "rr-policy-check"
+            "context": "rr-policy-check",
+            "integration_id": 15368
           }
         ],
         "strict_required_status_checks_policy": true

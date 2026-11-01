@@ -35,8 +35,17 @@ func TokenFromEnv() string {
 	return os.Getenv("GITHUB_TOKEN")
 }
 
-// New binds a client to "owner/repo". baseURL "" means api.github.com.
+// New binds a client to "owner/repo". baseURL "" means api.github.com; any
+// other base must be https, or the token could be sent in clear text.
 func New(remote, token, baseURL string) (*Client, error) {
+	if baseURL != "" && !strings.HasPrefix(baseURL, "https://") {
+		return nil, fmt.Errorf("github: API base URL must be https")
+	}
+	return newAt(remote, token, baseURL)
+}
+
+// newAt is New without the scheme check; tests point it at httptest servers.
+func newAt(remote, token, baseURL string) (*Client, error) {
 	owner, repo, ok := strings.Cut(remote, "/")
 	if !ok || owner == "" || repo == "" || strings.Contains(repo, "/") {
 		return nil, fmt.Errorf("github: remote %q is not owner/repo", remote)
@@ -91,13 +100,19 @@ func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string
 	return toPR(pr), nil
 }
 
-// PullRequest reads one PR (author and head SHA for the policy check).
-func (c *Client) PullRequest(ctx context.Context, n int) (core.PullRequest, error) {
+// PR is a pull request with its base branch (CORE_CHANGE_REQUEST: Base in core.PullRequest).
+type PR struct {
+	core.PullRequest
+	Base string
+}
+
+// PullRequest reads one PR (author, head SHA and base branch for the policy check).
+func (c *Client) PullRequest(ctx context.Context, n int) (PR, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, c.owner, c.repo, n)
 	if err != nil {
-		return core.PullRequest{}, fmt.Errorf("github: PR %d: %w", n, err)
+		return PR{}, fmt.Errorf("github: PR %d: %w", n, err)
 	}
-	return toPR(pr), nil
+	return PR{toPR(pr), pr.GetBase().GetRef()}, nil
 }
 
 func toPR(pr *gh.PullRequest) core.PullRequest {
@@ -138,8 +153,11 @@ func (c *Client) IsTeamMember(ctx context.Context, team, login string) (bool, er
 	}
 	m, resp, err := c.gh.Teams.GetTeamMembershipBySlug(ctx, org, slug, login)
 	if err != nil {
-		if isStatus(resp, http.StatusNotFound) {
+		switch {
+		case isStatus(resp, http.StatusNotFound):
 			return false, nil
+		case isStatus(resp, http.StatusForbidden):
+			return false, fmt.Errorf("github: membership %s/%s: token lacks org members:read (use RR_GITHUB_TOKEN): %w", org, slug, err)
 		}
 		return false, fmt.Errorf("github: membership %s/%s %s: %w", org, slug, login, err)
 	}
@@ -160,4 +178,54 @@ func (c *Client) Rulesets(ctx context.Context, branch string) (json.RawMessage, 
 		return nil, errors.New("github: empty rules response")
 	}
 	return raw, nil
+}
+
+// BypassActors lists the bypass actors of every ruleset behind rules (the
+// output of Rulesets). A ruleset that cannot be read, or whose bypass_actors
+// are not returned (needs write access to the ruleset), is an error: bypass
+// that cannot be verified counts as present.
+func (c *Client) BypassActors(ctx context.Context, rules json.RawMessage) ([]string, error) {
+	var rs []struct {
+		ID     int    `json:"ruleset_id"`
+		Type   string `json:"ruleset_source_type"`
+		Source string `json:"ruleset_source"`
+	}
+	if err := json.Unmarshal(rules, &rs); err != nil {
+		return nil, fmt.Errorf("github: rules: %w", err)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range rs {
+		if r.ID == 0 {
+			return nil, errors.New("github: rule without ruleset_id, bypass cannot be verified")
+		}
+		path := fmt.Sprintf("repos/%s/%s/rulesets/%d", c.owner, c.repo, r.ID)
+		if r.Type == "Organization" {
+			path = fmt.Sprintf("orgs/%s/rulesets/%d", r.Source, r.ID)
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		req, err := c.gh.NewRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("github: %w", err)
+		}
+		var rs struct {
+			Bypass *[]struct {
+				ActorType string `json:"actor_type"`
+				ActorID   int    `json:"actor_id"`
+			} `json:"bypass_actors"`
+		}
+		if _, err := c.gh.Do(req, &rs); err != nil {
+			return nil, fmt.Errorf("github: ruleset %d: %w", r.ID, err)
+		}
+		if rs.Bypass == nil {
+			return nil, fmt.Errorf("github: ruleset %d: bypass_actors not returned (token needs write access to the ruleset)", r.ID)
+		}
+		for _, b := range *rs.Bypass {
+			out = append(out, fmt.Sprintf("ruleset %d: %s %d", r.ID, b.ActorType, b.ActorID))
+		}
+	}
+	return out, nil
 }
