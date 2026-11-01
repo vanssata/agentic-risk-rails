@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@{{.Checkout}} # v5
-        with: { persist-credentials: false }
+        with: { fetch-depth: 0, persist-credentials: false } # the policy in force is read from origin/<default branch>
       - uses: actions/setup-go@{{.SetupGo}} # v6
         with: { go-version: "{{.GoVersion}}" }
       - run: go install github.com/vanssata/agentic-risk-rails/cmd/rr@{{.RR}}

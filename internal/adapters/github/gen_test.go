@@ -58,7 +58,7 @@ func TestRRVersionIsInstallable(t *testing.T) {
 	files, err := gen{}.Render(context.Background(), input(t, t.TempDir()))
 	require.NoError(t, err)
 	for _, f := range files[2:] {
-		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.2\n")
+		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.3\n")
 	}
 }
 
@@ -71,6 +71,7 @@ func TestNightlySchedule(t *testing.T) {
 		v := string(files[2].Content)
 		assert.Equal(t, on, strings.Contains(v, "schedule:"))
 		assert.Contains(t, v, "rr verify --full\n", "PR and nightly runs: the whole suite, no task")
+		assert.Contains(t, v, "fetch-depth: 0", "a shallow checkout has no origin/<default branch>: sync --check would compare against strict defaults")
 	}
 }
 

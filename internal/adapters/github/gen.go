@@ -27,7 +27,7 @@ const (
 
 	// rrVersion is the rr release the workflows install. The module path has no
 	// /vN suffix, so the version must stay v0.x/v1.x (Go rejects v2+ without it).
-	rrVersion = "v0.4.2"
+	rrVersion = "v0.4.3"
 	// goVersion is the toolchain the workflows build rr with (the go.mod version at release).
 	goVersion = "1.27.3"
 	// Action pins [V]: gh api repos/actions/<name>/commits/<tag> (docs:
