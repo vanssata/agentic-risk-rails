@@ -20,6 +20,7 @@ import (
 type policyFlags struct {
 	base, file, root string
 	json             bool
+	pr               int
 }
 
 func (f *policyFlags) bind(c *cobra.Command) {
@@ -38,6 +39,9 @@ func (f *policyFlags) compare(ctx context.Context) (core.Direction, []core.Field
 		return core.Loosen, nil, err
 	}
 	cand := core.StrictDefaults() // a missing file is the strictest policy
+	if fi, lerr := os.Lstat(filepath.Join(f.root, f.file)); lerr == nil && !fi.Mode().IsRegular() {
+		return core.Loosen, nil, fmt.Errorf("%s: not a regular file", f.file)
+	}
 	raw, err := os.ReadFile(filepath.Join(f.root, f.file))
 	switch {
 	case err == nil:
@@ -116,12 +120,32 @@ func init() {
 					return err
 				}
 				if d.Loosens() {
-					return ExitError{Code: 1}
+					repo, err := remoteRepo()
+					if err != nil {
+						fmt.Fprintln(cmd.OutOrStdout(), err)
+						return ExitError{Code: 1}
+					}
+					h, err := newHosting(repo)
+					if err != nil {
+						return err
+					}
+					heads, err := localHeads(cmd.Context(), cf.root)
+					if err != nil {
+						return err
+					}
+					ok, err := loosenApproved(cmd.Context(), h, cf.base, prNumber(cf.pr), heads, cmd.OutOrStdout())
+					if err != nil {
+						return err // an unverifiable approval is red
+					}
+					if !ok {
+						return ExitError{Code: 1}
+					}
 				}
 				return nil
 			},
 		}
 		cf.bind(check)
+		check.Flags().IntVar(&cf.pr, "pr", 0, "pull request number (default: from GITHUB_REF); a loosening needs a human code-owner approval on it")
 
 		root.AddCommand(diff, check)
 		return root

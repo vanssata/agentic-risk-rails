@@ -12,12 +12,15 @@ import (
 
 func init() {
 	cli.Register(func() *cobra.Command {
-		var check bool
+		var check, remote bool
 		var root string
 		c := &cobra.Command{
 			Use:   "sync",
 			Short: "Render runtime manifests from policy and effective tiers",
 			RunE: func(cmd *cobra.Command, _ []string) error {
+				if remote && !check {
+					return fmt.Errorf("--remote requires --check")
+				}
 				in, err := rrsync.InputProvider(cmd.Context(), root)
 				if err != nil {
 					return err
@@ -43,12 +46,22 @@ func init() {
 				if len(drift) > 0 {
 					return ExitError{Code: 1}
 				}
+				if remote {
+					branch := in.Policy.Policy.Project.DefaultBranch
+					if branch == "" {
+						branch = "main"
+					}
+					if err := remoteCheck(cmd.Context(), branch, cmd.OutOrStdout()); err != nil {
+						return err
+					}
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "ok: %d files, %d generators\n", len(files), len(rrsync.Generators()))
 				return nil
 			},
 		}
 		wd, _ := os.Getwd()
 		c.Flags().BoolVar(&check, "check", false, "fail if generated files differ from disk")
+		c.Flags().BoolVar(&remote, "remote", false, "with --check: read the live default-branch ruleset and refuse L>=2 if required rules are missing")
 		c.Flags().StringVar(&root, "root", wd, "repository root")
 		return c
 	})
