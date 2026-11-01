@@ -140,58 +140,66 @@ func (r *Runner) checkBase(ctx context.Context) (moved bool, err error) {
 }
 
 // preflight checks everything that must hold before the first wave and returns
-// the enforcement level and the commit every task branches from.
-func (r *Runner) preflight(ctx context.Context, queue []Task) (enf core.Enforcement, base string, err error) {
+// the commit every task branches from.
+// enforcement is measured in the image the agent runs in (Exec), not on the host.
+// It needs the policy in force file mounted, so it runs after the first snapshot.
+func (r *Runner) enforcement(ctx context.Context) (core.Enforcement, error) {
+	var enf core.Enforcement
+	var err error
+	if r.Exec != nil { // measured in the image the agent runs in, not on the host
+		out, xerr := r.Exec(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
+		if xerr != nil {
+			return "", fmt.Errorf("enforcement in the image: %w", xerr)
+		}
+		enf = core.Enforcement(strings.TrimSpace(string(out)))
+	} else if enf, err = r.Runtime.Enforcement(ctx, r.Root); err != nil {
+		return "", fmt.Errorf("enforcement: %w", err)
+	}
+	if enf != core.EnforcementSandbox {
+		return "", &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
+	}
+	return enf, nil
+}
+
+func (r *Runner) preflight(ctx context.Context, queue []Task) (base string, err error) {
 	if r.Level < core.L2 {
-		return "", "", fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
+		return "", fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
 	}
 	if r.Clock == nil {
 		r.Clock = realClock{}
 	}
 	for _, t := range queue {
 		if !taskIDRe.MatchString(t.ID) {
-			return "", "", fmt.Errorf("invalid task id %q", t.ID)
+			return "", fmt.Errorf("invalid task id %q", t.ID)
 		}
 	}
 	if err := requireRealGitDir(r.Root); err != nil {
-		return "", "", err
+		return "", err
 	}
 	if inside, werr := within(r.Root, r.StateDir); werr != nil || inside {
-		return "", "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
-	}
-	if r.Exec != nil { // measured in the image the agent runs in, not on the host
-		out, xerr := r.Exec(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
-		if xerr != nil {
-			return "", "", fmt.Errorf("enforcement in the image: %w", xerr)
-		}
-		enf = core.Enforcement(strings.TrimSpace(string(out)))
-	} else if enf, err = r.Runtime.Enforcement(ctx, r.Root); err != nil {
-		return "", "", fmt.Errorf("enforcement: %w", err)
-	}
-	if enf != core.EnforcementSandbox {
-		return "", "", &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
+		return "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
 	}
 	if st, gerr := r.git(ctx, "status", "--porcelain"); gerr != nil || st != "" {
-		return "", "", fmt.Errorf("checkout must be clean (status: %q, err: %v)", st, gerr) //nolint:errorlint // gerr may be nil
+		return "", fmt.Errorf("checkout must be clean (status: %q, err: %v)", st, gerr) //nolint:errorlint // gerr may be nil
 	}
 	if base, err = r.git(ctx, "rev-parse", "HEAD"); err != nil {
-		return "", "", err
+		return "", err
 	}
 	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
 	if err != nil {
-		return "", "", r.refuse(ctx, "BASE_UNKNOWN", err.Error())
+		return "", r.refuse(ctx, "BASE_UNKNOWN", err.Error())
 	}
 	if tip != base {
-		return "", "", r.refuse(ctx, "BASE_NOT_TIP", "HEAD "+base+" is not the tip "+tip+" of "+r.DefaultBranch+" on the remote")
+		return "", r.refuse(ctx, "BASE_NOT_TIP", "HEAD "+base+" is not the tip "+tip+" of "+r.DefaultBranch+" on the remote")
 	}
 	r.base = base
-	return enf, base, nil
+	return base, nil
 }
 
 // Run processes the queue. It returns a *core.Refusal when it stops (HALT,
 // BUDGET, CEILING_CHANGED, ENFORCEMENT, JOURNAL_TAMPERED); outcomes so far are returned too.
 func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
-	enf, base, err := r.preflight(ctx, queue)
+	base, err := r.preflight(ctx, queue)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +209,10 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 	}
 	if err := os.WriteFile(filepath.Join(r.StateDir, PolicyFileName), r.inForce, 0o600); err != nil {
 		return nil, fmt.Errorf("write policy in force: %w", err)
+	}
+	enf, err := r.enforcement(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := r.Journal.Append(ctx, core.Event{Type: "task_started", Task: r.RunID, Actor: core.ActorAutonomy, Via: "runner", PolicySHA: r.eff.PolicySHA}); err != nil {
 		return nil, fmt.Errorf("journal task_started: %w", err)
@@ -458,16 +470,8 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, r.refuse(ctx, "RENDER", err.Error())
 	}
 
-	waveCtx := agentCtx
-	if m := pol.Autonomy.Unattended.MaxWallMinutes; m != nil {
-		var c context.CancelFunc
-		unit := r.WallUnit
-		if unit == 0 {
-			unit = time.Minute
-		}
-		waveCtx, c = context.WithTimeout(agentCtx, time.Duration(*m)*unit)
-		defer c()
-	}
+	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
+	defer endWave()
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
 		Brief: "Task id: " + t.ID + "\n\n" + t.Brief, Budget: pol.Models.Budgets[t.Mode]})
 
@@ -497,6 +501,38 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
 	}
 	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
+}
+
+// waveContext applies max_wall_minutes to one wave.
+func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Context, context.CancelFunc) {
+	if minutes == nil {
+		return agentCtx, func() {}
+	}
+	unit := r.WallUnit
+	if unit == 0 {
+		unit = time.Minute
+	}
+	return context.WithTimeout(agentCtx, time.Duration(*minutes)*unit)
+}
+
+// closeRun runs the close verification in the sandbox (errata #26); "" = passed or not wired.
+func (r *Runner) closeRun(ctx context.Context, id string) string {
+	if r.Exec == nil {
+		return ""
+	}
+	out, err := r.Exec(ctx, "rr", "verify", "--task", id, "--close")
+	if err != nil {
+		return "close run in the container failed: " + firstLine(strings.TrimSpace(string(out))+" "+err.Error())
+	}
+	return ""
+}
+
+// beforePush re-checks the kill switch and that the default branch has not moved.
+func (r *Runner) beforePush(ctx context.Context, killFile string) (moved bool, err error) {
+	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, killFile); err != nil {
+		return false, err
+	}
+	return r.checkBase(ctx)
 }
 
 // deliver turns a finished worker into a draft PR, or blocks the task.
@@ -539,19 +575,14 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		}
 		return block(why)
 	}
-	if r.Exec != nil { // close run: tests the agent wrote run in the sandbox, not on the host
-		if out, err := r.Exec(ctx, "rr", "verify", "--task", t.ID, "--close"); err != nil {
-			return block("close run in the container failed: " + firstLine(strings.TrimSpace(string(out))+" "+err.Error()))
-		}
+	if why := r.closeRun(ctx, t.ID); why != "" {
+		return block(why)
 	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
 	if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
 		return block(err.Error())
 	}
-	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
-		return o, r.halted(ctx, err.Error())
-	}
-	if moved, err := r.checkBase(ctx); err != nil {
+	if moved, err := r.beforePush(ctx, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
 		return o, r.halted(ctx, err.Error())
 	} else if moved {
 		return block("default branch moved before push")

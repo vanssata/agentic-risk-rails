@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,7 +34,7 @@ var runHosting = func(context.Context, string) (core.Hosting, error) {
 
 func init() {
 	cli.Register(func() *cobra.Command {
-		var level, queue, runtime, root, image, state, branch, network string
+		var level, queue, runtime, root, image, state, branch, proxyImage string
 		c := &cobra.Command{
 			Use:   "run",
 			Short: "Unattended runner: queue of light tasks in a container, draft PRs only (L2+)",
@@ -52,7 +54,7 @@ func init() {
 				if err := dec.Decode(&tasks); err != nil {
 					return fmt.Errorf("queue %s: %w", queue, err)
 				}
-				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch, network)
+				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch, proxyImage)
 			},
 		}
 		wd, _ := os.Getwd()
@@ -61,16 +63,48 @@ func init() {
 		c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
 		c.Flags().StringVar(&root, "root", wd, "clean checkout mounted into the container")
 		c.Flags().StringVar(&image, "image", "", "container image pinned by digest (name@sha256:...) with the runtime CLI and rr")
-		c.Flags().StringVar(&network, "network", "none", "docker network with egress to the runtime API only; \"none\" blocks every agent run")
+		c.Flags().StringVar(&proxyImage, "proxy-image", "", "squid image pinned by digest (name@sha256:...), present locally: the only way out of the agent container")
 		c.Flags().StringVar(&state, "state-dir", "", "runner state outside the checkout (default: $XDG_STATE_HOME/riskrails/<repo-hash>)")
 		c.Flags().StringVar(&branch, "default-branch", "main", "default branch on the remote")
 		_ = c.MarkFlagRequired("queue")
 		_ = c.MarkFlagRequired("image")
+		c.AddCommand(enforcementCmd())
 		return c
 	})
 }
 
-func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, network string) error {
+// enforcementCmd prints what enforces in THIS environment; the runner calls it
+// inside the agent's image (DES §8.2), so the answer is the image's, not the host's.
+func enforcementCmd() *cobra.Command {
+	var runtime, root string
+	c := &cobra.Command{
+		Use:   "enforcement",
+		Short: "Print the enforcement level of this environment (run inside the agent image)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			rt, ok := runtimes.Lookup(runtime)
+			if !ok {
+				return fmt.Errorf("unknown runtime %q", runtime)
+			}
+			enf, err := rt.Enforcement(cmd.Context(), root)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), enf)
+			return nil
+		},
+	}
+	wd, _ := os.Getwd()
+	c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
+	c.Flags().StringVar(&root, "root", wd, "checkout")
+	return c
+}
+
+func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, proxyImage string) error {
+	// SIGINT/SIGTERM cancel the context instead of killing rr, so the proxy and
+	// the networks below are removed on every exit.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	rt, ok := runtimes.Lookup(runtime)
 	if !ok {
 		return fmt.Errorf("unknown runtime %q", runtime)
@@ -117,16 +151,23 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		return err
 	}
 	tiers := models.ForSync(ctx, probe.Policy.Models, root)
-	sock := filepath.Join(state, "halt.sock")
-	worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: network, Level: lvl, Models: tiers[runtime].Models}
-	r := &autonomy.Runner{Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
-		DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
-		Worker: worker, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
-	out, err := r.Run(ctx, tasks)
-	for _, o := range out {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Task, o.Level, o.Status, o.PR.URL)
+	if proxyImage == "" {
+		return fmt.Errorf("--proxy-image is required: the agent reaches the runtime API only through the egress proxy, there is no open-network fallback")
 	}
-	return err
+	sock := filepath.Join(state, "halt.sock")
+	return autonomy.Egress{Image: proxyImage, Dir: state,
+		Hosts: append(autonomy.RuntimeHosts(runtime), probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
+		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
+			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), Level: lvl, Models: tiers[runtime].Models}
+		r := &autonomy.Runner{Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
+			DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
+			Worker: worker, Exec: worker.Exec, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
+		out, err := r.Run(ctx, tasks)
+		for _, o := range out {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Task, o.Level, o.Status, o.PR.URL)
+		}
+		return err
+	})
 }
 
 // defaultStateDir is $XDG_STATE_HOME/riskrails/<hash of the checkout path>, so the

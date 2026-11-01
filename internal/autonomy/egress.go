@@ -130,3 +130,14 @@ func (e Egress) Up(ctx context.Context) (_ *EgressNet, err error) {
 	}
 	return &EgressNet{Network: in, ProxyURL: "http://" + proxy + ":3128", Down: down}, nil
 }
+
+// With runs fn with a live proxy and removes it afterwards on every exit
+// (return, error such as a HALT or BUDGET refusal, or panic).
+func (e Egress) With(ctx context.Context, fn func(*EgressNet) error) error {
+	n, err := e.Up(ctx)
+	if err != nil {
+		return err
+	}
+	defer n.Down()
+	return fn(n)
+}

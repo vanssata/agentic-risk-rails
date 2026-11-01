@@ -1,6 +1,7 @@
 package autonomy
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
@@ -81,4 +83,32 @@ func TestEgressRefusals(t *testing.T) {
 	assert.Error(t, err)
 	b, _ := os.ReadFile(log)
 	assert.Empty(t, string(b), "docker not touched")
+}
+
+func TestEgressWithCleansUpOnEveryExit(t *testing.T) {
+	for name, fn := range map[string]func(*EgressNet) error{
+		"ok":     func(*EgressNet) error { return nil },
+		"halt":   func(*EgressNet) error { return &core.Refusal{Code: "HALT"} },
+		"budget": func(*EgressNet) error { return &core.Refusal{Code: "BUDGET"} },
+		"error":  func(*EgressNet) error { return assert.AnError },
+	} {
+		log := fakeDocker(t, "")
+		_ = Egress{Image: testImage, Hosts: RuntimeHosts("codex"), Dir: t.TempDir()}.With(t.Context(), fn)
+		b, _ := os.ReadFile(log)
+		assert.Contains(t, string(b), "network rm rr-int-", name)
+		assert.Contains(t, string(b), "rm -f rr-proxy-", name)
+	}
+	log := fakeDocker(t, "")
+	assert.Panics(t, func() {
+		_ = Egress{Image: testImage, Hosts: RuntimeHosts("codex"), Dir: t.TempDir()}.With(t.Context(), func(*EgressNet) error { panic("x") })
+	})
+	b, _ := os.ReadFile(log)
+	assert.Contains(t, string(b), "network rm rr-int-", "panic")
+
+	// a cancelled run context still removes the proxy
+	ctx, cancel := context.WithCancel(t.Context())
+	log = fakeDocker(t, "")
+	_ = Egress{Image: testImage, Hosts: RuntimeHosts("codex"), Dir: t.TempDir()}.With(ctx, func(*EgressNet) error { cancel(); return ctx.Err() })
+	b, _ = os.ReadFile(log)
+	assert.Contains(t, string(b), "network rm rr-int-", "cancelled")
 }

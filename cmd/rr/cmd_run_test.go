@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,4 +75,12 @@ func TestDefaultStateDirIsUnderXDGState(t *testing.T) {
 	b, _ := defaultStateDir("/repo/b")
 	assert.Equal(t, filepath.Join(x, "riskrails"), filepath.Dir(a))
 	assert.NotEqual(t, a, b, "one state dir per checkout")
+}
+
+func TestRunEnforcementProbePrintsALevel(t *testing.T) {
+	out, err := runRR("run", "enforcement", "--runtime", "claude")
+	require.NoError(t, err)
+	assert.Contains(t, []string{"sandbox", "hook_only", "ci_only"}, strings.TrimSpace(out))
+	_, err = runRR("run", "enforcement", "--runtime", "nope")
+	assert.Error(t, err)
 }
