@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,10 +30,16 @@ type DockerRunner struct {
 	Runtime string // claude | codex
 	Root    string // host checkout, mounted at /work
 	Sock    string // host halt socket, mounted for the hook ("" = none)
+	Network string // docker network with egress to the runtime API only; "" or "none" blocks the run
 	Level   core.Level
 	Models  map[core.Tier]string
 	Timeout time.Duration // 0 = 90 minutes
 }
+
+var (
+	imageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
+	modelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]*$`)
+)
 
 const (
 	workDir  = "/work"
@@ -41,19 +48,18 @@ const (
 )
 
 // argv builds the docker command; cmd runs inside the container.
-func (d DockerRunner) argv(root, name string, stdin bool, cmd []string) ([]string, error) {
-	if d.Image == "" {
-		return nil, fmt.Errorf("docker runner: no image")
+func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string) ([]string, error) {
+	if !imageRe.MatchString(d.Image) {
+		return nil, fmt.Errorf("docker runner: image %q must be pinned by digest (name@sha256:<64 hex>)", d.Image)
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	fi, err := os.Lstat(filepath.Join(abs, ".git"))
-	if err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("docker runner: %s/.git must be a real directory (a worktree .git file would stay writable)", abs)
+	if err := requireRealGitDir(abs); err != nil {
+		return nil, fmt.Errorf("docker runner: %w", err)
 	}
-	args := []string{"run", "--rm", "--name", name, "--network", "none", "--cap-drop", "ALL",
+	args := []string{"run", "--rm", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		"--tmpfs", "/tmp", "-e", "HOME=/tmp", "-w", workDir,
@@ -86,7 +92,7 @@ func (d DockerRunner) argv(root, name string, stdin bool, cmd []string) ([]strin
 // CommandArgv is the argv (after the docker binary) that runs cmd in the same
 // sandbox, for the close run (errata #26): W4-A hands it to verify as its runner.
 func (d DockerRunner) CommandArgv(cmd ...string) ([]string, error) {
-	return d.argv(d.Root, "rr-close-"+randHex(), false, cmd)
+	return d.argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
 }
 
 func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {
@@ -117,6 +123,12 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if !ok {
 		return core.WorkerReport{}, fmt.Errorf("docker runner: no model for tier %s", spec.Tier)
 	}
+	if !modelRe.MatchString(model) {
+		return core.WorkerReport{}, fmt.Errorf("docker runner: model %q from the tiers lock is not a plain model id", model)
+	}
+	if d.Network == "" || d.Network == "none" {
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network for the runtime API; provide an egress-restricted docker network (rr run --network)"}, nil
+	}
 	inner, err := d.agentCmd(model, spec.MaxTurns)
 	if err != nil {
 		return core.WorkerReport{}, err
@@ -126,7 +138,7 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 		root = spec.Worktree
 	}
 	name := "rr-" + randHex()
-	args, err := d.argv(root, name, true, inner)
+	args, err := d.argv(root, name, d.Network, true, inner)
 	if err != nil {
 		return core.WorkerReport{}, err
 	}

@@ -32,7 +32,9 @@ permission-modes and headless pages (code.claude.com, first 100k chars of permis
 - Container: `--network none` by default (egress allowlist is the proxy's job, GAP).
 
 ## GAPS
-- Docker network egress allowlist (`enforcement.egress.allow`) needs a proxy/network; v1 runs `--network none` and agent-side package installs fail. [U]
+- Network: `--network none` (the default of `rr run --network`) cannot reach the runtime API, so a real run is BLOCKED with "no network for the runtime API; provide an egress-restricted docker network". The operator supplies a docker network. An egress proxy with allow = runtime API hosts + `enforcement.egress.allow` is wave 4 / owner; not implemented. [U]
+- Token usage: `codex exec` output is not parsed (the ledger parser reads rollout files, a different format; the `exec --json` event shape is not verified). Unknown usage with a policy token budget stops the run (fail-closed), so Codex runs stop after the first task until usage parsing exists.
+- Push without credentials: gitx blanks the credential helper; needs `Hosting.Push` (CORE_CHANGE_REQUEST).
 - Codex hook trust check (`rr doctor`): trust state storage not read; runner only refuses to pass `--dangerously-bypass-hook-trust`.
 - Real `claude -p`/`codex exec` inside the container: not run (needs RR_CONTRACT=1, tokens, image with CLIs).
 

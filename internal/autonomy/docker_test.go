@@ -13,14 +13,16 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
+const testImage = "rr@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
 func repo(t *testing.T) string {
 	return testutil.GitRepo(t, map[string]string{"riskrails.yaml": "schema: 1\n", ".github/w.yml": "x", "a.txt": "a"})
 }
 
 func TestDockerArgv(t *testing.T) {
 	root := repo(t)
-	d := DockerRunner{Image: "rr-agent:1", Runtime: "claude", Root: root, Sock: "/tmp/h.sock", Level: core.L2}
-	args, err := d.argv(root, "n1", true, []string{"claude", "-p"})
+	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Sock: "/tmp/h.sock", Level: core.L2}
+	args, err := d.argv(root, "n1", "none", true, []string{"claude", "-p"})
 	require.NoError(t, err)
 	j := " " + strings.Join(args, " ") + " "
 	assert.Contains(t, j, " --network none ")
@@ -33,16 +35,16 @@ func TestDockerArgv(t *testing.T) {
 	assert.Contains(t, j, "src=/tmp/h.sock,dst=/run/rr/halt.sock")
 	assert.NotContains(t, j, "riskrails/", "no user config or cache dir")
 	assert.NotContains(t, j, ".config")
-	assert.Equal(t, "rr-agent:1 claude -p", strings.Join(args[len(args)-3:], " "))
+	assert.Equal(t, testImage+" claude -p", strings.Join(args[len(args)-3:], " "))
 }
 
 func TestDockerArgvRefusals(t *testing.T) {
 	root := repo(t)
-	_, err := DockerRunner{Root: root}.argv(root, "n", true, nil)
+	_, err := DockerRunner{Root: root}.argv(root, "n", "none", true, nil)
 	assert.Error(t, err, "no image")
 	plain := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(plain, ".git"), []byte("gitdir: x"), 0o644))
-	_, err = DockerRunner{Image: "i"}.argv(plain, "n", true, nil)
+	_, err = DockerRunner{Image: testImage}.argv(plain, "n", "none", true, nil)
 	assert.Error(t, err, ".git file (worktree) stays writable")
 }
 
@@ -65,12 +67,12 @@ func TestAgentCmd(t *testing.T) {
 
 func TestCommandArgvIsSameSandbox(t *testing.T) {
 	root := repo(t)
-	args, err := DockerRunner{Image: "i", Root: root}.CommandArgv("vendor/bin/phpunit")
+	args, err := DockerRunner{Image: testImage, Root: root}.CommandArgv("vendor/bin/phpunit")
 	require.NoError(t, err)
 	j := strings.Join(args, " ")
 	assert.Contains(t, j, "--network none")
 	assert.Contains(t, j, "dst=/work/riskrails.yaml,readonly")
-	assert.True(t, strings.HasSuffix(j, "i vendor/bin/phpunit"))
+	assert.True(t, strings.HasSuffix(j, testImage+" vendor/bin/phpunit"))
 	assert.NotContains(t, j, " -i ")
 }
 
@@ -80,13 +82,15 @@ func TestDockerRunWithFakeBin(t *testing.T) {
 	testutil.FakeBin(t, "docker", `echo "$@" >> `+log+`
 cat >/dev/null
 echo '{"result":"done\\nSTATUS: DONE","is_error":false,"num_turns":3,"usage":{"input_tokens":10,"output_tokens":5}}'`)
-	d := DockerRunner{Image: "i", Runtime: "claude", Root: root, Models: map[core.Tier]string{core.TierFast: "haiku"}}
+	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Network: "rr-egress", Models: map[core.Tier]string{core.TierFast: "haiku"}}
 	rep, err := d.Run(t.Context(), core.WorkerSpec{Tier: core.TierFast, Brief: "do it", MaxTurns: 3})
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusDone, rep.Status)
 	assert.EqualValues(t, 15, rep.Tokens)
 	b, _ := os.ReadFile(log)
 	assert.Contains(t, string(b), "--model haiku")
+	assert.Contains(t, string(b), "--pull never")
+	assert.Contains(t, string(b), "--network rr-egress")
 
 	_, err = d.Run(t.Context(), core.WorkerSpec{Tier: core.TierExpert})
 	assert.Error(t, err, "no model for tier")

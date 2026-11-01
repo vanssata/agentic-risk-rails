@@ -65,3 +65,13 @@ func TestRunRejectsLevelBelowL2AndBadQueue(t *testing.T) {
 	_, err = runRR("run", "--queue", q, "--image", "img")
 	assert.Error(t, err, "unknown queue field")
 }
+
+func TestDefaultStateDirIsUnderXDGState(t *testing.T) {
+	x := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", x)
+	a, err := defaultStateDir("/repo/a")
+	require.NoError(t, err)
+	b, _ := defaultStateDir("/repo/b")
+	assert.Equal(t, filepath.Join(x, "riskrails"), filepath.Dir(a))
+	assert.NotEqual(t, a, b, "one state dir per checkout")
+}

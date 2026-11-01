@@ -41,6 +41,8 @@ func PollEvery(p core.Policy) time.Duration {
 // API. nil = running. A present file is a halt; ErrNotFound is the only "absent";
 // every other error is a halt (on_read_error: halt).
 func CheckHalt(ctx context.Context, h core.Hosting, branch, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // a hung API is a halt
+	defer cancel()
 	_, err := h.ReadFile(ctx, branch, path)
 	switch {
 	case err == nil:

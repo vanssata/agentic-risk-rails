@@ -17,18 +17,35 @@ import (
 type anchor struct {
 	root string // checkout, where the agent writes .rr
 	dir  string // runner state dir, outside the sandbox
+	run  string // run id: copies of other runs are not ours
 }
 
 func (a anchor) live(task string) (string, error) {
 	for _, p := range []string{filepath.Join(journal.RunDir(a.root), task+".jsonl"), filepath.Join(journal.TasksDir(a.root), task+".jsonl")} {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil {
 			return p, nil
 		}
 	}
 	return "", os.ErrNotExist
 }
 
-func (a anchor) copyPath(task string) string { return filepath.Join(a.dir, "journal-"+task+".jsonl") }
+func (a anchor) prefix() string { return "journal-" + a.run + "-" }
+
+func (a anchor) copyPath(task string) string { return filepath.Join(a.dir, a.prefix()+task+".jsonl") }
+
+const maxJournal = 16 << 20
+
+// readRegular reads a plain file of at most maxJournal bytes; a symlink or other type is an error.
+func readRegular(p string) ([]byte, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > maxJournal {
+		return nil, fmt.Errorf("%s: not a regular file of at most %d bytes", p, maxJournal)
+	}
+	return os.ReadFile(p)
+}
 
 // snapshot copies the task's journal and returns its head hash and size.
 // ok=false: the agent wrote no journal.
@@ -40,12 +57,12 @@ func (a anchor) snapshot(task string) (head string, size int, ok bool, err error
 	if err != nil {
 		return "", 0, false, err
 	}
-	if err := journal.Verify(p); err != nil {
+	b, err := readRegular(p)
+	if err != nil {
 		return "", 0, false, fmt.Errorf("in-sandbox journal of %s: %w", task, err)
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return "", 0, false, err
+	if err := journal.Verify(p); err != nil {
+		return "", 0, false, fmt.Errorf("in-sandbox journal of %s: %w", task, err)
 	}
 	if err := os.MkdirAll(a.dir, 0o700); err != nil {
 		return "", 0, false, err
@@ -59,12 +76,12 @@ func (a anchor) snapshot(task string) (head string, size int, ok bool, err error
 
 // verify checks every copy against its live journal. Any problem is a mismatch.
 func (a anchor) verify() error {
-	copies, err := filepath.Glob(filepath.Join(a.dir, "journal-*.jsonl"))
+	copies, err := filepath.Glob(filepath.Join(a.dir, a.prefix()+"*.jsonl"))
 	if err != nil {
 		return err
 	}
 	for _, c := range copies {
-		task := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(c), "journal-"), ".jsonl")
+		task := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(c), a.prefix()), ".jsonl")
 		want, err := os.ReadFile(c)
 		if err != nil {
 			return err
@@ -73,7 +90,7 @@ func (a anchor) verify() error {
 		if err != nil {
 			return fmt.Errorf("journal of %s vanished from the sandbox: %w", task, err)
 		}
-		got, err := os.ReadFile(lp)
+		got, err := readRegular(lp)
 		if err != nil {
 			return err
 		}

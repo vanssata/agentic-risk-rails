@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +32,7 @@ var runHosting = func(context.Context, string) (core.Hosting, error) {
 
 func init() {
 	cli.Register(func() *cobra.Command {
-		var level, queue, runtime, root, image, state, branch string
+		var level, queue, runtime, root, image, state, branch, network string
 		c := &cobra.Command{
 			Use:   "run",
 			Short: "Unattended runner: queue of light tasks in a container, draft PRs only (L2+)",
@@ -50,7 +52,7 @@ func init() {
 				if err := dec.Decode(&tasks); err != nil {
 					return fmt.Errorf("queue %s: %w", queue, err)
 				}
-				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch)
+				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch, network)
 			},
 		}
 		wd, _ := os.Getwd()
@@ -58,8 +60,9 @@ func init() {
 		c.Flags().StringVar(&queue, "queue", "", "YAML list of tasks: id, brief, mode, irreversible, tier, max_turns")
 		c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
 		c.Flags().StringVar(&root, "root", wd, "clean checkout mounted into the container")
-		c.Flags().StringVar(&image, "image", "", "container image with the runtime CLI and rr")
-		c.Flags().StringVar(&state, "state-dir", "", "runner state outside the sandbox (default: a new temp dir)")
+		c.Flags().StringVar(&image, "image", "", "container image pinned by digest (name@sha256:...) with the runtime CLI and rr")
+		c.Flags().StringVar(&network, "network", "none", "docker network with egress to the runtime API only; \"none\" blocks every agent run")
+		c.Flags().StringVar(&state, "state-dir", "", "runner state outside the checkout (default: $XDG_STATE_HOME/riskrails/<repo-hash>)")
 		c.Flags().StringVar(&branch, "default-branch", "main", "default branch on the remote")
 		_ = c.MarkFlagRequired("queue")
 		_ = c.MarkFlagRequired("image")
@@ -67,7 +70,7 @@ func init() {
 	})
 }
 
-func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch string) error {
+func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, network string) error {
 	rt, ok := runtimes.Lookup(runtime)
 	if !ok {
 		return fmt.Errorf("unknown runtime %q", runtime)
@@ -81,7 +84,7 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		return err
 	}
 	if state == "" {
-		if state, err = os.MkdirTemp("", "rr-run-"); err != nil {
+		if state, err = defaultStateDir(root); err != nil {
 			return err
 		}
 	}
@@ -110,7 +113,7 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 	}
 	tiers := models.ForSync(ctx, probe.Policy.Models, root)
 	sock := filepath.Join(state, "halt.sock")
-	worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Level: lvl, Models: tiers[runtime].Models}
+	worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: network, Level: lvl, Models: tiers[runtime].Models}
 	r := &autonomy.Runner{Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
 		DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
 		Worker: worker, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
@@ -119,4 +122,19 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Task, o.Level, o.Status, o.PR.URL)
 	}
 	return err
+}
+
+// defaultStateDir is $XDG_STATE_HOME/riskrails/<hash of the checkout path>, so the
+// daily task count survives runs. Not ~/.config or ~/.cache.
+func defaultStateDir(root string) (string, error) {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	h := sha256.Sum256([]byte(root))
+	return filepath.Join(base, "riskrails", hex.EncodeToString(h[:8])), nil
 }

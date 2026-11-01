@@ -19,6 +19,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/gitx"
 	"github.com/vanssata/agentic-risk-rails/internal/globs"
 	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
+	"github.com/vanssata/agentic-risk-rails/internal/triage"
 )
 
 // Task is one queue item. Mode and Irreversible come from triage (declared here
@@ -63,6 +64,7 @@ type Runner struct {
 	Clock    Clock
 	HaltSock string // unix socket for the hooks; "" = none
 	Push     func(ctx context.Context, root, branch string) error
+	WallUnit time.Duration // unit of max_wall_minutes; 0 = time.Minute (tests shrink it)
 
 	eff    core.EffectivePolicy
 	halter Halter
@@ -111,35 +113,49 @@ func (r *Runner) snapshot(ctx context.Context) (inForceSHA string, err error) {
 	return sha(b), nil
 }
 
-// Run processes the queue. It returns a *core.Refusal when it stops (HALT,
-// BUDGET, CEILING_CHANGED, ENFORCEMENT, JOURNAL_TAMPERED); outcomes so far are returned too.
-func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
+// preflight checks everything that must hold before the first wave and returns
+// the enforcement level and the commit every task branches from.
+func (r *Runner) preflight(ctx context.Context, queue []Task) (enf core.Enforcement, base string, err error) {
 	if r.Level < core.L2 {
-		return nil, fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
+		return "", "", fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
 	}
 	if r.Clock == nil {
 		r.Clock = realClock{}
 	}
 	for _, t := range queue {
 		if !taskIDRe.MatchString(t.ID) {
-			return nil, fmt.Errorf("invalid task id %q", t.ID)
+			return "", "", fmt.Errorf("invalid task id %q", t.ID)
 		}
 	}
-	enf, err := r.Runtime.Enforcement(ctx, r.Root)
+	if err := requireRealGitDir(r.Root); err != nil {
+		return "", "", err
+	}
+	if inside, werr := within(r.Root, r.StateDir); werr != nil || inside {
+		return "", "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
+	}
+	enf, err = r.Runtime.Enforcement(ctx, r.Root)
 	if err != nil {
-		return nil, fmt.Errorf("enforcement: %w", err)
+		return "", "", fmt.Errorf("enforcement: %w", err)
 	}
 	if enf != core.EnforcementSandbox {
-		return nil, &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
+		return "", "", &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
 	}
-	if st, err := r.git(ctx, "status", "--porcelain"); err != nil || st != "" {
-		return nil, fmt.Errorf("checkout must be clean (status: %q, err: %w)", st, err)
+	if st, gerr := r.git(ctx, "status", "--porcelain"); gerr != nil || st != "" {
+		return "", "", fmt.Errorf("checkout must be clean (status: %q, err: %v)", st, gerr) //nolint:errorlint // gerr may be nil
 	}
-	base, err := r.git(ctx, "rev-parse", "HEAD")
+	if base, err = r.git(ctx, "rev-parse", "HEAD"); err != nil {
+		return "", "", err
+	}
+	return enf, base, nil
+}
+
+// Run processes the queue. It returns a *core.Refusal when it stops (HALT,
+// BUDGET, CEILING_CHANGED, ENFORCEMENT, JOURNAL_TAMPERED); outcomes so far are returned too.
+func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
+	enf, base, err := r.preflight(ctx, queue)
 	if err != nil {
 		return nil, err
 	}
-
 	inForce, err := r.snapshot(ctx)
 	if err != nil {
 		return nil, &core.Refusal{Code: "POLICY_UNREADABLE", Detail: err.Error()}
@@ -188,7 +204,41 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 			return out, err
 		}
 	}
+	if err := r.anchor().verify(); err != nil {
+		return out, r.refuse(ctx, "JOURNAL_TAMPERED", err.Error())
+	}
 	return out, nil
+}
+
+func (r *Runner) anchor() anchor { return anchor{r.Root, r.StateDir, r.RunID} }
+
+// requireRealGitDir: a `.git` file (worktree/gitdir pointer) or symlink would stay writable for the agent.
+func requireRealGitDir(root string) error {
+	fi, err := os.Lstat(filepath.Join(root, ".git"))
+	if err != nil || !fi.IsDir() {
+		return fmt.Errorf("%s/.git must be a real directory (err: %w)", root, err)
+	}
+	return nil
+}
+
+// within reports whether path (after resolving symlinks) is inside root.
+func within(root, path string) (bool, error) {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return false, err
+	}
+	rr, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+	pp, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(rr, pp)
+	if err != nil {
+		return false, err
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))), nil
 }
 
 // gate runs before every wave: HALT, ceiling and policy-in-force hashes, journal
@@ -219,7 +269,7 @@ func (r *Runner) gate(ctx context.Context) error {
 			return &core.Refusal{Code: "CEILING_CHANGED", Detail: c.what + " changed since the run started"}
 		}
 	}
-	if err := (anchor{r.Root, r.StateDir}).verify(); err != nil {
+	if err := r.anchor().verify(); err != nil {
 		return r.refuse(ctx, "JOURNAL_TAMPERED", err.Error())
 	}
 	return nil
@@ -273,7 +323,24 @@ func (r *Runner) tasksToday() (int, error) {
 
 func (r *Runner) reset(ctx context.Context, base string) {
 	_, _ = r.git(ctx, "checkout", "-f", "-q", base)
-	_, _ = r.git(ctx, "clean", "-fdq")
+	_, _ = r.git(ctx, "clean", "-ffdq")
+}
+
+// dailyLimit counts this task against max_tasks_per_day (persisted in the state dir).
+func (r *Runner) dailyLimit(ctx context.Context, pol core.Policy) error {
+	lim := pol.Autonomy.Unattended.MaxTasksPerDay
+	if lim == nil {
+		return nil
+	}
+	n, err := r.tasksToday()
+	if err != nil {
+		return r.refuse(ctx, "BUDGET_UNREADABLE", err.Error())
+	}
+	if n > *lim {
+		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tasks_per_day", "limit": *lim, "used": n - 1})
+		return &core.Refusal{Code: "BUDGET", Detail: "max_tasks_per_day reached"}
+	}
+	return nil
 }
 
 // task runs one wave. agentCtx is cancelled by a HALT.
@@ -295,18 +362,12 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if lvl < core.L2 {
 		return o, nil
 	}
-	if lim := pol.Autonomy.Unattended.MaxTasksPerDay; lim != nil {
-		n, err := r.tasksToday()
-		if err != nil {
-			return o, r.refuse(ctx, "BUDGET_UNREADABLE", err.Error())
-		}
-		if n > *lim {
-			_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tasks_per_day", "limit": *lim, "used": n - 1})
-			return o, &core.Refusal{Code: "BUDGET", Detail: "max_tasks_per_day reached"}
-		}
+	if err := r.dailyLimit(ctx, pol); err != nil {
+		return o, err
 	}
 
 	branch := "rr/" + t.ID
+	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
 		return o, err
 	}
@@ -320,15 +381,19 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		r.reset(ctx, base)
 		return o, err
 	}
-	if err := rrsync.Write(r.Root, files); err != nil {
+	if err := safeWrite(r.Root, files); err != nil {
 		r.reset(ctx, base)
-		return o, err
+		return o, r.refuse(ctx, "RENDER", err.Error())
 	}
 
 	waveCtx := agentCtx
 	if m := pol.Autonomy.Unattended.MaxWallMinutes; m != nil {
 		var c context.CancelFunc
-		waveCtx, c = context.WithTimeout(agentCtx, time.Duration(*m)*time.Minute)
+		unit := r.WallUnit
+		if unit == 0 {
+			unit = time.Minute
+		}
+		waveCtx, c = context.WithTimeout(agentCtx, time.Duration(*m)*unit)
 		defer c()
 	}
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
@@ -337,11 +402,14 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if reason := r.halter.Halted(); reason != "" { // the tree stays as the agent left it, for a human
 		return o, r.halted(ctx, reason)
 	}
+	if err := ctx.Err(); err != nil { // the caller stopped the run: not a wall-clock budget
+		return o, err
+	}
 	if waveCtx.Err() != nil {
 		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "wall", "limit": pol.Autonomy.Unattended.MaxWallMinutes})
 		return o, &core.Refusal{Code: "BUDGET", Detail: "max_wall_minutes reached"}
 	}
-	head, size, ok, aerr := (anchor{r.Root, r.StateDir}).snapshot(t.ID)
+	head, size, ok, aerr := r.anchor().snapshot(t.ID)
 	if aerr != nil {
 		r.reset(ctx, base)
 		return o, r.refuse(ctx, "JOURNAL_TAMPERED", aerr.Error())
@@ -349,9 +417,10 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if err := r.log(ctx, "journal_anchor", map[string]any{"task": t.ID, "head": head, "bytes": size, "missing": !ok}); err != nil {
 		return o, err
 	}
-	if b := pol.Models.Budgets[t.Mode]; b > 0 && rep.Tokens > int64(b) {
+	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
+	if b := pol.Models.Budgets[t.Mode]; b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
 		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens})
-		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded"}
+		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
 	}
 	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
 }
@@ -374,7 +443,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	if err := r.restore(ctx, files, tracked); err != nil {
 		return block("restore manifests: " + err.Error())
 	}
-	changed, err := r.stage(ctx)
+	changed, deleted, err := r.stage(ctx)
 	if err != nil {
 		return block(err.Error())
 	}
@@ -390,9 +459,18 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 			}
 		}
 	}
+	if why, err := r.rescore(ctx, t, base, changed, deleted); err != nil || why != "" {
+		if err != nil {
+			why = "rescore failed: " + err.Error()
+		}
+		return block(why)
+	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
 	if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
 		return block(err.Error())
+	}
+	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
+		return o, r.halted(ctx, err.Error())
 	}
 	push := r.Push
 	if push == nil {
@@ -432,6 +510,9 @@ func (r *Runner) trackedAmong(ctx context.Context, files []core.File) (map[strin
 // restore puts the committed version of every rendered manifest back (tracked)
 // or deletes it: the L≥2 manifests live in the container only and are never committed.
 func (r *Runner) restore(ctx context.Context, files []core.File, tracked map[string]bool) error {
+	if err := checkPaths(r.Root, files); err != nil {
+		return err
+	}
 	for _, f := range files {
 		if tracked[f.Path] {
 			if _, err := r.git(ctx, "checkout", "-q", "HEAD", "--", f.Path); err != nil {
@@ -444,21 +525,101 @@ func (r *Runner) restore(ctx context.Context, files []core.File, tracked map[str
 	return nil
 }
 
-func (r *Runner) stage(ctx context.Context) ([]string, error) {
-	if _, err := r.git(ctx, "add", "-A"); err != nil {
-		return nil, err
-	}
-	out, err := gitx.Run(ctx, "", "-C", r.Root, "diff", "--cached", "--name-only", "-z")
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, n := range strings.Split(string(out), "\x00") {
-		if n != "" {
-			names = append(names, n)
+// checkPaths Lstats every component from root to each file: a symlink or a
+// non-directory parent, or a non-regular file, is refused, never followed.
+func checkPaths(root string, files []core.File) error {
+	for _, f := range files {
+		parts := strings.Split(filepath.Clean(f.Path), string(filepath.Separator))
+		cur := root
+		for i, p := range parts {
+			cur = filepath.Join(cur, p)
+			fi, err := os.Lstat(cur)
+			if os.IsNotExist(err) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			last := i == len(parts)-1
+			if fi.Mode()&os.ModeSymlink != 0 || (!last && !fi.IsDir()) || (last && !fi.Mode().IsRegular()) {
+				return fmt.Errorf("%s: %s is a symlink or not a plain file/directory", f.Path, cur)
+			}
 		}
 	}
-	return names, nil
+	return nil
+}
+
+// safeWrite writes files under root after checkPaths (rrsync.Write follows symlinks).
+func safeWrite(root string, files []core.File) error {
+	if err := checkPaths(root, files); err != nil {
+		return err
+	}
+	for _, f := range files {
+		dst := filepath.Join(root, f.Path)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		mode := os.FileMode(f.Mode)
+		if mode == 0 {
+			mode = 0o644
+		}
+		if err := os.WriteFile(dst, f.Content, mode); err != nil { //nolint:gosec // dst checked by checkPaths
+			return err
+		}
+	}
+	return nil
+}
+
+// stage stages everything and lists the staged paths. --no-renames lists both
+// sides of a move, so a protected source path cannot hide behind a rename.
+func (r *Runner) stage(ctx context.Context) (changed []string, deleted map[string]bool, err error) {
+	if _, err := r.git(ctx, "add", "-A"); err != nil {
+		return nil, nil, err
+	}
+	out, err := gitx.Run(ctx, "", "-C", r.Root, "diff", "--cached", "--name-status", "--no-renames", "-z")
+	if err != nil {
+		return nil, nil, err
+	}
+	deleted = map[string]bool{}
+	if len(out) == 0 {
+		return nil, deleted, nil
+	}
+	f := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if len(f)%2 != 0 {
+		return nil, nil, fmt.Errorf("unparsable diff --name-status output")
+	}
+	for i := 0; i+1 < len(f); i += 2 {
+		changed = append(changed, f[i+1])
+		if strings.HasPrefix(f[i], "D") {
+			deleted[f[i+1]] = true
+		}
+	}
+	return changed, deleted, nil
+}
+
+// rescore re-measures the real diff (triage.Rescore). A higher mode or an
+// irreversible change means the level no longer covers the task.
+func (r *Runner) rescore(ctx context.Context, t Task, base string, changed []string, deleted map[string]bool) (string, error) {
+	pol := r.eff.Policy
+	treeOut, err := r.git(ctx, "ls-tree", "-r", "--name-only", base)
+	if err != nil {
+		return "", err
+	}
+	tree := strings.Split(treeOut, "\n")
+	var live []string
+	for _, c := range changed {
+		if !deleted[c] {
+			live = append(live, c)
+		}
+	}
+	refs, content, unreadable := triage.Load(r.Root, live, tree, pol.Risk.Axes[core.AxisCoverage].TestGlobs)
+	prev := core.Weight{Axes: map[core.Axis]int{}, Mode: t.Mode, Irreversible: t.Irreversible}
+	w := triage.Rescore(pol, prev, triage.Input{Files: changed, Goal: t.Brief, Refs: refs, Tree: tree,
+		Content: content, Unreadable: unreadable, Deleted: deleted})
+	if w.Mode.Rank() > t.Mode.Rank() || (w.Irreversible && !t.Irreversible) {
+		return fmt.Sprintf("rescored to %s (irreversible=%v) from declared %s", w.Mode, w.Irreversible, t.Mode), nil
+	}
+	return "", nil
 }
 
 // gitPush pushes only rr/* branches, never a default branch. Credentials are not
@@ -483,9 +644,21 @@ func firstLine(s string) string {
 func prBody(t Task, lvl core.Level, rep core.WorkerReport) string {
 	body := rep.Body
 	if len(body) > 4000 {
-		body = body[:4000] + "\n…"
+		body = strings.ToValidUTF8(body[:4000], "") + "\n…"
+	}
+	body = strings.ReplaceAll(body, "@", "@\u200b") // no mentions, also outside the fence
+	fence, run := "```", 0
+	for _, c := range body + "\x00" { // longest backtick run
+		if c == '`' {
+			run++
+			continue
+		}
+		if run >= len(fence) {
+			fence = strings.Repeat("`", run+1)
+		}
+		run = 0
 	}
 	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: declared only, irreversible=%v\n"+
-		"- worker: %s, %d calls\n- cost: %d tokens\n- review verdict: none yet; required human review on the server\n\n### Worker report\n\n%s\n",
-		t.ID, lvl, lvl, t.Mode, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, body)
+		"- worker: %s, %d calls\n- cost: %d tokens\n- review verdict: none yet; required human review on the server\n\n"+
+		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, t.Mode, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
 }

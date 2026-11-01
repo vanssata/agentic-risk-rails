@@ -132,7 +132,7 @@ func TestManifestIsRenderedAtL2WhileAgentRuns(t *testing.T) {
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
 	assert.Equal(t, `{"l2":true}`, string(seen))
-	assert.Equal(t, "empty", out[0].Status, "no change, no PR")
+	assert.Equal(t, "empty", out[0].Status, blockedReason(t, e))
 	assert.Empty(t, e.host.Opened)
 }
 
@@ -262,7 +262,7 @@ func mustRead(t *testing.T, p string) []byte {
 func TestBlockedWorkerOpensNoPR(t *testing.T) {
 	e := newEnv(t)
 	e.worker.fn = func(context.Context, int, core.WorkerSpec) (core.WorkerReport, error) {
-		return core.WorkerReport{Status: core.StatusNeedsContext}, nil
+		return core.WorkerReport{Status: core.StatusNeedsContext, Tokens: 5}, nil
 	}
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
