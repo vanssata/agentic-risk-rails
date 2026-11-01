@@ -66,6 +66,9 @@ func TestRenderFiltersByRuntime(t *testing.T) {
 		{"subset", []string{"rt-b"}, []string{"b", "n"}, ""},
 		{"empty list keeps only neutral", []string{}, []string{"n"}, ""},
 		{"unknown name fails closed", []string{"rt-a", "nope"}, nil, `unknown runtime "nope"`},
+		{"names are case-sensitive", []string{"RT-A"}, nil, `unknown runtime "RT-A"`},
+		{"name with a space", []string{"rt a"}, nil, `unknown runtime "rt a"`},
+		{"unknown name fails even with no generators", []string{"nope"}, nil, `unknown runtime "nope"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var in core.SyncInput

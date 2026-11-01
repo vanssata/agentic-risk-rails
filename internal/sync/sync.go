@@ -56,16 +56,23 @@ func Generators() []core.Generator {
 
 // enabled reports whether g renders under project.runtimes (nil = all). A name
 // that is not a registered runtime is an error (fail-closed).
-func enabled(g core.Generator, rts []string) (bool, error) {
+func enabled(g core.Generator, rts []string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	rt, ok := runtimeOf[g.Name()]
+	return rts == nil || !ok || slices.Contains(rts, rt)
+}
+
+// checkRuntimes rejects names that are not registered runtimes (fail-closed).
+func checkRuntimes(rts []string) error {
 	mu.Lock()
 	defer mu.Unlock()
 	for _, rt := range rts {
 		if !known[rt] {
-			return false, fmt.Errorf("project.runtimes: unknown runtime %q", rt)
+			return fmt.Errorf("project.runtimes: unknown runtime %q", rt)
 		}
 	}
-	rt, ok := runtimeOf[g.Name()]
-	return rts == nil || !ok || slices.Contains(rts, rt), nil
+	return nil
 }
 
 // Render collects files from gens, skipping generators of runtimes not listed
@@ -73,10 +80,11 @@ func enabled(g core.Generator, rts []string) (bool, error) {
 func Render(ctx context.Context, in core.SyncInput, gens []core.Generator) ([]core.File, error) {
 	owner := map[string]string{}
 	var files []core.File
+	if err := checkRuntimes(in.Policy.Policy.Project.Runtimes); err != nil {
+		return nil, err
+	}
 	for _, g := range gens {
-		if on, err := enabled(g, in.Policy.Policy.Project.Runtimes); err != nil {
-			return nil, err
-		} else if !on {
+		if !enabled(g, in.Policy.Policy.Project.Runtimes) {
 			continue
 		}
 		fs, err := g.Render(ctx, in)

@@ -42,6 +42,7 @@ type configFile struct {
 type mcpServer struct {
 	Command                  string   `toml:"command"`
 	Args                     []string `toml:"args"`
+	EnabledTools             []string `toml:"enabled_tools"`
 	DefaultToolsApprovalMode string   `toml:"default_tools_approval_mode"`
 }
 
@@ -70,7 +71,7 @@ func (configGen) Render(_ context.Context, in core.SyncInput) ([]core.File, erro
 		ApprovalPolicy:     "on-request",
 		Agents:             agentsSection{MaxConcurrentThreads: maxSubagents},
 		Permissions:        map[string]permissionsDef{profileName: {Filesystem: filesystem(in)}},
-		MCPServers:         map[string]mcpServer{"rr": {Command: "rr", Args: []string{"mcp"}, DefaultToolsApprovalMode: "approve"}},
+		MCPServers:         map[string]mcpServer{"rr": {Command: "rr", Args: []string{"mcp"}, EnabledTools: []string{"triage", "research", "status"}, DefaultToolsApprovalMode: "approve"}},
 	}
 	if in.Level >= core.L2 {
 		cfg.ApprovalPolicy = "never" // ask is compiled to deny; nobody is there to answer
