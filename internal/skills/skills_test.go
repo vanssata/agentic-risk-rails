@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"io/fs"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
+	rrskills "github.com/vanssata/agentic-risk-rails/skills"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -46,5 +48,15 @@ func TestRenderPerRuntime(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// errata #53: under the runner the task journal is outside the agent's container,
+// so the skills that send the agent to `rr verify --task` say what to do instead.
+func TestVerifySkillsKnowTheRunner(t *testing.T) {
+	for _, name := range []string{"rr-build", "rr-ship"} {
+		b, err := fs.ReadFile(rrskills.FS, name+"/SKILL.md")
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "`$RR_LEVEL` is L2 or higher", name)
 	}
 }

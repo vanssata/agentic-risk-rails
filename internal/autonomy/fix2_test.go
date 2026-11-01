@@ -105,6 +105,6 @@ func TestFirstLineCutsOnARuneBoundaryAndPRBodyIsAdvisory(t *testing.T) {
 	l := firstLine(strings.Repeat("é", 100))
 	assert.True(t, strings.ToValidUTF8(l, "") == l)
 	assert.LessOrEqual(t, len(l), 72)
-	b := prBody(Task{ID: "t1"}, core.L2, core.WorkerReport{Status: core.StatusDone})
+	b := prBody(Task{ID: "t1"}, core.L2, core.WorkerReport{Status: core.StatusDone}, core.Weight{})
 	assert.Contains(t, b, "reported by the agent: advisory")
 }

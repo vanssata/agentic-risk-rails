@@ -403,3 +403,17 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **Решения на собственика (вълна 4):** egress proxy от rr; `project.runtimes`; code owners от CODEOWNERS; Codex usage се парсва; v0.x tags (първи `v0.4.0`); P2 wiring = вълна 5.
 
 **Отворено (за вълна 5 / собственика):** [U] Codex hook в контейнера (errata #44) и `--permission-mode dontAsk` за Claude — нужен е `RR_CONTRACT=1` run с реален image и API ключ; реален squid; tag `v0.4.0` при release (иначе генерираните workflows не инсталират rr); `--memory/--cpus` за контейнерите; `kill -9` оставя proxy/мрежи; `resolve()` ползва `DefaultRef` без `project.default_branch` (LOW); Gemini/Cursor/Kiro/OpenCode без contract тестове; копиран/преименуван `rr` бинар остава `ask` на L1.
+
+### 13.2 Вълна 4.2: реален run на runner-а (2026-11-01, branch `wave-4.2`)
+
+**Решения на собственика:** публичен sandbox `vanssata/rr-sandbox`; изолирани абонаментни логини `~/.claude-rr` / `~/.codex-rr` (`rr run --auth-from`, копие на контейнер, write-back само при същите JSON ключове); „контейнерът е sandbox-ът“ за `protected_paths` (errata #48).
+
+**Резултат:** L2 run с Claude ⇒ draft PR #1, с Codex ⇒ draft PR #2; CI `rr-verify` + `rr-policy-check` зелени; реален squid (`TestEgressContract`) и ro protected paths (`TestProtectedPathsContract`) минават с `RR_CONTRACT=1`. Факти: `docs/research/verified/runner.md` §WAVE 4.2.
+
+**Намерени и поправени (errata #47–#50):** TASK_IN_FLIGHT на собствения run; bwrap в контейнера; `/tmp` noexec; brief без `STATUS:`; squid.conf 0600; trust на staged Claude login; image без codex helper-ите и без go в login shell PATH.
+
+**Поправени след run-а (errata #51–#54):** опашката декларира оси (`declared`); PR body/labels от triage; `rr-build`/`rr-ship` в runner режим; GitHub App токен (`RR_GITHUB_APP_ID`/`RR_GITHUB_APP_KEY`).
+
+**GitHub App:** `rr-sandbox-app` (Contents/Pull requests/Administration RW; токенът се стеснява до тези права) ⇒ draft PR #4 от `rr-sandbox-app[bot]`, CI зелен; собственикът вече може да одобри.
+
+**Отворено:** refresh на App токена при run > 1 час; Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.

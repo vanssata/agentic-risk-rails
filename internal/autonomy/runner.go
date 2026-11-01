@@ -34,6 +34,9 @@ type Task struct {
 	Tier         core.Tier `yaml:"tier"` // default BALANCED
 	MaxTurns     int       `yaml:"max_turns"`
 	Files        []string  `yaml:"files"` // declared scope; handed to the agent's hook read-only
+	// Declared are axes the queue's author declares (0..2), as `rr task start
+	// --declare`: they fill an UNKNOWN axis or raise a measured one, never lower it.
+	Declared map[core.Axis]int `yaml:"declared"`
 }
 
 // Outcome is what happened to one queue item.
@@ -55,8 +58,11 @@ type Runner struct {
 	Container     bool       // the Worker runs in a container
 	Runtime       core.RuntimeAdapter
 	Hosting       core.Hosting
-	Journal       core.Journal // the runner's own, authoritative
-	Worker        core.WorkerRunner
+	Journal       core.Journal // the runner's own, authoritative; open for the whole run
+	// Tasks holds the queue tasks' journals (flow.Env.Journal). A separate root from
+	// Journal: one open task per root, and the run itself is open while its tasks run.
+	Tasks  core.Journal
+	Worker core.WorkerRunner
 	// Resolve resolves the policy with `inForce` (riskrails.yaml read from the
 	// default branch through the hosting API) as the DefaultBranch layer and
 	// the ceiling files; the working tree is never a layer at L≥2.
@@ -185,9 +191,17 @@ func (r *Runner) preflight(ctx context.Context, queue []Task) (base string, err 
 	if r.Clock == nil {
 		r.Clock = realClock{}
 	}
+	if r.Tasks == nil {
+		return "", fmt.Errorf("no task journal: the runner refuses to run tasks it cannot journal")
+	}
 	for _, t := range queue {
 		if !taskIDRe.MatchString(t.ID) {
 			return "", fmt.Errorf("invalid task id %q", t.ID)
+		}
+		for a, v := range t.Declared {
+			if !slices.Contains(core.Axes, a) || v < 0 || v > 2 {
+				return "", fmt.Errorf("task %s: declared %s=%d: want a known axis = 0..2", t.ID, a, v)
+			}
 		}
 	}
 	if err := requireRealGitDir(r.Root); err != nil {
@@ -466,9 +480,11 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, err
 	}
 
-	if o, stop, err := r.gateTask(ctx, o, t); stop {
-		return o, err
+	gated, w, stop, err := r.gateTask(ctx, o, t)
+	if stop {
+		return gated, err
 	}
+	t = triaged(t, w)
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
@@ -492,7 +508,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
 	defer endWave()
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
-		Brief: "Task id: " + t.ID + "\n\n" + t.Brief, Budget: pol.Models.Budgets[t.Mode]})
+		Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: pol.Models.Budgets[t.Mode]})
 
 	if reason := r.halter.Halted(); reason != "" {
 		return o, r.haltTask(ctx, reason, files, tracked)
@@ -516,11 +532,16 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
 	if b := pol.Models.Budgets[t.Mode]; b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
 		r.discard(ctx, files, tracked, base)
-		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens})
-		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
+		worker := string(rep.Status) + ": " + firstLine(rep.Body)
+		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
+		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
 	}
-	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
+	return r.deliver(ctx, t, o, rep, w, werr, files, tracked, base)
 }
+
+// briefTail is the worker protocol: the report is parsed by its last line only
+// (statusOf) and the runner, not the agent, commits.
+const briefTail = "\n\nDo not run git commit; rr commits. End your report with a line `STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT`.\n"
 
 // waveContext applies max_wall_minutes to one wave.
 func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Context, context.CancelFunc) {
@@ -535,33 +556,43 @@ func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Co
 }
 
 // gateTask runs before the agent: the base must still be the remote tip, then the
-// task journal and scope file. stop = the task does not run (err may be nil: blocked).
-func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, bool, error) {
+// task journal and scope file, which return the triage of the real files. stop =
+// the task does not run (err may be nil: blocked).
+func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, core.Weight, bool, error) {
 	moved, err := r.checkBase(ctx)
 	if err != nil {
-		return o, true, r.halted(ctx, err.Error())
+		return o, core.Weight{}, true, r.halted(ctx, err.Error())
 	}
 	if moved {
 		o.Status = "blocked"
-		return o, true, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
+		return o, core.Weight{}, true, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
 	}
 	w, err := r.startTask(ctx, t)
 	if err != nil {
-		return o, true, r.refuse(ctx, "TASK_START", err.Error())
+		return o, core.Weight{}, true, r.refuse(ctx, "TASK_START", err.Error())
 	}
 	if w.Mode == "" { // Start not wired
-		return o, false, nil
+		return o, w, false, nil
 	}
 	lvl, why := TaskLevel(LevelInput{Policy: r.eff.Policy, Mode: w.Mode, Irreversible: w.Irreversible,
 		Enforcement: core.EnforcementSandbox, InContainer: r.Container})
 	if lvl = min(lvl, r.Level); lvl < core.L2 {
 		o.Level = lvl
 		if err := r.log(ctx, "autonomy_level", map[string]any{"task": t.ID, "level": lvl, "reason": "triage of the real files: " + why, "skipped": true}); err != nil {
-			return o, true, err
+			return o, core.Weight{}, true, err
 		}
-		return o, true, r.Journal.Close(ctx, t.ID) // the task was opened by Start
+		return o, core.Weight{}, true, r.Tasks.Close(ctx, t.ID) // the task was opened by Start
 	}
-	return o, false, nil
+	return o, w, false, nil
+}
+
+// triaged: the triage of the real files, not the queue's claim, is what the PR
+// reports and labels; no triage (Start not wired) keeps the queue's.
+func triaged(t Task, w core.Weight) Task {
+	if w.Mode != "" {
+		t.Mode, t.Irreversible = w.Mode, t.Irreversible || w.Irreversible
+	}
+	return t
 }
 
 // ScopeFileName is the task's file list the runner writes into StateDir.
@@ -608,7 +639,7 @@ func (r *Runner) beforePush(ctx context.Context, killFile string) (moved bool, e
 }
 
 // deliver turns a finished worker into a draft PR, or blocks the task.
-func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.WorkerReport, werr error, files []core.File, tracked map[string]bool, base string) (Outcome, error) {
+func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.WorkerReport, w core.Weight, werr error, files []core.File, tracked map[string]bool, base string) (Outcome, error) {
 	pol, branch := r.eff.Policy, "rr/"+t.ID
 	block := func(reason string) (Outcome, error) {
 		o.Status = "blocked"
@@ -663,7 +694,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return block("push: " + err.Error())
 	}
 	labels := []string{"rr", "rr:" + o.Level.String(), "rr:mode:" + string(t.Mode)}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), labels)
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep, w), labels)
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}
@@ -837,7 +868,7 @@ func firstLine(s string) string {
 	return l
 }
 
-func prBody(t Task, lvl core.Level, rep core.WorkerReport) string {
+func prBody(t Task, lvl core.Level, rep core.WorkerReport, w core.Weight) string {
 	body := rep.Body
 	if len(body) > 4000 {
 		body = strings.ToValidUTF8(body[:4000], "") + "\n…"
@@ -854,9 +885,26 @@ func prBody(t Task, lvl core.Level, rep core.WorkerReport) string {
 		}
 		run = 0
 	}
-	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: declared only, irreversible=%v\n"+
+	mode, weight := string(t.Mode)+" (from the queue: not triaged)", "not measured"
+	if w.Mode != "" {
+		mode, weight = string(w.Mode)+" (triage of the real files)", fmt.Sprintf("W=%d, declared by the queue: %s", w.Total(), declaredText(t.Declared))
+	}
+	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: %s, irreversible=%v\n"+
 		"- worker: %s, %d calls\n- cost: %d tokens (worker status, calls and cost are reported by the agent: advisory)\n- review verdict: none yet; required human review on the server\n\n"+
-		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, t.Mode, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
+		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, mode, weight, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
+}
+
+func declaredText(d map[core.Axis]int) string {
+	var out []string
+	for _, a := range core.Axes {
+		if v, ok := d[a]; ok {
+			out = append(out, fmt.Sprintf("%s=%d", a, v))
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, " ")
 }
 
 // Files the runner writes into StateDir for the container (mounted read-only).

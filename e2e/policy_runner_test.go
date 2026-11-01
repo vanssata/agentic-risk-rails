@@ -185,8 +185,8 @@ func (h *runnerHarness) run(t *testing.T, tasks ...autonomy.Task) ([]autonomy.Ou
 	r := &autonomy.Runner{
 		Root: h.root, StateDir: h.state, RunID: "run1", DefaultBranch: "main", Level: core.L2, Container: true,
 		Runtime: &fakes.Runtime{ID: "claude", Enf: core.EnforcementSandbox}, Hosting: h.host,
-		Journal: journal.New(h.state),
-		Gens:    []core.Generator{fakes.Generator{ID: "g", Files: []core.File{{Path: ".claude/settings.json", Content: []byte(`{"cmd":"rr guard"}`)}}}},
+		Journal: journal.New(filepath.Join(h.state, "run")), Tasks: journal.New(h.state),
+		Gens: []core.Generator{fakes.Generator{ID: "g", Files: []core.File{{Path: ".claude/settings.json", Content: []byte(`{"cmd":"rr guard"}`)}}}},
 		Worker: workerFn(func(context.Context, core.WorkerSpec) (core.WorkerReport, error) {
 			h.workerCalls++
 			if h.worker != nil {

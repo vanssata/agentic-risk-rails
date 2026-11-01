@@ -62,3 +62,34 @@ func TestRunnerScopeFileFormatMatchesTheHook(t *testing.T) {
 	assert.True(t, armed)
 	assert.Equal(t, []string{"docs/notes.md", "src/a/B.php"}, got)
 }
+
+// errata #51: the operator who writes the queue can declare axes, with the same
+// rule as `rr task start --declare`: it fills an UNKNOWN axis or raises a
+// measured one, it never lowers a measurement.
+func TestRunFlowQueueDeclaresAxes(t *testing.T) {
+	restore := policy.SetCeilingPaths(filepath.Join(t.TempDir(), "none"), filepath.Join(t.TempDir(), "none"))
+	defer restore()
+	repo := testutil.CopyFixture(t, "php-symfony")
+	r, err := resolve(t.Context(), repo)
+	require.NoError(t, err)
+	tiers := core.EffectiveTiers{Runtime: "claude", Models: map[core.Tier]string{core.TierBalanced: "m"}}
+	files := []string{"src/Controller/HomeController.php"}
+	for _, tc := range []struct {
+		name     string
+		declared map[core.Axis]int
+		want     core.Mode
+	}{
+		{"undeclared stays guarded", nil, core.ModeGuarded},
+		{"declared unknowns make it light", map[core.Axis]int{core.AxisBehaviour: 0, core.AxisDomain: 0, core.AxisNovelty: 0}, core.ModeLight},
+		{"a measured axis is not lowered", map[core.Axis]int{core.AxisBehaviour: 0, core.AxisDomain: 0, core.AxisNovelty: 0, core.AxisCoverage: 0}, core.ModeLight},
+		{"raising works (domain=2 is a hard floor)", map[core.Axis]int{core.AxisBehaviour: 0, core.AxisDomain: 2, core.AxisNovelty: 0}, core.ModeFull},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start, _ := runFlow(runFlowIn{Root: repo, StateRoot: t.TempDir(), Home: t.TempDir(), Policy: r.eff, Tiers: tiers})
+			w, err := start(t.Context(), autonomy.Task{ID: "t1", Brief: "rename a variable", Files: files, Declared: tc.declared})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, w.Mode, w.Reasons)
+			assert.Equal(t, 2, w.Axes[core.AxisCoverage], "measured coverage kept")
+		})
+	}
+}

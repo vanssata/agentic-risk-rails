@@ -43,3 +43,33 @@ Tokens: none for models; 4 doc fetches.
 | Probe: `rr run enforcement` reports `hook_only` unless the codex user config trusts the checkout; the runner refuses a render lacking `.claude/settings.json` (claude) or `.codex/hooks.json` + `.codex/config.toml` profile (codex) containing the rr guard / `default_permissions` markers | internal/autonomy, cmd/rr | n/a |
 | The guard in the container resolves ceilings from `/etc/riskrails/ceiling.yaml` and `$HOME/.config/riskrails/ceiling.yaml` (HOME=/tmp), cmd/rr/wire.go via policy.CeilingPaths; the runner mounts the raw bytes it resolved with there | policy/gitsrc.go | code |
 | Secrets: every checkout path matching secret_reads ∪ sandbox.no_read (ignored files included, `.git` skipped) is covered by an empty ro tmpfs (dir) or `/dev/null` (file) in the agent and close containers | | code |
+
+## WAVE 4.2 — REAL RUN (2026-11-01)
+
+Real `rr run --level L2` against the public sandbox `vanssata/rr-sandbox` (Go module, ruleset applied through the API), docker 29.9.2, squid `ubuntu/squid@sha256:6a097f68…`, agent image from `e2e/runner/build.sh` (claude 2.1.316, codex 0.166.0, go 1.27.3). Subscription logins are isolated (`--auth-from ~/.claude-rr`, `~/.codex-rr`), never the operator's own config dirs. Results: **Claude → draft PR #1, Codex → draft PR #2**, both with green `rr-verify` + `rr-policy-check` CI; no containers or networks left behind.
+
+| claim | evidence | mark |
+|---|---|---|
+| Claude with a claude.ai login works through squid with only `api.anthropic.com` + `platform.claude.com` allowed | run → PR #1 (5 turns, usage in the JSON result) | [V] observed |
+| Codex with a ChatGPT login works through squid with only `chatgpt.com` + `auth.openai.com`, and honors `HTTPS_PROXY` | run → PR #2 (`turn.completed.usage` present) | [V] observed (closes the [U] rows above for login mode) |
+| `.credentials.json` / `auth.json` were not refreshed in these runs (no write-back happened) | byte compare before/after | [V] observed; write-back path is unit-tested only |
+| bwrap cannot create a user namespace under the runner's flags (`--cap-drop ALL`, `no-new-privileges`, default seccomp): "No permissions to create new namespace" — so neither Claude's sandbox nor Codex `workspace-write` can start in the container | `bwrap --unshare-user` and `codex sandbox linux` in the image | [V] observed (errata #42, #48) |
+| Claude at L≥2 renders `sandbox.failIfUnavailable: true`; without bwrap+socat it exits "sandbox required but unavailable" before any work | agent stderr | [V] observed |
+| A staged `CLAUDE_CONFIG_DIR` without `.claude.json` trust for the workdir makes claude ignore the project `permissions.allow` ("this workspace has not been trusted") | agent stderr | [V] observed |
+| `--settings '{"sandbox":{"enabled":false}}'` overrides the project's sandbox block (the run proceeds, hooks still fire) | run → PR #1; precedence row in claude-code.md | [V] |
+| docker `--tmpfs /tmp` defaults to `noexec`: `go test` fails with `fork/exec /tmp/go-build…: permission denied`; `/tmp:rw,exec,nosuid,nodev` fixes it | `/proc/mounts` in the image + `go run` | [V] observed |
+| codex 0.166 spawns `codex-code-mode-host` (and ships `codex-exec-server`) from its own dir; without it every tool call fails closed | agent JSONL | [V] observed |
+| codex runs commands with `bash -lc`; Debian's `/etc/profile` resets PATH and drops `/usr/local/go/bin` (exit 127) | agent JSONL | [V] observed; image links go/gofmt into `/usr/local/bin` |
+| Read-only bind mounts of single files refuse write, rename-over and delete for the agent user | `TestProtectedPathsContract` (RR_CONTRACT=1) | [V] |
+
+Fixes in code: run journal in its own root (`Runner.Tasks`); claude `--settings` sandbox off and codex `--sandbox danger-full-access` in the container, with every existing match of `protected_paths ∪ sandbox.readonly ∪ sandbox.no_write` bind-mounted read-only (owner decision); staged `.claude.json` trust for `/work`; `/tmp` exec; the runner brief asks for the `STATUS:` line; a BUDGET refusal for unknown usage carries the worker's status and first line.
+
+Runner run log: 4 Claude runs (TASK_IN_FLIGHT → guarded triage → BUDGET/sandbox → BLOCKED/noexec → BLOCKED/no STATUS line → PR), 3 Codex runs (missing helper → bwrap → PR). Tokens: Claude ≈ 55k per successful run (mostly cache reads); Codex 45k + 79k + 112k input (≈ 90% cached).
+
+GAPS (wave 4.2): see errata #47–#54; a second Codex run with the PATH fix was not made (verified with `bash -lc 'go version'` in the image instead).
+
+### Re-run after errata #51–#54 (2026-11-01)
+Claude L2, a code task (`Farewell` in `greet/greet.go` + test) with `declared: {behaviour: 0, domain: 0, novelty: 0}` in the queue ⇒ triage `W=0 -> light` (coverage measured, not lowered) ⇒ **draft PR #3**, body `mode: light (triage of the real files)`, `W=0, declared by the queue: …`; worker `STATUS: DONE` (no `rr verify` concern: the skill's runner branch was followed); CI green; ≈ 94k tokens. The GitHub App path (#54) is covered by httptest only: no App exists for the sandbox yet.
+
+### Run as a GitHub App (errata #54, 2026-11-01)
+`RR_GITHUB_APP_ID` + `RR_GITHUB_APP_KEY`, no PAT in the environment: Claude L2, code task `greet-shout` ⇒ **draft PR #4 authored by `rr-sandbox-app[bot]`** (the owner is no longer the pusher, so the code-owner review can count), CI green. The first attempt refused L≥2 before any agent ran: with Administration read the ruleset came back without `bypass_actors` (fail-closed as designed); the App got Administration write (owner decision) and the token is narrowed to contents/pull_requests/administration write + metadata read.

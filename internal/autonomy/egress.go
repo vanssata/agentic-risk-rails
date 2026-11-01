@@ -109,7 +109,9 @@ func (e Egress) Up(ctx context.Context) (_ *EgressNet, err error) {
 	if strings.Contains(confPath, ",") {
 		return nil, fmt.Errorf("egress: path %q contains a comma", confPath)
 	}
-	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
+	// 0644: squid starts as root with --cap-drop ALL (no CAP_DAC_OVERRIDE) and cannot
+	// read a 0600 file of the host user; the conf holds only the host allowlist.
+	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil { //nolint:gosec // no secret, see above
 		return nil, err
 	}
 	in, out, proxy := "rr-int-"+id, "rr-out-"+id, "rr-proxy-"+id
