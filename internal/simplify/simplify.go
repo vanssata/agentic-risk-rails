@@ -41,6 +41,9 @@ type Report struct {
 func Run(ctx context.Context, root string, files []string) Report {
 	r := Report{Files: []string{}, Ignored: []string{}}
 	for _, f := range files {
+		if strings.HasPrefix(f, "-") {
+			continue // never a flag for a tool
+		}
 		if b, err := os.ReadFile(filepath.Join(root, f)); err == nil && bytes.Contains(b, []byte(Marker)) {
 			r.Ignored = append(r.Ignored, f)
 		} else {
@@ -49,6 +52,50 @@ func Run(ctx context.Context, root string, files []string) Report {
 	}
 	r.Tools = []ToolReport{jscpd(ctx, root, r.Files), astGrep(ctx, root, r.Files)}
 	return r
+}
+
+// hostCmd finds name only in safePath(root) and gives it an allowlisted environment.
+func hostCmd(ctx context.Context, root, name string, args ...string) (*exec.Cmd, bool) {
+	dirs := safePath(root)
+	for _, d := range dirs {
+		p := filepath.Join(d, name)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+			c := exec.CommandContext(ctx, p, args...)
+			c.Dir = root
+			c.Env = []string{"PATH=" + strings.Join(dirs, string(filepath.ListSeparator))}
+			for _, k := range []string{"HOME", "LANG", "TMPDIR"} {
+				if v, ok := os.LookupEnv(k); ok {
+					c.Env = append(c.Env, k+"="+v)
+				}
+			}
+			return c, true
+		}
+	}
+	return nil, false
+}
+
+// safePath is PATH reduced to absolute directories outside root.
+// same rule as verify.safePath; dedup in wave 4
+func safePath(root string) []string {
+	evalRoot := evalOr(root)
+	var dirs []string
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(d) {
+			continue
+		}
+		rel, err := filepath.Rel(evalRoot, evalOr(d))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+func evalOr(p string) string {
+	if e, err := filepath.EvalSymlinks(p); err == nil {
+		return e
+	}
+	return p
 }
 
 func skipped(name, why string) ToolReport {
@@ -62,16 +109,15 @@ func failed(name string, err error) ToolReport {
 // jscpd scans the repo and keeps clones that touch a changed file.
 func jscpd(ctx context.Context, root string, files []string) ToolReport {
 	const name = "jscpd"
-	if _, err := exec.LookPath(name); err != nil {
-		return skipped(name, "not installed")
-	}
 	out, err := os.MkdirTemp("", "rr-jscpd-")
 	if err != nil {
 		return failed(name, err)
 	}
 	defer os.RemoveAll(out)
-	cmd := exec.CommandContext(ctx, name, "--silent", "--reporters", "json", "--output", out, ".")
-	cmd.Dir = root
+	cmd, ok := hostCmd(ctx, root, name, "--silent", "--reporters", "json", "--output", out, ".")
+	if !ok {
+		return skipped(name, "not installed")
+	}
 	_ = cmd.Run() // may exit non-zero on thresholds; the report decides
 	b, err := os.ReadFile(filepath.Join(out, "jscpd-report.json"))
 	if err != nil {
@@ -107,17 +153,20 @@ func jscpd(ctx context.Context, root string, files []string) ToolReport {
 // astGrep runs the project's own rules; without sgconfig.yml there are none.
 func astGrep(ctx context.Context, root string, files []string) ToolReport {
 	const name = "ast-grep"
-	if _, err := exec.LookPath(name); err != nil {
-		return skipped(name, "not installed")
-	}
-	if _, err := os.Stat(filepath.Join(root, "sgconfig.yml")); err != nil {
+	cfg, err := os.ReadFile(filepath.Join(root, "sgconfig.yml"))
+	if err != nil {
 		return skipped(name, "no sgconfig.yml")
+	}
+	if bytes.Contains(cfg, []byte("customLanguages")) || bytes.Contains(cfg, []byte("libraryPath")) {
+		return skipped(name, "custom languages load code")
 	}
 	if len(files) == 0 {
 		return ToolReport{Name: name, Status: "ok", Findings: []Finding{}}
 	}
-	cmd := exec.CommandContext(ctx, name, append([]string{"scan", "--json=stream"}, files...)...)
-	cmd.Dir = root
+	cmd, ok := hostCmd(ctx, root, name, append([]string{"scan", "--json=stream", "--"}, files...)...)
+	if !ok {
+		return skipped(name, "not installed")
+	}
 	b, err := cmd.Output() // exit 1 is possible when error-severity rules match
 	if len(b) == 0 && err != nil {
 		return failed(name, err)

@@ -20,3 +20,6 @@ go-sdk mcp/{server,transport,shared}.go; agentskills.io/specification; Claude an
 
 ## COST
 ~12 fetches, no paid calls.
+
+## GAP (accepted, review round 1)
+- `affected` is not static: mapping files runs the project's test tooling (jest config, `go list`). Behaviour unchanged by decision; stated in the tool description; to be recorded in errata.

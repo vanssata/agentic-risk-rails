@@ -39,8 +39,10 @@ func TestRenderPerRuntime(t *testing.T) {
 			sort.Strings(summary)
 			testutil.Golden(t, "paths_"+rt+".golden", []byte(strings.Join(summary, "\n")+"\n"))
 			for _, f := range files {
-				if strings.HasSuffix(f.Path, "rr-simplify/SKILL.md") {
-					testutil.Golden(t, "rr-simplify_"+rt+".golden", f.Content)
+				for _, n := range []string{"rr-simplify", "rr-release"} {
+					if strings.HasSuffix(f.Path, n+"/SKILL.md") {
+						testutil.Golden(t, n+"_"+rt+".golden", f.Content)
+					}
 				}
 			}
 		})
