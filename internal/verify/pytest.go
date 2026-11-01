@@ -69,7 +69,11 @@ func (Pytest) Map(_ context.Context, root string, changed []string) (tests, unco
 	}
 	rdeps := map[string][]string{} // file -> files importing it
 	for _, f := range files {
-		for _, imp := range pyImports(readFile(root, f)) {
+		src, err := readFile(root, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, imp := range pyImports(src) {
 			if t, ok := byMod[imp]; ok && t != f {
 				rdeps[t] = append(rdeps[t], f)
 			}

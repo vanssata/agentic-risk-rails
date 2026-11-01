@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -37,8 +36,11 @@ func stripVariant(p string) string {
 
 func (Golang) Map(ctx context.Context, root string, changed []string) (tests, uncovered []string, err error) {
 	var out, stderr bytes.Buffer
-	c := exec.CommandContext(ctx, "go", "list", "-test", "-json=ImportPath,Dir,Deps", "./...")
-	c.Dir, c.Stdout, c.Stderr = root, &out, &stderr
+	c, err := hostCmd(ctx, root, "go", "list", "-test", "-json=ImportPath,Dir,Deps", "./...")
+	if err != nil {
+		return nil, nil, err
+	}
+	c.Stdout, c.Stderr = &out, &stderr
 	if err := c.Run(); err != nil {
 		return nil, nil, fmt.Errorf("verify: go list: %w: %s", err, stderr.String())
 	}

@@ -16,17 +16,6 @@ func (generic) Map(context.Context, string, []string) ([]string, []string, error
 	return nil, nil, nil
 }
 
-// generic returns the generic items of a selection.
-func (s Selection) generic() []Item {
-	var out []Item
-	for _, it := range s.Items {
-		if _, ok := it.Adapter.(generic); ok {
-			out = append(out, it)
-		}
-	}
-	return out
-}
-
 func (generic) Run(ctx context.Context, root string, spec core.VerifyAdapterSpec, _ []string, _ bool) (core.TestResult, error) {
 	return runCmd(ctx, root, spec, nil, true)
 }

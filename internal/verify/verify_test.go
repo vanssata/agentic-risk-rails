@@ -15,14 +15,19 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
-// fakeRunner installs a binary that appends its argv to a record file and
-// exits with $FAKE_EXIT (default 0). It returns the record path.
+// fakeRunner installs a binary that appends its argv to a record file and exits
+// 1 while failFlag(rec) exists, else 0. Adapters get a sanitized environment, so
+// everything the script needs is baked in. It returns the record path.
 func fakeRunner(t *testing.T, name string) string {
 	t.Helper()
 	rec := filepath.Join(t.TempDir(), "calls")
-	t.Setenv("FAKE_REC", rec)
-	testutil.FakeBin(t, name, `echo "$@" >> "$FAKE_REC"; exit ${FAKE_EXIT:-0}`)
+	testutil.FakeBin(t, name, `echo "$@" >> "`+rec+`"; [ -e "`+rec+`.fail" ] && exit 1; exit 0`)
 	return rec
+}
+
+func failFlag(t *testing.T, rec string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(rec+".fail", nil, 0o644))
 }
 
 func calls(t *testing.T, rec string) []string {
@@ -104,7 +109,7 @@ func TestPHPUnitRunAndNoFakeGreen(t *testing.T) {
 	assert.True(t, res.Passed)
 	assert.Equal(t, []string{"bin/phpunit tests/ATest.php"}, calls(t, rec))
 
-	t.Setenv("FAKE_EXIT", "1")
+	failFlag(t, rec)
 	res, err = PHPUnit{}.Run(context.Background(), root, spec, []string{"tests/ATest.php"}, false)
 	require.NoError(t, err)
 	assert.False(t, res.Passed)
@@ -211,7 +216,7 @@ func two() *int  { n := 2; return &n }
 
 func orchInput(j core.Journal, s *stub) Input {
 	return Input{
-		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: func(context.Context, bool) (string, error) { return "T1", nil },
+		Root: t0, Task: "t1", Changed: []string{"a.go"}, Journal: j, Actors: []core.VerifyAdapter{s}, Tree: func(context.Context) (string, error) { return "T1", nil },
 		Spec: core.VerifySpec{
 			Adapters:              []core.VerifyAdapterSpec{{Name: s.name, Cmd: "x"}},
 			FullRunWhen:           []string{"uncovered_file", "close"},
@@ -301,7 +306,7 @@ func TestRunOrchestration(t *testing.T) {
 
 func TestComputeFacts(t *testing.T) {
 	ev := func(d string) core.Event { return core.Event{Type: "verify_run", Data: []byte(d)} }
-	green := ev(`{"full":true,"passed":true,"tree":"T1"}`)
+	green := ev(`{"full":true,"passed":true,"tree":"T1","trusted":true}`)
 	tests := []struct {
 		name    string
 		events  []core.Event
@@ -312,7 +317,8 @@ func TestComputeFacts(t *testing.T) {
 		{"both", []core.Event{green}, "T1", []string{"src/a.go"}, Facts{GreenNow: true, InScope: true}},
 		{"tree changed after run", []core.Event{green}, "T2", []string{"src/a.go"}, Facts{InScope: true}},
 		{"affected only", []core.Event{ev(`{"full":false,"passed":true,"tree":"T1"}`)}, "T1", nil, Facts{InScope: true}},
-		{"latest full red", []core.Event{green, ev(`{"full":true,"passed":false,"tree":"T1"}`)}, "T1", nil, Facts{InScope: true}},
+		{"latest full red", []core.Event{green, ev(`{"full":true,"passed":false,"tree":"T1","trusted":true}`)}, "T1", nil, Facts{InScope: true}},
+		{"agent-started run is advisory", []core.Event{ev(`{"full":true,"passed":true,"tree":"T1","trusted":false}`)}, "T1", nil, Facts{InScope: true}},
 		{"no runs", nil, "T1", nil, Facts{InScope: true}},
 		{"out of scope", []core.Event{green}, "T1", []string{"src/a.go", "docs/x.md"}, Facts{GreenNow: true, OutOfScope: []string{"docs/x.md"}}},
 	}

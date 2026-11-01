@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -23,7 +22,8 @@ type Node struct{ Tool string } // "jest" | "vitest"
 func (n Node) Name() string { return n.Tool }
 
 func (n Node) Detect(root string) bool {
-	return exists(root, "package.json") && strings.Contains(readFile(root, "package.json"), `"`+n.Tool+`"`)
+	s, err := readFile(root, "package.json")
+	return err == nil && strings.Contains(s, `"`+n.Tool+`"`)
 }
 
 var nodeTestFile = regexp.MustCompile(`\.(test|spec)\.[cm]?[jt]sx?$`)
@@ -40,8 +40,11 @@ func (n Node) Map(ctx context.Context, root string, changed []string) (tests, un
 			tests = append(tests, f)
 		default:
 			var out bytes.Buffer
-			c := exec.CommandContext(ctx, "npx", "--no-install", "jest", "--listTests", "--findRelatedTests", f)
-			c.Dir, c.Stdout = root, &out
+			c, err := hostCmd(ctx, root, "npx", "--no-install", "jest", "--listTests", "--findRelatedTests", f)
+			if err != nil {
+				return nil, nil, err
+			}
+			c.Stdout = &out
 			if err := c.Run(); err != nil {
 				return nil, nil, fmt.Errorf("verify: jest --listTests: %w", err)
 			}

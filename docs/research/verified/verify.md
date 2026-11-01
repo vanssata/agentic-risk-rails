@@ -37,3 +37,10 @@ pytest-testmon: `pytest --testmon` builds a dependency DB (`.testmondata`) from 
 ## COST
 
 ~6 page fetches; no conflicts with DES §9.2. (DES says go uses `go list -deps` reversed: done via `-test` binaries' `Deps`.)
+
+## GAPS (host-only close, fix round 4)
+
+- An advisory run is not proof. `rr verify --close` started by an agent is journaled with `trusted:false`; `ComputeFacts` and `Close` count only a run started by a trusted actor (human, autonomy/runner, ci). Who really started a run is enforced by the flow (W4-A), not by this module.
+- TOCTOU while the agent is alive (files changed between fingerprint and run, or by a still-running agent process) is not closed by this module; it is closed by running `verify.Close` only after the agent's processes have stopped.
+- Adapter environment is an allowlist (HOME, TMPDIR, USER, LOGNAME, LANG, LC_ALL, TERM, TZ, SYSTEMROOT) plus PATH = the rr process PATH reduced to absolute directories outside the repository. Tools that need other variables (databases, tokens) will not see them.
+- Built-in cache allowlist (`.phpunit.cache/**`, `.phpunit.result.cache`, `.pytest_cache/**`, `**/__pycache__/**`, `node_modules/.cache/**`, `var/cache/**`) is exempt from fingerprint equality and from task changes; anything else, ignored files included, must be identical before and after a run.

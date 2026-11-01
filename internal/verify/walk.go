@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -34,9 +35,25 @@ func walkFiles(root string, keep func(rel string) bool) ([]string, error) {
 	return out, err
 }
 
-func readFile(root, rel string) string {
-	b, _ := os.ReadFile(filepath.Join(root, rel))
-	return string(b)
+const maxReadSize = 4 << 20
+
+// readFile reads a regular file of the repository. A symlink, FIFO, device,
+// socket or oversized file is an error (fail-closed): content that decides test
+// selection must not come from outside the tree or block the reader.
+func readFile(root, rel string) (string, error) {
+	p := filepath.Join(root, rel)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("verify: refusing to read %s: not a regular file", rel)
+	}
+	if fi.Size() > maxReadSize {
+		return "", fmt.Errorf("verify: refusing to read %s: larger than %d bytes", rel, maxReadSize)
+	}
+	b, err := os.ReadFile(p)
+	return string(b), err
 }
 
 func exists(root, rel string) bool {

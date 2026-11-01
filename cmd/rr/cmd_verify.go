@@ -78,7 +78,7 @@ func init() {
 				}
 				rep, err := verify.Run(cmd.Context(), verify.Input{
 					Root: f.root, Task: task, Changed: changed, Spec: spec, Mode: mode, Closing: closing,
-					Tree:    func(ctx context.Context, ign bool) (string, error) { return verify.TreeFingerprint(ctx, f.root, ign) },
+					Tree:    func(ctx context.Context) (string, error) { return verify.TreeFingerprint(ctx, f.root) },
 					Journal: journal.New(f.root),
 				})
 				if err != nil {
@@ -95,7 +95,7 @@ func init() {
 		}
 		f.bind(c)
 		c.PersistentFlags().StringVar(&task, "task", "", "task id (journal)")
-		c.Flags().BoolVar(&closing, "close", false, "closing run: always full")
+		c.Flags().BoolVar(&closing, "close", false, "closing run: always full (advisory when started by an agent: only the host run counts for close)")
 		_ = c.MarkPersistentFlagRequired("task")
 
 		// facts takes every trust input (scope, base_sha, baseline) from the task journal only.
@@ -111,7 +111,7 @@ func init() {
 				if err != nil {
 					return err
 				}
-				tree, err := verify.TreeFingerprint(cmd.Context(), f.root, true)
+				tree, err := verify.TreeFingerprint(cmd.Context(), f.root)
 				if err != nil {
 					return err
 				}

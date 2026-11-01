@@ -33,7 +33,11 @@ type psr4Entry struct{ prefix, dir string }
 // psr4 returns prefix -> dir entries, longest dir first. A value is a string or an array of strings.
 func psr4(root string) ([]psr4Entry, error) {
 	var c composerFile
-	if err := json.Unmarshal([]byte(readFile(root, "composer.json")), &c); err != nil {
+	raw, err := readFile(root, "composer.json")
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
 		return nil, fmt.Errorf("verify: composer.json: %w", err)
 	}
 	var out []psr4Entry
@@ -81,7 +85,11 @@ func (PHPUnit) Map(_ context.Context, root string, changed []string) (tests, unc
 		if fqcn != "" {
 			short := path.Base(strings.TrimSuffix(f, ".php"))
 			for _, t := range phpTests {
-				if path.Base(t) == short+"Test.php" || strings.Contains(readFile(root, t), fqcn) {
+				src, err := readFile(root, t)
+				if err != nil {
+					return nil, nil, err
+				}
+				if path.Base(t) == short+"Test.php" || strings.Contains(src, fqcn) {
 					tests, found = append(tests, t), true
 				}
 			}

@@ -33,10 +33,13 @@ func runCmd(ctx context.Context, root string, spec core.VerifyAdapterSpec, tests
 		argv = append(argv, tests...)
 	}
 	var out bytes.Buffer
-	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	c.Dir, c.Stdout, c.Stderr = root, &out, &out
+	c, err := hostCmd(ctx, root, argv...)
+	if err != nil {
+		return core.TestResult{}, err
+	}
+	c.Stdout, c.Stderr = &out, &out
 	start := time.Now()
-	err := c.Run()
+	err = c.Run()
 	res := core.TestResult{Output: out.String(), Duration: time.Since(start)}
 	if !full {
 		res.Ran = tests

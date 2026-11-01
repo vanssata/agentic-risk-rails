@@ -72,9 +72,17 @@ type Input struct {
 	Spec    core.VerifySpec
 	Mode    core.Mode
 	Closing bool
-	Tree    func(ctx context.Context, includeIgnored bool) (string, error) // see TreeFingerprint; nil: none
-	Journal core.Journal                                                   // nil: nothing is recorded and suite_budget is not enforced
+	Tree    func(ctx context.Context) (string, error) // see TreeFingerprint; nil: none
+	Journal core.Journal                              // nil: nothing is recorded and suite_budget is not enforced
+	Actor   core.Actor                                // who started this run; "" is the agent
 	Actors  []core.VerifyAdapter
+}
+
+// Trusted reports whether a run started by a is host-side: only a human, the
+// runner (autonomy) or CI can start a run that counts for close. An agent's run
+// is advisory.
+func Trusted(a core.Actor) bool {
+	return a == core.ActorHuman || a == core.ActorAutonomy || a == core.ActorCI
 }
 
 // Report is the outcome of Run.
@@ -93,7 +101,8 @@ type RunData struct {
 	Reason   string   `json:"reason,omitempty"`
 	Passed   bool     `json:"passed"`
 	Ran      int      `json:"ran"`
-	Tree     string   `json:"tree,omitempty"`
+	Tree     string   `json:"tree,omitempty"` // fingerprint BEFORE the run (equal to after, caches aside)
+	Trusted  bool     `json:"trusted"`
 }
 
 // Item is one configured adapter with the tests selected for it.
@@ -121,6 +130,7 @@ func Select(ctx context.Context, in Input) (Selection, error) {
 		actors = Adapters()
 	}
 	var sel Selection
+	builtin := 0
 	for _, spec := range in.Spec.Adapters {
 		known := false
 		for _, a := range actors {
@@ -128,9 +138,13 @@ func Select(ctx context.Context, in Input) (Selection, error) {
 				continue
 			}
 			known = true
-			tests, unc, err := a.Map(ctx, in.Root, in.Changed)
-			if err != nil {
-				return Selection{}, fmt.Errorf("verify: map %s: %w", spec.Name, err)
+			builtin++
+			var tests, unc []string
+			if !in.Closing { // a close run is full: nothing to map
+				var err error
+				if tests, unc, err = a.Map(ctx, in.Root, in.Changed); err != nil {
+					return Selection{}, fmt.Errorf("verify: map %s: %w", spec.Name, err)
+				}
 			}
 			sel.Items = append(sel.Items, Item{a, spec, tests})
 			sel.Uncovered = append(sel.Uncovered, unc...)
@@ -143,7 +157,7 @@ func Select(ctx context.Context, in Input) (Selection, error) {
 			sel.Unsupported = append(sel.Unsupported, spec.Name)
 		}
 	}
-	if len(sel.Items) == len(sel.generic()) { // no built-in adapter: only generic cmds would run, which never map tests
+	if builtin == 0 { // only generic cmds would run, which never map tests
 		return Selection{}, errors.New("verify: no configured adapter is available")
 	}
 	sel.Uncovered = uniq(sel.Uncovered)
@@ -168,7 +182,7 @@ func Run(ctx context.Context, in Input) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	before, err := fingerprint(ctx, in, false)
+	before, err := fingerprint(ctx, in) // full, ignored files included
 	if err != nil {
 		return rep, err
 	}
@@ -188,19 +202,17 @@ func Run(ctx context.Context, in Input) (Report, error) {
 		names = append(names, s.Spec.Name)
 		ran += len(res.Ran)
 	}
-	// Ignored files (caches) may change during a run; everything else may not.
-	after, err := fingerprint(ctx, in, false)
+	// Only the built-in caches may change during a run; a change or deletion of
+	// anything else, ignored files included, means the result is about no tree.
+	after, err := fingerprint(ctx, in)
 	if err != nil {
 		return rep, err
 	}
 	if after != before {
-		rep.Passed = false // the tree changed during the run: the result is about no tree
+		rep.Passed = false
 	}
-	tree, err := fingerprint(ctx, in, true) // the run's tree: full, after the run
-	if err != nil {
-		return rep, err
-	}
-	return rep, record(ctx, in, rep, prior, RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: tree})
+	d := RunData{Adapters: names, Full: rep.Full, Reason: rep.Reason, Passed: rep.Passed, Ran: ran, Tree: before, Trusted: Trusted(in.Actor)}
+	return rep, record(ctx, in, rep, prior, d)
 }
 
 // begin reads the task's earlier events and, for a budgeted full run, reserves it.
@@ -234,11 +246,11 @@ func record(ctx context.Context, in Input, rep Report, prior []core.Event, d Run
 	return nil
 }
 
-func fingerprint(ctx context.Context, in Input, includeIgnored bool) (string, error) {
+func fingerprint(ctx context.Context, in Input) (string, error) {
 	if in.Tree == nil {
 		return "", nil
 	}
-	t, err := in.Tree(ctx, includeIgnored)
+	t, err := in.Tree(ctx)
 	if err != nil {
 		return "", fmt.Errorf("verify: fingerprint: %w", err)
 	}
@@ -254,7 +266,7 @@ func appendEvent(ctx context.Context, in Input, typ string, data any) error {
 	if err != nil {
 		return err
 	}
-	_, err = in.Journal.Append(ctx, core.Event{Schema: 1, Type: typ, Task: in.Task, Actor: core.ActorAgent, Via: "cli", Data: b})
+	_, err = in.Journal.Append(ctx, core.Event{Schema: 1, Type: typ, Task: in.Task, Actor: actorOr(in.Actor), Via: "cli", Data: b})
 	return err
 }
 
@@ -331,31 +343,43 @@ type Facts struct {
 	OutOfScope []string `json:"out_of_scope,omitempty"`
 }
 
-// ComputeFacts: GreenNow needs the latest FULL verify_run to be passed and recorded for exactly
-// the current tree fingerprint (any later edit invalidates it); InScope needs
-// every changed file to match a scope glob.
+// ComputeFacts: GreenNow needs the latest FULL verify_run to be passed, TRUSTED
+// (started by the host, not the agent) and recorded for exactly the current tree
+// fingerprint; InScope needs every changed file to match a scope glob.
 func ComputeFacts(events []core.Event, tree string, changed, scope []string) Facts {
-	f := Facts{InScope: true}
+	f := Facts{}
 	r := runs(events)
 	for i := len(r) - 1; i >= 0; i-- {
 		if r[i].Full {
-			f.GreenNow = r[i].Passed && r[i].Tree != "" && r[i].Tree == tree
+			f.GreenNow = r[i].Passed && r[i].Trusted && r[i].Tree != "" && r[i].Tree == tree
 			break
 		}
 	}
+	f.InScope, f.OutOfScope = inScope(changed, scope)
+	return f
+}
+
+func inScope(changed, scope []string) (bool, []string) {
+	var out []string
 	for _, c := range changed {
 		ok := false
 		for _, g := range scope {
 			ok = ok || globs.Match(g, c)
 		}
 		if !ok {
-			f.InScope = false
-			f.OutOfScope = append(f.OutOfScope, c)
+			out = append(out, c)
 		}
 	}
-	sort.Strings(f.OutOfScope)
-	return f
+	sort.Strings(out)
+	return len(out) == 0, out
 }
 
 // Ok reports whether both facts hold.
 func (f Facts) Ok() bool { return f.GreenNow && f.InScope }
+
+func actorOr(a core.Actor) core.Actor {
+	if a == "" {
+		return core.ActorAgent
+	}
+	return a
+}

@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
 // vcs runs the version-control binary the way every rr call must (errata #16):
@@ -71,10 +73,23 @@ func diffNames(ctx context.Context, root, rev string) ([]string, error) {
 	return nul(out), err
 }
 
+// cacheGlobs are the built-in test-runner caches: changes under them neither
+// count as task changes nor invalidate a fingerprint. Nothing else is exempt.
+var cacheGlobs = []string{".phpunit.cache/**", ".phpunit.result.cache", ".pytest_cache/**", "**/__pycache__/**", "node_modules/.cache/**", "var/cache/**"}
+
+func isCache(rel string) bool {
+	for _, g := range cacheGlobs {
+		if globs.Match(g, rel) {
+			return true
+		}
+	}
+	return false
+}
+
 func visible(paths []string) []string {
 	var kept []string
 	for _, p := range paths {
-		if notRR(p) {
+		if notRR(p) && !isCache(p) {
 			kept = append(kept, p)
 		}
 	}
@@ -100,17 +115,7 @@ func GitChanged(ctx context.Context, root string) ([]string, error) {
 // `.git` and `.rr` are skipped) to its mode and content hash.
 type Manifest map[string]string
 
-func buildManifest(ctx context.Context, root string, includeIgnored bool) (Manifest, error) {
-	skip := map[string]bool{}
-	if !includeIgnored {
-		out, err := vcs(ctx, root, "ls-files", "-o", "-i", "--exclude-standard", "-z")
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range nul(out) {
-			skip[p] = true
-		}
-	}
+func buildManifest(root string) (Manifest, error) {
 	m := Manifest{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -130,10 +135,10 @@ func buildManifest(ctx context.Context, root string, includeIgnored bool) (Manif
 			}
 			return nil
 		}
-		if skip[rel] {
+		if isCache(rel) {
 			return nil
 		}
-		h, err := hashPath(p)
+		h, err := hashPath(root, p)
 		if err != nil {
 			return fmt.Errorf("verify: manifest %s: %w", rel, err)
 		}
@@ -143,19 +148,31 @@ func buildManifest(ctx context.Context, root string, includeIgnored bool) (Manif
 	return m, err
 }
 
-func hashPath(p string) (string, error) {
+// hashPath hashes a regular file or a symlink (its target text). A symlink that
+// does not resolve inside root, a FIFO, a device or a socket is an error.
+func hashPath(root, p string) (string, error) {
 	fi, err := os.Lstat(p)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	if fi.Mode()&os.ModeSymlink != 0 {
+	switch {
+	case fi.Mode()&os.ModeSymlink != 0:
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return "", fmt.Errorf("unresolvable symlink: %w", err)
+		}
+		if !within(evalOr(root), resolved) {
+			return "", fmt.Errorf("symlink points outside the repository (%s)", resolved)
+		}
 		t, err := os.Readlink(p)
 		if err != nil {
 			return "", err
 		}
 		_, _ = io.WriteString(h, t)
-	} else {
+	case !fi.Mode().IsRegular():
+		return "", fmt.Errorf("not a regular file or symlink (%s)", fi.Mode().Type())
+	default:
 		f, err := os.Open(p)
 		if err != nil {
 			return "", err
@@ -171,7 +188,7 @@ func hashPath(p string) (string, error) {
 // Baseline is what the flow calls at task start: the full manifest (JSON, to be
 // written to .rr/run/<task>.baseline.json) and its sha256 (task_started.baseline).
 func Baseline(ctx context.Context, root string) (manifest []byte, sha string, err error) {
-	m, err := buildManifest(ctx, root, true)
+	m, err := buildManifest(root)
 	if err != nil {
 		return nil, "", err
 	}
@@ -192,7 +209,7 @@ func TaskChanged(ctx context.Context, root string, t Trust, includeIgnored bool)
 	if err != nil {
 		return nil, err
 	}
-	cur, err := buildManifest(ctx, root, true)
+	cur, err := buildManifest(root)
 	if err != nil {
 		return nil, err
 	}
@@ -220,9 +237,9 @@ func TaskChanged(ctx context.Context, root string, t Trust, includeIgnored bool)
 	return visible(out), nil
 }
 
-// TreeFingerprint hashes HEAD, the index and the manifest of the tree. Without
-// includeIgnored, ignored files (caches) are not part of it.
-func TreeFingerprint(ctx context.Context, root string, includeIgnored bool) (string, error) {
+// TreeFingerprint hashes HEAD, the index and the full manifest of the tree:
+// tracked, untracked and ignored files, minus the built-in cache allowlist.
+func TreeFingerprint(ctx context.Context, root string) (string, error) {
 	head, err := vcs(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
@@ -231,7 +248,7 @@ func TreeFingerprint(ctx context.Context, root string, includeIgnored bool) (str
 	if err != nil {
 		return "", err
 	}
-	m, err := buildManifest(ctx, root, includeIgnored)
+	m, err := buildManifest(root)
 	if err != nil {
 		return "", err
 	}

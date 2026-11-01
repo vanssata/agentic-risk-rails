@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,22 +43,18 @@ func TestUncoveredIsAHardFloor(t *testing.T) {
 
 func TestTreeChangedDuringRun(t *testing.T) {
 	ctx := context.Background()
-	run := func(visibleChanges, ignoredChanges bool) (Report, []core.Event) {
+	run := func(after string, actor core.Actor) (Report, []core.Event) {
 		j := &fakes.Journal{}
 		s := &stub{name: "go", tests: []string{"./a"}, pass: true}
 		in := orchInput(j, s)
-		calls := map[bool]int{}
-		in.Tree = func(_ context.Context, ign bool) (string, error) {
-			calls[ign]++
-			switch {
-			case ign && ignoredChanges:
-				return []string{"F0", "F1", "F2"}[calls[ign]-1], nil
-			case !ign && visibleChanges:
-				return []string{"V0", "V1"}[calls[ign]-1], nil
-			case ign:
-				return "FULL", nil
+		in.Actor = actor
+		n := 0
+		in.Tree = func(context.Context) (string, error) {
+			n++
+			if n == 1 {
+				return "BEFORE", nil
 			}
-			return "VIS", nil
+			return after, nil
 		}
 		rep, err := Run(ctx, in)
 		require.NoError(t, err)
@@ -65,13 +62,20 @@ func TestTreeChangedDuringRun(t *testing.T) {
 		return rep, ev
 	}
 
-	rep, ev := run(true, false)
-	assert.False(t, rep.Passed, "a visible change during the run is red")
+	rep, ev := run("AFTER", "")
+	assert.False(t, rep.Passed, "any non-cache change during the run is red")
 	assert.Contains(t, string(ev[0].Data), `"passed":false`)
 
-	rep, ev = run(false, true)
-	assert.True(t, rep.Passed, "ignored files (caches) may change during the run")
-	assert.Contains(t, string(ev[0].Data), `"tree":"F0"`, "the recorded tree is the full fingerprint taken after the run")
+	rep, ev = run("BEFORE", "")
+	assert.True(t, rep.Passed)
+	assert.Contains(t, string(ev[0].Data), `"tree":"BEFORE"`, "the recorded tree is the one taken BEFORE the run")
+	assert.Contains(t, string(ev[0].Data), `"trusted":false`, "an agent-started run is advisory")
+	assert.Equal(t, core.ActorAgent, ev[0].Actor)
+
+	_, ev = run("BEFORE", core.ActorAutonomy)
+	assert.Contains(t, string(ev[0].Data), `"trusted":true`)
+	_, ev = run("BEFORE", core.ActorHuman)
+	assert.Contains(t, string(ev[0].Data), `"trusted":true`)
 }
 
 func TestTaskChanged(t *testing.T) {
@@ -163,39 +167,214 @@ func TestLoadTrust(t *testing.T) {
 
 func TestTreeFingerprintSensitivity(t *testing.T) {
 	ctx := context.Background()
-	root := testutil.GitRepo(t, map[string]string{"a.txt": "a", ".gitignore": "ign/\n"})
+	root := testutil.GitRepo(t, map[string]string{"a.txt": "a", ".gitignore": "ign/\n.pytest_cache/\n"})
 	write(t, root, map[string]string{"nested/.git/HEAD": "x", "nested/f.txt": "1"})
-	fp := func(ign bool) string {
-		s, err := TreeFingerprint(ctx, root, ign)
+	fp := func() string {
+		s, err := TreeFingerprint(ctx, root)
 		require.NoError(t, err)
 		return s
 	}
-	full, vis := fp(true), fp(false)
-	assert.Equal(t, full, fp(true), "stable")
+	base := fp()
+	assert.Equal(t, base, fp(), "stable")
 
 	write(t, root, map[string]string{".rr/run/x": "noise"})
-	assert.Equal(t, full, fp(true), ".rr/ is ignored")
+	assert.Equal(t, base, fp(), ".rr/ is ignored")
 
-	write(t, root, map[string]string{"ign/cache": "1"})
-	assert.NotEqual(t, full, fp(true), "ignored files count in the full fingerprint")
-	assert.Equal(t, vis, fp(false), "and not in the visible one")
+	for _, cache := range []string{".pytest_cache/v/x", "pkg/__pycache__/m.pyc", ".phpunit.cache/r", ".phpunit.result.cache", "node_modules/.cache/b", "var/cache/c"} {
+		write(t, root, map[string]string{cache: "1"})
+		assert.Equal(t, base, fp(), "built-in cache %s does not change the fingerprint", cache)
+	}
+
+	write(t, root, map[string]string{"ign/data": "1"})
+	withIgnored := fp()
+	assert.NotEqual(t, base, withIgnored, "other ignored files count")
+	write(t, root, map[string]string{"ign/data": "2"})
+	assert.NotEqual(t, withIgnored, fp())
 
 	write(t, root, map[string]string{"nested/f.txt": "2"})
-	assert.NotEqual(t, vis, fp(false), "nested repository content counts")
+	assert.NotEqual(t, withIgnored, fp(), "nested repository content counts")
 
-	before := fp(true)
+	before := fp()
 	write(t, root, map[string]string{"a.txt": ""})
-	empty := fp(true)
+	empty := fp()
 	require.NoError(t, os.Remove(filepath.Join(root, "a.txt")))
 	assert.NotEqual(t, before, empty)
-	assert.NotEqual(t, empty, fp(true), "deleted differs from empty")
+	assert.NotEqual(t, empty, fp(), "deleted differs from empty")
 
 	if os.Geteuid() != 0 {
 		write(t, root, map[string]string{"locked.txt": "x"})
 		require.NoError(t, os.Chmod(filepath.Join(root, "locked.txt"), 0))
-		_, err := TreeFingerprint(ctx, root, true)
+		_, err := TreeFingerprint(ctx, root)
 		assert.Error(t, err, "unreadable file must not be silent")
 	}
+}
+
+func TestFingerprintRefusesUnsafeEntries(t *testing.T) {
+	ctx := context.Background()
+	root := testutil.GitRepo(t, map[string]string{"a.txt": "a"})
+	outside := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(outside, []byte("s"), 0o644))
+
+	require.NoError(t, os.Symlink("a.txt", filepath.Join(root, "inside-link")))
+	_, err := TreeFingerprint(ctx, root)
+	require.NoError(t, err, "a symlink that stays inside the repository is fine")
+
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape-link")))
+	_, err = TreeFingerprint(ctx, root)
+	require.Error(t, err, "a symlink pointing outside the repository is refused")
+	_, _, err = Baseline(ctx, root)
+	require.Error(t, err)
+	require.NoError(t, os.Remove(filepath.Join(root, "escape-link")))
+
+	require.NoError(t, syscall.Mkfifo(filepath.Join(root, "pipe"), 0o644))
+	_, err = TreeFingerprint(ctx, root)
+	require.Error(t, err, "a FIFO is refused, not opened")
+}
+
+func TestReadFileIsFailClosed(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"ok.txt": "fine"})
+	got, err := readFile(root, "ok.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "fine", got)
+
+	outside := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(outside, []byte("s"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
+	_, err = readFile(root, "link")
+	assert.Error(t, err)
+
+	require.NoError(t, syscall.Mkfifo(filepath.Join(root, "pipe"), 0o644))
+	_, err = readFile(root, "pipe")
+	assert.Error(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "big"), make([]byte, maxReadSize+1), 0o644))
+	_, err = readFile(root, "big")
+	assert.Error(t, err)
+}
+
+func TestAdapterEnvAndPathAreSanitized(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	rec := filepath.Join(t.TempDir(), "env")
+	testutil.FakeBin(t, "tool", `env > "`+rec+`"`)
+	t.Setenv("GOFLAGS", "-run=^$")
+	t.Setenv("PYTEST_ADDOPTS", "-k nothing")
+	t.Setenv("NODE_OPTIONS", "--require evil.js")
+	t.Setenv("PHPUNIT_FILTER", "none")
+	t.Setenv("CGO_CFLAGS", "-evil")
+	t.Setenv("HOME", "/home/x")
+
+	res, err := runCmd(ctx, root, core.VerifyAdapterSpec{Name: "t", Cmd: "tool"}, nil, true)
+	require.NoError(t, err)
+	require.True(t, res.Passed)
+	b, err := os.ReadFile(rec)
+	require.NoError(t, err)
+	env := string(b)
+	for _, bad := range []string{"GOFLAGS", "PYTEST_ADDOPTS", "NODE_OPTIONS", "PHPUNIT_FILTER", "CGO_CFLAGS"} {
+		assert.NotContains(t, env, bad)
+	}
+	assert.Contains(t, env, "HOME=/home/x")
+	assert.Contains(t, env, "PATH=")
+}
+
+func TestPlantedBinaryInRepoIsNotUsed(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "planted-ran")
+	write(t, root, map[string]string{"bin/go": "#!/bin/sh\ntouch " + marker + "\nexit 1\n"})
+	require.NoError(t, os.Chmod(filepath.Join(root, "bin/go"), 0o755))
+	t.Setenv("PATH", filepath.Join(root, "bin")+string(os.PathListSeparator)+"relative/dir"+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	res, err := runCmd(context.Background(), root, core.VerifyAdapterSpec{Name: "go", Cmd: "go version"}, nil, true)
+	require.NoError(t, err)
+	assert.True(t, res.Passed, "the real go ran")
+	_, statErr := os.Stat(marker)
+	assert.True(t, os.IsNotExist(statErr), "the planted binary must not run")
+}
+
+func TestGoFlagsEnvHasNoEffect(t *testing.T) {
+	// GOFLAGS=-run=^$ would make every `go test` pass without running a test.
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"go.mod":    "module m\n\ngo 1.21\n",
+		"m_test.go": "package m\nimport \"testing\"\nfunc TestFails(t *testing.T) { t.Fatal(\"boom\") }\n",
+	})
+	t.Setenv("GOFLAGS", "-run=^$")
+	res, err := runCmd(context.Background(), root, core.VerifyAdapterSpec{Name: "go", Cmd: "go test ./..."}, nil, true)
+	require.NoError(t, err)
+	assert.False(t, res.Passed, "the failing test must still run and fail")
+}
+
+func TestCloseSkipsMapAndIsHostOnly(t *testing.T) {
+	ctx := context.Background()
+	root := testutil.GitRepo(t, map[string]string{"in/a.txt": "a", ".gitignore": "ign/\n.pytest_cache/\n"})
+	events := startedTask(t, root, "t1", []string{"in/**"})
+	trust, err := LoadTrust(root, "t1", events)
+	require.NoError(t, err)
+
+	mk := func(pass bool, mutate func()) (*mapSpy, CloseInput, *fakes.Journal) {
+		j := &fakes.Journal{}
+		sp := &mapSpy{stub: stub{name: "go", pass: pass}, mutate: mutate}
+		return sp, CloseInput{Root: root, Task: "t1", Mode: core.ModeGuarded, Trust: trust, Journal: j, Actors: []core.VerifyAdapter{sp},
+			Spec: core.VerifySpec{Adapters: []core.VerifyAdapterSpec{{Name: "go", Cmd: "x"}}}}, j
+	}
+
+	sp, in, j := mk(true, nil)
+	in.Actor = core.ActorAutonomy
+	f, err := Close(ctx, in)
+	require.NoError(t, err)
+	assert.True(t, f.GreenNow)
+	assert.True(t, f.InScope)
+	assert.Zero(t, sp.maps, "a close run does not map")
+	ev, _ := j.Events(ctx, "t1")
+	assert.Contains(t, string(ev[len(ev)-1].Data), `"trusted":true`)
+
+	// facts come from this run: an agent actor can never produce a green fact
+	_, in, j = mk(true, nil)
+	in.Actor = core.ActorAgent
+	f, err = Close(ctx, in)
+	require.NoError(t, err)
+	assert.False(t, f.GreenNow)
+	ev, _ = j.Events(ctx, "t1")
+	assert.Contains(t, string(ev[len(ev)-1].Data), `"trusted":false`)
+
+	// F1: a test that deletes an ignored generated file (outside the cache allowlist) is red
+	write(t, root, map[string]string{"ign/zz_gen_test.go": "x"})
+	_, in, _ = mk(true, func() { _ = os.Remove(filepath.Join(root, "ign/zz_gen_test.go")) })
+	in.Actor = core.ActorAutonomy
+	in.Trust.Manifest = nil // baseline irrelevant here: only the during-run change matters
+	f, err = Close(ctx, in)
+	require.NoError(t, err)
+	assert.False(t, f.GreenNow, "self-deleting ignored file => passed=false")
+
+	// F5: an honest cache write stays green and in scope
+	_, in, _ = mk(true, func() { write(t, root, map[string]string{".pytest_cache/v/cache/x": "1"}) })
+	in.Actor = core.ActorAutonomy
+	trust2, err := LoadTrust(root, "t1", startedTask(t, root, "t1", []string{"in/**", "ign/**"}))
+	require.NoError(t, err)
+	in.Trust = trust2
+	f, err = Close(ctx, in)
+	require.NoError(t, err)
+	assert.True(t, f.GreenNow, "built-in cache writes do not turn the run red")
+	assert.True(t, f.InScope, "and are not task changes")
+}
+
+type mapSpy struct {
+	stub
+	maps   int
+	mutate func()
+}
+
+func (m *mapSpy) Map(ctx context.Context, r string, c []string) ([]string, []string, error) {
+	m.maps++
+	return m.stub.Map(ctx, r, c)
+}
+
+func (m *mapSpy) Run(ctx context.Context, r string, s core.VerifyAdapterSpec, tests []string, full bool) (core.TestResult, error) {
+	if m.mutate != nil {
+		m.mutate()
+	}
+	return m.stub.Run(ctx, r, s, tests, full)
 }
 
 // counting stub: safe for parallel Run
@@ -310,7 +489,7 @@ func TestGenericAdapterRunsCmdOnFullOnly(t *testing.T) {
 	fixer := filepath.Join(root, "vendor/bin/php-cs-fixer")
 	rec := filepath.Join(t.TempDir(), "fixer")
 	require.NoError(t, os.MkdirAll(filepath.Dir(fixer), 0o755))
-	require.NoError(t, os.WriteFile(fixer, []byte("#!/bin/sh\necho \"$@\" >> "+rec+"\nexit ${FIXER_EXIT:-0}\n"), 0o755))
+	require.NoError(t, os.WriteFile(fixer, []byte("#!/bin/sh\necho \"$@\" >> "+rec+"\n[ -e "+rec+".fail ] && exit 1\nexit 0\n"), 0o755))
 	fakeRunner(t, "php")
 
 	in := Input{
@@ -334,7 +513,7 @@ func TestGenericAdapterRunsCmdOnFullOnly(t *testing.T) {
 	assert.Contains(t, rep.Results, "lint")
 	assert.Equal(t, []string{"fix --dry-run"}, calls(t, rec))
 
-	t.Setenv("FIXER_EXIT", "1")
+	failFlag(t, rec)
 	rep, err = Run(ctx, in)
 	require.NoError(t, err)
 	assert.False(t, rep.Passed, "a failing generic cmd turns the close red")
