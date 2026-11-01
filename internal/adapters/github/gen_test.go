@@ -58,7 +58,7 @@ func TestRRVersionIsInstallable(t *testing.T) {
 	files, err := gen{}.Render(context.Background(), input(t, t.TempDir()))
 	require.NoError(t, err)
 	for _, f := range files[2:] {
-		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.1\n")
+		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.2\n")
 	}
 }
 
@@ -82,14 +82,17 @@ func TestRegisteredAndNoCollision(t *testing.T) {
 	assert.True(t, found)
 }
 
-func TestKeepsHandEditedTeam(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(root, codeownersPath), []byte("riskrails.yaml @acme/security\n"), 0o644))
-	files, err := gen{}.Render(context.Background(), input(t, root))
-	require.NoError(t, err)
-	assert.Contains(t, string(files[0].Content), "riskrails.yaml @acme/security\n")
-	assert.Empty(t, hosting.BotOwners(files[0].Content))
+func TestKeepsHandEditedOwner(t *testing.T) {
+	for _, owner := range []string{"@acme/security", "@vanssata"} { // team, or a personal repository's user
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".github"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, codeownersPath), []byte("riskrails.yaml "+owner+"\n"), 0o644))
+		files, err := gen{}.Render(context.Background(), input(t, root))
+		require.NoError(t, err)
+		assert.Contains(t, string(files[0].Content), "riskrails.yaml "+owner+"\n")
+		assert.Contains(t, string(files[0].Content), "/.github/ "+owner+"\n")
+		assert.Empty(t, hosting.BotOwners(files[0].Content))
+	}
 }
 
 // The generated ruleset must satisfy the live check that `rr sync --check --remote` applies.

@@ -27,7 +27,7 @@ const (
 
 	// rrVersion is the rr release the workflows install. The module path has no
 	// /vN suffix, so the version must stay v0.x/v1.x (Go rejects v2+ without it).
-	rrVersion = "v0.4.1"
+	rrVersion = "v0.4.2"
 	// goVersion is the toolchain the workflows build rr with (the go.mod version at release).
 	goVersion = "1.27.3"
 	// Action pins [V]: gh api repos/actions/<name>/commits/<tag> (docs:
@@ -42,8 +42,9 @@ type gen struct{}
 
 func (gen) Name() string { return "github" }
 
-// team returns the code-owner team: the one on the existing riskrails.yaml
-// line of CODEOWNERS (hand-edited, kept), else @<owner of ceiling remote>/code-owners.
+// team returns the code owner: the first owner (team or user, e.g. a personal
+// repository's login) on the existing riskrails.yaml line of CODEOWNERS
+// (hand-edited, kept), else @<owner of ceiling remote>/code-owners.
 // core has no field for the team (CORE_CHANGE_REQUEST); OWNER marks an unset org.
 func team(in core.SyncInput) (string, error) {
 	if b, err := os.ReadFile(filepath.Join(in.Root, codeownersPath)); err == nil {
@@ -51,10 +52,8 @@ func team(in core.SyncInput) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		for _, o := range owners {
-			if strings.Contains(o, "/") {
-				return o, nil
-			}
+		if len(owners) > 0 {
+			return owners[0], nil
 		}
 	}
 	org, _, _ := strings.Cut(in.Policy.Policy.Remote, "/")
