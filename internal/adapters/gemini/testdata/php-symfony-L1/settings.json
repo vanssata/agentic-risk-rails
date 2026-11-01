@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "rr-guard",
+            "command": "rr guard --runtime gemini --event BeforeTool || exit 2",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}
