@@ -1,0 +1,39 @@
+{
+  "mcp": {
+    "s": {
+      "type": "local"
+    }
+  },
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git push --force*": "deny",
+      "rm -rf /": "deny"
+    },
+    "edit": {
+      "*": "allow",
+      "riskrails.yaml": "deny",
+      ".rr/**": "deny",
+      ".claude/**": "deny",
+      ".codex/**": "deny",
+      ".gemini/**": "deny",
+      ".cursor/**": "deny",
+      ".kiro/**": "deny",
+      ".mcp.json": "deny",
+      ".git/**": "deny",
+      ".github/workflows/**": "deny",
+      ".env*": "deny"
+    },
+    "read": {
+      "*": "allow",
+      ".env*": "deny",
+      "~/.ssh/**": "deny",
+      "~/.aws/**": "deny"
+    }
+  },
+  "provider": {
+    "x": {
+      "k": 1
+    }
+  }
+}

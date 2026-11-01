@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "rr guard --runtime copilot --event preToolUse || exit 2"
+      }
+    ]
+  }
+}
