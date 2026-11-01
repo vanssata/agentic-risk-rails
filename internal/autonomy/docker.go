@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -58,7 +59,6 @@ const (
 	// PolicyPath is where PolicyFile appears in the container.
 	policyPath = "/run/rr/policy.yaml"
 	scopePath  = "/run/rr/scope.json"
-	readOnly   = "riskrails.yaml .git .github"
 )
 
 // argv builds the docker command; cmd runs inside the container.
@@ -84,7 +84,7 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if err := requireRealGitDir(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
-	args := []string{"run", "--rm", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
+	args := []string{"run", "--rm", "--init", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		"--tmpfs", "/tmp", "-e", "HOME=/tmp", "-w", workDir,
@@ -94,7 +94,7 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		args = append(args, "-i")
 	}
 	mounts := [][2]string{{abs, workDir}}
-	for _, p := range strings.Fields(readOnly) {
+	for _, p := range readOnlyPaths() {
 		if _, err := os.Lstat(filepath.Join(abs, p)); err == nil {
 			mounts = append(mounts, [2]string{filepath.Join(abs, p), workDir + "/" + p})
 		}
@@ -166,10 +166,35 @@ func (d DockerRunner) offline() DockerRunner {
 	return d
 }
 
-// Exec runs cmd in the same sandbox (no network) and returns its stdout.
+// readOnlyPaths are the concrete paths of core.AlwaysProtected (the agent has no
+// business writing them; the journal lives in the runner's StateDir) that exist
+// get a read-only mount over the writable checkout.
+func readOnlyPaths() []string {
+	var out []string
+	for _, p := range core.AlwaysProtected {
+		p = strings.TrimSuffix(p, "/**")
+		if !strings.ContainsAny(p, "*?[{") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Probe runs cmd as the agent would see it (halt socket, scope file) but without
+// network and API keys, and returns its stdout.
+func (d DockerRunner) Probe(ctx context.Context, cmd ...string) ([]byte, error) {
+	d.noKeys = true
+	return d.runOnce(ctx, cmd)
+}
+
+// Exec runs cmd in the same sandbox (no network, no socket, no keys) and returns its stdout.
 func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
+	return d.offline().runOnce(ctx, cmd)
+}
+
+func (d DockerRunner) runOnce(ctx context.Context, cmd []string) ([]byte, error) {
 	name := "rr-close-" + randHex()
-	args, err := d.offline().argv(d.Root, name, "none", false, cmd)
+	args, err := d.argv(d.Root, name, "none", false, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +220,38 @@ func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
 // sandbox, for the close run (errata #26): W4-A hands it to verify as its runner.
 func (d DockerRunner) CommandArgv(cmd ...string) ([]string, error) {
 	return d.offline().argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
+}
+
+// CloseSandbox is the verify.Sandbox of the host-side close: every adapter command
+// runs in its own named, offline container. cleanup force-removes them all; call it
+// when the close returns or is cancelled (docker run's client dying does not stop
+// the container).
+func (d DockerRunner) CloseSandbox() (sandbox func([]string) ([]string, error), cleanup func(context.Context)) {
+	var mu sync.Mutex
+	var names []string
+	sandbox = func(argv []string) ([]string, error) {
+		name := "rr-close-" + randHex()
+		a, err := d.offline().argv(d.Root, name, "none", false, argv)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		names = append(names, name)
+		mu.Unlock()
+		return append([]string{"docker"}, a...), nil
+	}
+	cleanup = func(ctx context.Context) {
+		bin := d.Bin
+		if bin == "" {
+			bin = "docker"
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, n := range names {
+			_ = exec.CommandContext(context.WithoutCancel(ctx), bin, "rm", "-f", n).Run() // absent (--rm) is fine
+		}
+	}
+	return sandbox, cleanup
 }
 
 func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {

@@ -1,6 +1,7 @@
 package autonomy
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,4 +230,42 @@ func TestAgentGetsOnlyItsRuntimeKeyAndScopeReadOnly(t *testing.T) {
 	require.NoError(t, os.WriteFile(inside, []byte("[]"), 0o600))
 	_, err := DockerRunner{Image: testImage, Root: root, PolicyFile: policyFile(t), ScopeFile: inside}.argv(root, "n", "none", true, nil)
 	assert.Error(t, err, "scope file inside the checkout is agent-writable")
+}
+
+func TestAlwaysProtectedPathsAreReadOnlyInTheAgentContainer(t *testing.T) {
+	root := repo(t)
+	for _, p := range []string{".claude", ".codex", ".agents", ".rr", ".githooks"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, p), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".mcp.json"), []byte("{}"), 0o644))
+	args, err := DockerRunner{Image: testImage, Root: root, PolicyFile: policyFile(t)}.argv(root, "n", "none", true, nil)
+	require.NoError(t, err)
+	j := " " + strings.Join(args, " ") + " "
+	for _, p := range []string{"riskrails.yaml", ".git", ".github", ".claude", ".codex", ".agents", ".rr", ".githooks", ".mcp.json"} {
+		assert.Contains(t, j, "dst=/work/"+p+",readonly ", p)
+	}
+	assert.NotContains(t, j, "dst=/work/.gemini", "absent paths are not mounted")
+	assert.Contains(t, j, " --init ")
+}
+
+func TestCloseSandboxNamesContainersAndRemovesThemOnCleanup(t *testing.T) {
+	root := repo(t)
+	log := filepath.Join(t.TempDir(), "calls")
+	testutil.FakeBin(t, "docker", `echo "$@" >> `+log)
+	d := DockerRunner{Image: testImage, Root: root, PolicyFile: policyFile(t), Sock: "/s/halt.sock"}
+	sb, cleanup := d.CloseSandbox()
+	a1, err := sb([]string{"vendor/bin/phpunit"})
+	require.NoError(t, err)
+	_, err = sb([]string{"vendor/bin/phpunit", "x"})
+	require.NoError(t, err)
+	assert.Equal(t, "docker", a1[0])
+	j := strings.Join(a1, " ")
+	assert.Contains(t, j, "--init")
+	assert.Contains(t, j, "--network none")
+	assert.NotContains(t, j, "halt.sock")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // the close was cancelled: containers are still removed
+	cleanup(ctx)
+	b, _ := os.ReadFile(log)
+	assert.Equal(t, 2, strings.Count(string(b), "rm -f rr-close-"), string(b))
 }

@@ -64,10 +64,10 @@ type Runner struct {
 	Home     string
 	Clock    Clock
 	HaltSock string // unix socket for the hooks; "" = none
-	// Exec runs a command in the agent's container image (no network): the
-	// enforcement probe and the close run happen there, never on the host
-	// (errata #26, wave 4). nil = host Runtime.Enforcement and no close run (tests).
-	Exec     func(ctx context.Context, cmd ...string) ([]byte, error)
+	// Probe runs a command in the agent's container image the way the agent runs
+	// (halt socket, scope file, policy in force; no network, no API keys): the
+	// enforcement probe happens there, never on the host. nil = host Runtime.Enforcement (tests).
+	Probe    func(ctx context.Context, cmd ...string) ([]byte, error)
 	WallUnit time.Duration // unit of max_wall_minutes; 0 = time.Minute (tests shrink it)
 	// Start opens the task's journal (flow.Env.Start, Actor autonomy, state outside the
 	// checkout); Close is the host-side close (flow.Env.Close with verify.WithSandbox).
@@ -147,13 +147,17 @@ func (r *Runner) checkBase(ctx context.Context) (moved bool, err error) {
 
 // preflight checks everything that must hold before the first wave and returns
 // the commit every task branches from.
-// enforcement is measured in the image the agent runs in (Exec), not on the host.
-// It needs the policy in force file mounted, so it runs after the first snapshot.
+// enforcement is measured in the image the agent runs in (Probe), not on the host.
+// It needs the policy in force file mounted and the halt socket served, so it runs
+// after the first snapshot and Serve. The probe's scope is riskrails.yaml only.
 func (r *Runner) enforcement(ctx context.Context) (core.Enforcement, error) {
 	var enf core.Enforcement
 	var err error
-	if r.Exec != nil { // measured in the image the agent runs in, not on the host
-		out, xerr := r.Exec(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
+	if r.Probe != nil { // measured in the image the agent runs in, not on the host
+		if err := os.WriteFile(filepath.Join(r.StateDir, ScopeFileName), []byte(`["riskrails.yaml"]`), 0o600); err != nil {
+			return "", err
+		}
+		out, xerr := r.Probe(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
 		if xerr != nil {
 			return "", fmt.Errorf("enforcement in the image: %w", xerr)
 		}
@@ -216,6 +220,13 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 	if err := os.WriteFile(filepath.Join(r.StateDir, PolicyFileName), r.inForce, 0o600); err != nil {
 		return nil, fmt.Errorf("write policy in force: %w", err)
 	}
+	if r.HaltSock != "" {
+		stop, err := r.halter.Serve(r.HaltSock)
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
+	}
 	enf, err := r.enforcement(ctx)
 	if err != nil {
 		return nil, err
@@ -243,13 +254,6 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 		}, cancelAgents)
 	}()
 	defer func() { stopPoll(); wg.Wait() }()
-	if r.HaltSock != "" {
-		stop, err := r.halter.Serve(r.HaltSock)
-		if err != nil {
-			return nil, err
-		}
-		defer stop()
-	}
 
 	var out []Outcome
 	for _, t := range queue {

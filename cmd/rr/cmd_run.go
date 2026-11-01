@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,6 +85,25 @@ func probeCalls(runtime, root string) []core.ToolCall {
 	}
 }
 
+// probeRules are the rule prefixes that prove the RIGHT rule denied the call; a
+// deny from guard.fail_closed (broken policy, unreadable env) proves nothing.
+var probeRules = [][]string{
+	{"core.AlwaysDeniedCommands:"},
+	{"enforcement.protected_paths:", "core.AlwaysProtected:"},
+}
+
+func deniedByRule(v core.Verdict, prefixes []string) bool {
+	if v.Decision != core.Deny {
+		return false
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(v.Rule, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // enforcementCmd is the functional probe the runner executes inside the agent's
 // image (errata #42): in the runner's container the container is the sandbox, so
 // it prints `sandbox` only if RR_POLICY_IN_FORCE marks that container and the real
@@ -102,8 +122,8 @@ func enforcementCmd() *cobra.Command {
 			if os.Getenv("RR_POLICY_IN_FORCE") == "" {
 				enf = core.EnforcementHookOnly
 			}
-			for _, call := range probeCalls(runtime, root) {
-				if check(cmd.Context(), call, runtime).Decision != core.Deny {
+			for i, call := range probeCalls(runtime, root) {
+				if !deniedByRule(check(cmd.Context(), call, runtime), probeRules[i]) {
 					enf = core.EnforcementHookOnly
 				}
 			}
@@ -176,15 +196,15 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		Hosts: append(autonomy.RuntimeHosts(runtime), probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
 			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
-		sandbox := func(argv []string) ([]string, error) {
-			a, err := worker.CommandArgv(argv...)
-			return append([]string{"docker"}, a...), err
-		}
-		start, closeTask := runFlow(root, state)
+		start, closeTask := runFlow(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]})
 		r := &autonomy.Runner{Start: start,
-			Close: func(ctx context.Context, id string) error { return closeTask(verify.WithSandbox(ctx, sandbox), id) }, Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
+			Close: func(ctx context.Context, id string) error {
+				sandbox, cleanup := worker.CloseSandbox()
+				defer cleanup(ctx)
+				return closeTask(verify.WithSandbox(ctx, sandbox), id)
+			}, Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
 			DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
-			Worker: worker, Exec: worker.Exec, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
+			Worker: worker, Probe: worker.Probe, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
 		out, err := r.Run(ctx, tasks)
 		for _, o := range out {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Task, o.Level, o.Status, o.PR.URL)

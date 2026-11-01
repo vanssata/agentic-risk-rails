@@ -43,6 +43,9 @@ func RuntimeHosts(runtime string) []string {
 	return nil
 }
 
+// ValidHostRegex is the squid regex (POSIX ERE, used with -i) a CONNECT target must match.
+const ValidHostRegex = `^([a-z0-9-]+\.)+[a-z][a-z0-9-]*$`
+
 // hostRe: exact DNS names of two or more labels. A leading dot (subdomain
 // wildcard) is refused: `.github.io` or `.co.uk` would allow every tenant of a
 // public suffix. A numeric last label rejects IPv4 literals. ASSUMPTION: list exact hosts.
@@ -67,9 +70,10 @@ func squidConf(hosts []string) (string, error) {
 		list = append(list, h)
 	}
 	sort.Strings(list)
-	// IP literals are denied first: dstdomain would reverse-resolve the IP, and a PTR
-	// record is attacker-controlled. [U] not run against a real squid.
-	return "http_port 3128\nacl ipliteral dstdom_regex ^[0-9.x]+$ ^\\[?[0-9a-f]*:[0-9a-f:.]*\\]?$\nhttp_access deny ipliteral\nacl allowed dstdomain " + strings.Join(list, " ") + "\nacl SSL_ports port 443\nacl CONNECT method CONNECT\n" +
+	// Only names whose last label starts with a letter pass (case-insensitive): every
+	// IP form (dotted, hex, octal, IPv6) fails it, so dstdomain never reverse-resolves
+	// an IP whose PTR record the attacker controls. [U] not run against a real squid.
+	return "http_port 3128\nacl validhost dstdom_regex -i " + ValidHostRegex + "\nhttp_access deny !validhost\nacl allowed dstdomain " + strings.Join(list, " ") + "\nacl SSL_ports port 443\nacl CONNECT method CONNECT\n" +
 		"http_access allow CONNECT SSL_ports allowed\nhttp_access deny all\naccess_log none\ncache deny all\n", nil
 }
 

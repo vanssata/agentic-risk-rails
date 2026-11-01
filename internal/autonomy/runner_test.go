@@ -436,7 +436,7 @@ func TestEnforcementIsMeasuredInTheImage(t *testing.T) {
 	e := newEnv(t)
 	e.rt.Enf = core.EnforcementCIOnly // the host would refuse; the image decides
 	var calls [][]string
-	e.r.Exec = func(_ context.Context, cmd ...string) ([]byte, error) {
+	e.r.Probe = func(_ context.Context, cmd ...string) ([]byte, error) {
 		calls = append(calls, cmd)
 		return []byte(string(core.EnforcementSandbox) + "\n"), nil
 	}
@@ -455,7 +455,7 @@ func TestEnforcementIsMeasuredInTheImage(t *testing.T) {
 		"error":     func(context.Context, ...string) ([]byte, error) { return nil, errors.New("docker down") },
 	} {
 		e := newEnv(t)
-		e.r.Exec = exec
+		e.r.Probe = exec
 		_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 		require.Error(t, err, name)
 		assert.Zero(t, e.worker.calls, name)

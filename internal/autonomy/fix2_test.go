@@ -89,7 +89,7 @@ if [ "$1" = run ]; then exit 1; fi`)
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	require.Len(t, lines, 2, string(b))
-	name := strings.Fields(lines[0])[5] // run --rm --pull never --name <name>
+	name := strings.Fields(lines[0])[6] // run --rm --init --pull never --name <name>
 	assert.Equal(t, "rm -f "+name, lines[1])
 }
 

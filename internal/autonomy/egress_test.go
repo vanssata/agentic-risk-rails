@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,8 +19,7 @@ func TestSquidConfAllowsOnlyListedHostsOnConnect(t *testing.T) {
 	c, err := squidConf([]string{"API.anthropic.com", "packagist.org", "api.anthropic.com", "github.com"})
 	require.NoError(t, err)
 	assert.Contains(t, c, "acl allowed dstdomain api.anthropic.com github.com packagist.org\n")
-	assert.Contains(t, c, "http_access deny ipliteral\nacl allowed", "IP literals are denied before the allowlist")
-	assert.Contains(t, c, "acl ipliteral dstdom_regex")
+	assert.Contains(t, c, "acl validhost dstdom_regex -i "+ValidHostRegex+"\nhttp_access deny !validhost\nacl allowed", "checked before the allowlist")
 	assert.Contains(t, c, "http_access allow CONNECT SSL_ports allowed\nhttp_access deny all\n")
 	assert.NotContains(t, c, "http_access allow all")
 	for _, bad := range []string{"", "a b.com", "x.com\nhttp_access allow all", "https://x.com", "localhost", "*.x.com",
@@ -124,4 +124,15 @@ func TestEgressCleanupFailureIsReported(t *testing.T) {
 	n.Down()
 	require.Len(t, warns, 1)
 	assert.Contains(t, warns[0], "boom")
+}
+
+func TestOnlyAlphabeticTLDNamesReachTheAllowlist(t *testing.T) {
+	re := regexp.MustCompile(`(?i)` + ValidHostRegex)
+	for _, ok := range []string{"api.anthropic.com", "API.Anthropic.COM", "repo.packagist.org", "xn--80ak6aa92e.com"} {
+		assert.True(t, re.MatchString(ok), ok)
+	}
+	for _, bad := range []string{"1.2.3.4", "169.254.169.254", "0x7f000001", "0xc0a80101", "0xC0.0xA8.1.1", "0300.0250.1.1", "2130706433",
+		"[::1]", "::1", "[::FFFF:1.2.3.4]", "::ffff:1.2.3.4", "fe80::1", "1.2.3.4.", "localhost", "a..b.com", "-a.com.1", "evil.com\nhttp_access allow all"} {
+		assert.False(t, re.MatchString(bad), bad)
+	}
 }
