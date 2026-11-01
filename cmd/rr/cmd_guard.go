@@ -25,12 +25,15 @@ const guardTimeout = 2 * time.Second
 func init() {
 	cli.Register(func() *cobra.Command {
 		var runtime, event string
-		var stdin bool
+		var stdin, staged bool
 		c := &cobra.Command{
 			Use:   "guard",
 			Short: "PreToolUse hook: decide allow/ask/deny for one tool call (fail-closed)",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
+				if staged {
+					return guardStaged(cmd)
+				}
 				ctx, cancel := context.WithTimeout(cmd.Context(), guardTimeout)
 				defer cancel()
 				if stdin && runtime == "" {
@@ -42,6 +45,7 @@ func init() {
 		c.Flags().StringVar(&runtime, "runtime", "", "runtime adapter name (claude, codex)")
 		c.Flags().StringVar(&event, "event", "PreToolUse", "hook event name")
 		c.Flags().BoolVar(&stdin, "stdin", false, "neutral mode: read core.ToolCall JSON, write core.Verdict JSON")
+		c.Flags().BoolVar(&staged, "staged", false, "pre-commit mode: judge the staged (index) content of every changed file")
 		return c
 	})
 }

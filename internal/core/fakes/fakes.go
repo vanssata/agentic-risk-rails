@@ -170,6 +170,7 @@ type Hosting struct {
 	Teams    map[string][]string
 	Rules    json.RawMessage
 	Opened   []core.PullRequest
+	PRs      map[int]core.PullRequest
 }
 
 func (h *Hosting) ReadFile(_ context.Context, ref, path string) ([]byte, error) {
@@ -186,6 +187,14 @@ func (h *Hosting) ReadFile(_ context.Context, ref, path string) ([]byte, error) 
 func (h *Hosting) OpenDraftPR(_ context.Context, head, _, title, _ string) (core.PullRequest, error) {
 	pr := core.PullRequest{Number: len(h.Opened) + 1, Author: "rr-app[bot]", URL: "fake://pr/" + head + "/" + title}
 	h.Opened = append(h.Opened, pr)
+	return pr, nil
+}
+
+func (h *Hosting) PullRequest(_ context.Context, n int) (core.PullRequest, error) {
+	pr, ok := h.PRs[n]
+	if !ok {
+		return core.PullRequest{}, fmt.Errorf("PR %d: %w", n, core.ErrNotFound)
+	}
 	return pr, nil
 }
 

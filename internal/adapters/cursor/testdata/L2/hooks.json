@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeMCPExecution": [
+      {
+        "command": "rr guard --runtime cursor --event beforeMCPExecution || exit 2",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "rr guard --runtime cursor --event beforeReadFile || exit 2",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "rr guard --runtime cursor --event beforeShellExecution || exit 2",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "rr guard --runtime cursor --event preToolUse || exit 2",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true,
+        "matcher": "*"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "rr guard --runtime cursor --event subagentStart || exit 2",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ]
+  }
+}
