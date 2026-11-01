@@ -30,7 +30,7 @@ type researchIn struct {
 
 type noIn struct{}
 
-// NewServer registers the four tools; root is the repository they operate on.
+// NewServer registers the three tools (triage, research, status); root is the repository they operate on.
 func NewServer(root string, run Runner) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: "rr", Version: "v4"}, nil)
 	tool(s, "triage", "Score the six risk axes of a change and return its mode (read-only).", run,

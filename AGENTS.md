@@ -8,7 +8,7 @@ Plan and waves: `docs/plan/implementation-plan.md`. Decisions: `docs/adr/`. DES 
 - `internal/core/` — frozen contracts (types, policy schema, interfaces). Change only between waves.
 - `internal/core/fakes/` — fakes for every interface; use them until the real module exists.
 - `internal/<module>/` — one owner per wave. Events in `internal/<module>/events.go` (`journal.MustRegister`).
-- Generators register with `internal/sync.Register` in `init()`.
+- Runtime generators come from `runtimes.Register` (filtered by `project.runtimes`); runtime-neutral ones use `internal/sync.Register` in `init()`.
 - `internal/testutil/` — `Golden` (`go test ./... -update`), `GitRepo`, `CopyFixture`, `FakeBin`.
 - `testdata/php-symfony/` — reference project; its `riskrails.yaml` is the DES §3.2 schema contract.
 

@@ -36,7 +36,8 @@ var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) (co
 			return flow.Env{}, fmt.Errorf("tree of %s: %w", in.Root, err)
 		}
 		return flow.Env{Root: in.Root, StateRoot: in.StateRoot, Policy: in.Policy, Tree: tree,
-			Journal: journal.New(in.StateRoot), Home: in.Home}, nil
+			Journal: journal.New(in.StateRoot), Home: in.Home,
+			Via: "runner", Enforcement: core.EnforcementSandbox, InContainer: true}, nil
 	}
 	start = func(ctx context.Context, t autonomy.Task) (core.Weight, error) {
 		if len(t.Files) == 0 {
