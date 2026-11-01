@@ -3,11 +3,12 @@ package verify
 import (
 	"context"
 	"fmt"
-	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 )
 
 // passEnv is the whole environment an adapter process gets, besides PATH. Nothing

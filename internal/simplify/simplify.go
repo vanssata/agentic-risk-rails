@@ -9,12 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 )
 
 // Marker in a file excludes it from the simplify pass.

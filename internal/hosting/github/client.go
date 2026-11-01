@@ -23,6 +23,7 @@ import (
 type Client struct {
 	gh          *gh.Client
 	owner, repo string
+	token       string
 }
 
 var _ core.Hosting = (*Client)(nil)
@@ -62,7 +63,7 @@ func newAt(remote, token, baseURL string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("github: %w", err)
 	}
-	return &Client{gh: c, owner: owner, repo: repo}, nil
+	return &Client{gh: c, owner: owner, repo: repo, token: token}, nil
 }
 
 func isStatus(resp *gh.Response, code int) bool {
@@ -88,12 +89,10 @@ func (c *Client) ReadFile(ctx context.Context, ref, path string) ([]byte, error)
 	return []byte(s), nil
 }
 
-// OpenDraftPR opens a draft pull request from head into base.
-// TODO(W4-C): apply labels.
+// OpenDraftPR opens a draft pull request from head into base and adds labels
+// (Issues API; a PR is an issue). The PR is not closed when labelling fails:
+// the error names it.
 func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string, labels []string) (core.PullRequest, error) {
-	if len(labels) > 0 {
-		return core.PullRequest{}, errors.New("github: labels not implemented")
-	}
 	draft := true
 	pr, _, err := c.gh.PullRequests.Create(ctx, c.owner, c.repo, gh.CreatePullRequest{
 		Title: &title, Head: head, Base: base, Body: &body, Draft: &draft,
@@ -101,17 +100,36 @@ func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string
 	if err != nil {
 		return core.PullRequest{}, fmt.Errorf("github: open draft PR: %w", err)
 	}
+	if len(labels) > 0 {
+		if _, _, err := c.gh.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, pr.GetNumber(), labels); err != nil {
+			return core.PullRequest{}, fmt.Errorf("github: draft PR #%d (%s) was opened but labels failed: %w", pr.GetNumber(), pr.GetHTMLURL(), err)
+		}
+	}
 	return toPR(pr), nil
 }
 
-// Push is implemented in W4-C; until then it fails closed.
-func (c *Client) Push(context.Context, string, string) error {
-	return errors.New("github: push not implemented")
-}
-
-// BranchSHA is implemented in W4-C; until then it fails closed.
-func (c *Client) BranchSHA(context.Context, string) (string, error) {
-	return "", errors.New("github: branch SHA not implemented")
+// BranchSHA returns the tip commit of branch; a missing branch is core.ErrNotFound.
+func (c *Client) BranchSHA(ctx context.Context, branch string) (string, error) {
+	req, err := c.gh.NewRequest(ctx, http.MethodGet, fmt.Sprintf("repos/%s/%s/branches/%s", c.owner, c.repo, url.PathEscape(branch)), nil)
+	if err != nil {
+		return "", fmt.Errorf("github: %w", err)
+	}
+	var b struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	resp, err := c.gh.Do(req, &b)
+	if err != nil {
+		if isStatus(resp, http.StatusNotFound) {
+			return "", fmt.Errorf("branch %s: %w", branch, core.ErrNotFound)
+		}
+		return "", fmt.Errorf("github: branch %s: %w", branch, err)
+	}
+	if b.Commit.SHA == "" {
+		return "", fmt.Errorf("github: branch %s: response without commit sha", branch)
+	}
+	return b.Commit.SHA, nil
 }
 
 // PullRequest reads one PR (author, head SHA and base branch for the policy check).
