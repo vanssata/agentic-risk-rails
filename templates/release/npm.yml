@@ -5,16 +5,42 @@ on:
     tags: ["v*"]
 permissions:
   contents: read
-  id-token: write
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Check tag matches package.json and changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-+][0-9A-Za-z.+-]+)?$' || { echo "tag is not semver"; exit 1; }
+          [ "$(node -p "require('./package.json').version")" = "$VERSION" ] || { echo "package.json version differs from tag"; exit 1; }
+          grep -Fq "## [$VERSION]" CHANGELOG.md || { echo "CHANGELOG.md has no section for $VERSION"; exit 1; }
+      - run: npm ci --ignore-scripts
+      - run: npm pack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package
+          path: "*.tgz"
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - run: npm install -g npm@^11.5.1
-      - run: npm ci
-      - run: npm publish
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: package
+      - run: npm publish ./*.tgz

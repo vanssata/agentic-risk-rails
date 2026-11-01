@@ -21,7 +21,24 @@ Verified 2026-11-01. Marks: [V] = read in the primary source, [U] = unverified.
 docs.npmjs.com/trusted-publishers, docs.pypi.org/trusted-publishers/using-a-publisher, packagist.org/about, docs.github.com GHCR publishing page.
 
 ## Pinning decision
-Docker actions: commit SHAs from the GitHub docs [V]. PyPI action: `release/v1` (the documented, PyPA-maintained moving branch). Others (`actions/checkout@v6` [V]; `actions/setup-node@v4`, `actions/setup-python@v5`, `shivammathur/setup-php@v2` [U]) use major tags: SHAs must not be cited from memory. GAP: pin these to SHAs after verification.
+Every action is pinned to a commit SHA. Resolved 2026-11-01 with the GitHub REST API (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; annotated tags dereferenced with `git/tags/<sha>`). [V]
+
+| action | ref | commit SHA | source |
+|---|---|---|---|
+| actions/checkout | v6 | d23441a48e516b6c34aea4fa41551a30e30af803 | https://api.github.com/repos/actions/checkout/git/ref/tags/v6 [V] |
+| actions/setup-node | v4 | 49933ea5288caeca8642d1e84afbd3f7d6820020 | https://api.github.com/repos/actions/setup-node/git/ref/tags/v4 [V] |
+| actions/setup-python | v5 | a26af69be951a213d495a4c3e4e4022e16d87065 | https://api.github.com/repos/actions/setup-python/git/ref/tags/v5 [V] |
+| actions/upload-artifact | v4 | ea165f8d65b6e75b540449e92b4886f43607fa02 | https://api.github.com/repos/actions/upload-artifact/git/ref/tags/v4 [V] |
+| actions/download-artifact | v4 | d3f86a106a0bac45b974a628896c90dbdf5c8093 | https://api.github.com/repos/actions/download-artifact/git/ref/tags/v4 [V] |
+| shivammathur/setup-php | v2 (annotated tag d52fc211...) | eb7c497e18156a6bbabfef1d3a82760b9eda3962 | https://api.github.com/repos/shivammathur/setup-php/git/tags/d52fc211a0436f8839a587b3b5b8efddab4744ea [V] |
+| pypa/gh-action-pypi-publish | branch release/v1 | 7245906fb61fa33a13554f9d5fb856fe61758086 | https://api.github.com/repos/pypa/gh-action-pypi-publish/git/ref/heads/release/v1 [V] |
+| docker/login-action | (GitHub docs example) | 65b78e6e13532edd9afa3aa52ac7964289d1a9c1 | GHCR docs page above [V] |
+| docker/build-push-action | (GitHub docs example) | f2a1d5e99d037542a71f64918e516c093c6f3fc4 | GHCR docs page above [V] |
+
+Moving tags/branches advance, so these SHAs go stale: refresh on wave 4 / periodically.
+
+## Host execution rule
+Host `rr release preflight|dry-run` runs only commands that execute no project code: `composer validate --strict`, `composer audit`, `npm pack|publish --dry-run --ignore-scripts`, `twine check` on an existing `dist/`. `python -m build` (build backend) and `docker build` (RUN steps) run only in the generated CI workflow.
 
 ## CONFLICTS
 None with DES §9.1. Note: DES lists "provenance" under npm preflight; with trusted publishing it is automatic, so no flag is generated.

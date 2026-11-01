@@ -36,7 +36,7 @@ func CheckChangelog(root, version string) error {
 			found = found || in
 			continue
 		}
-		if in && t != "" && !strings.HasPrefix(t, "#") && !linkRefRe.MatchString(t) {
+		if in && t != "" && !strings.HasPrefix(t, "#") && !strings.HasPrefix(t, "<!--") && !linkRefRe.MatchString(t) {
 			body = true
 		}
 	}
