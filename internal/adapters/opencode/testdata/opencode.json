@@ -14,10 +14,15 @@
       ".gemini/**": "deny",
       ".cursor/**": "deny",
       ".kiro/**": "deny",
+      ".opencode/**": "deny",
+      "opencode.json": "deny",
+      ".agents/**": "deny",
+      ".githooks/**": "deny",
       ".mcp.json": "deny",
       ".git/**": "deny",
-      ".github/workflows/**": "deny",
-      ".env*": "deny"
+      ".github/**": "deny",
+      ".env*": "deny",
+      ".github/workflows/**": "deny"
     },
     "read": {
       "*": "allow",

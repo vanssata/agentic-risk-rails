@@ -12,9 +12,13 @@ var AlwaysProtected = []string{
 	".gemini/**",
 	".cursor/**",
 	".kiro/**",
+	".opencode/**",
+	"opencode.json",
+	".agents/**", // generated skills
+	".githooks/**",
 	".mcp.json",
 	".git/**", // all of it: commondir, info/, objects/info/alternates, modules/ … can re-point git
-	".github/workflows/**",
+	".github/**", // workflows, hooks, CODEOWNERS, rulesets (DES §3.4 step 0)
 }
 
 // StrictDefaults is the single source of default values: an empty

@@ -5,7 +5,7 @@
 
 This runtime has no enforcing hook, so these rules are advice to you and are enforced only by CI and branch protection. Autonomy is capped at L1: you act under human supervision.
 
-- Never write: `riskrails.yaml`, `.rr/**`, `.claude/**`, `.codex/**`, `.gemini/**`, `.cursor/**`, `.kiro/**`, `.mcp.json`, `.git/**`, `.github/workflows/**`, `.env*`
+- Never write: `riskrails.yaml`, `.rr/**`, `.claude/**`, `.codex/**`, `.gemini/**`, `.cursor/**`, `.kiro/**`, `.opencode/**`, `opencode.json`, `.agents/**`, `.githooks/**`, `.mcp.json`, `.git/**`, `.github/**`, `.env*`, `.github/workflows/**`
 - Never read: `.env*`, `~/.ssh/**`, `~/.aws/**`
 - Forbidden commands: `git push --force*`, `rm -rf /`
 
