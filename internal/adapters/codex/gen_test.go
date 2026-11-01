@@ -96,8 +96,8 @@ func TestConfigSemantics(t *testing.T) {
 	assert.Equal(t, "read", ws["riskrails.yaml"], "exact read path (Codex allows read only on exact paths or /**)")
 	assert.NotContains(t, ws, ".github/workflows/**", "covered by .github/** (nested rules break bwrap)")
 	assert.NotContains(t, ws, "**/.env*", ".env* cannot be expressed as read; it is dropped (gap), deny comes from secret_reads")
-	assert.Equal(t, "deny", fs["/home/test/.ssh/**"], "~ expanded to Home")
-	assert.Equal(t, "deny", fs["/home/test/.config/riskrails/**"])
+	assert.Equal(t, "deny", fs["~/.ssh/**"], "~ stays literal (Codex expands it): manifests must not depend on the machine")
+	assert.Equal(t, "deny", fs["~/.config/riskrails/**"])
 	assert.Equal(t, "read", fs["/"])
 	for k := range ws {
 		assert.False(t, strings.HasPrefix(k, ".git/"), "no .git rules: %s", k)

@@ -92,7 +92,7 @@ func TestProtectedPathsBackedBySandboxAndRules(t *testing.T) {
 		assert.Contains(t, doc.Permissions.Deny, "Read(/"+p+")")
 	}
 	assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, "**/.env.local")
-	assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, "/home/test/.ssh/**")
+	assert.Contains(t, doc.Sandbox.Filesystem.DenyRead, "~/.ssh/**", "~ stays literal: manifests must not depend on the machine")
 	assert.Contains(t, doc.Permissions.Deny, "Read(~/.ssh/**)")
 }
 

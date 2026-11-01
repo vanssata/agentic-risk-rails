@@ -12,14 +12,14 @@ denyMessage = 'denied by riskrails.yaml enforcement.commands.deny'
 
 [[rule]]
 toolName = ['write_file', 'replace']
-argsPattern = '"file_path":"(?:(?:.*/)?riskrails\.yaml|(?:.*/)?\.rr/.*|(?:.*/)?\.claude/.*|(?:.*/)?\.codex/.*|(?:.*/)?\.gemini/.*|(?:.*/)?\.cursor/.*|(?:.*/)?\.kiro/.*|(?:.*/)?\.opencode/.*|(?:.*/)?opencode\.json|(?:.*/)?\.agents/.*|(?:.*/)?\.githooks/.*|(?:.*/)?\.mcp\.json|(?:.*/)?\.git/.*|(?:.*/)?\.github/.*|(?:.*/)?\.env[^/]*|(?:.*/)?\.github/workflows/.*|(?:.*/)?\.git/config|(?:.*/)?\.git/refs/remotes/.*|/home/test/\.config/riskrails/.*|/home/test/\.cache/riskrails/.*)"'
+argsPattern = '"file_path":"(?:(?:.*/)?riskrails\.yaml|(?:.*/)?\.rr/.*|(?:.*/)?\.claude/.*|(?:.*/)?\.codex/.*|(?:.*/)?\.gemini/.*|(?:.*/)?\.cursor/.*|(?:.*/)?\.kiro/.*|(?:.*/)?\.opencode/.*|(?:.*/)?opencode\.json|(?:.*/)?\.agents/.*|(?:.*/)?\.githooks/.*|(?:.*/)?\.mcp\.json|(?:.*/)?\.git/.*|(?:.*/)?\.github/.*|(?:.*/)?\.env[^/]*|(?:.*/)?\.github/workflows/.*|(?:.*/)?\.git/config|(?:.*/)?\.git/refs/remotes/.*|(?:.*/)?\.config/riskrails/.*|(?:.*/)?\.cache/riskrails/.*)"'
 decision = 'deny'
 priority = 900
 denyMessage = 'protected path (riskrails.yaml)'
 
 [[rule]]
 toolName = ['read_file']
-argsPattern = '"file_path":"(?:(?:.*/)?\.env[^/]*|/home/test/\.ssh/.*|/home/test/\.aws/.*|/home/test/\.config/riskrails/.*|/home/test/\.cache/riskrails/.*)"'
+argsPattern = '"file_path":"(?:(?:.*/)?\.env[^/]*|(?:.*/)?\.ssh/.*|(?:.*/)?\.aws/.*|(?:.*/)?\.config/riskrails/.*|(?:.*/)?\.cache/riskrails/.*)"'
 decision = 'deny'
 priority = 900
 denyMessage = 'secret path (riskrails.yaml)'

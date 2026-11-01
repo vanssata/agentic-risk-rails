@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"runtime/debug"
 	"sort"
 	"sync"
 
@@ -22,7 +23,11 @@ func Register(b func() *cobra.Command) {
 }
 
 // Root builds the rr root command with every registered subcommand.
+// Without -ldflags (`go install …@v0.4.1`) the version is the module version.
 func Root(version string) *cobra.Command {
+	if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		version = bi.Main.Version
+	}
 	root := &cobra.Command{
 		Use:           "rr",
 		Short:         "RiskRails: risk engine and enforcement for AI coding agents",

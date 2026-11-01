@@ -82,10 +82,10 @@
         ".env.prod",
         "**/.env.prod",
         "config/secrets/**",
-        "/home/test/.ssh/**",
-        "/home/test/.aws/**",
-        "/home/test/.config/riskrails/**",
-        "/home/test/.cache/riskrails/**"
+        "~/.ssh/**",
+        "~/.aws/**",
+        "~/.config/riskrails/**",
+        "~/.cache/riskrails/**"
       ],
       "denyWrite": [
         "riskrails.yaml",
@@ -111,8 +111,8 @@
         ".github/workflows/**",
         ".git/config",
         ".git/refs/remotes/**",
-        "/home/test/.config/riskrails/**",
-        "/home/test/.cache/riskrails/**"
+        "~/.config/riskrails/**",
+        "~/.cache/riskrails/**"
       ]
     }
   },

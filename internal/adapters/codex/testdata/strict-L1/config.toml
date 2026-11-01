@@ -16,11 +16,11 @@ max_concurrent_threads_per_session = 3
 [permissions.riskrails]
 [permissions.riskrails.filesystem]
 '/' = 'read'
-'/home/test/.aws/**' = 'deny'
-'/home/test/.cache/riskrails/**' = 'deny'
-'/home/test/.config/riskrails/**' = 'deny'
-'/home/test/.ssh/**' = 'deny'
 '/tmp' = 'write'
+'~/.aws/**' = 'deny'
+'~/.cache/riskrails/**' = 'deny'
+'~/.config/riskrails/**' = 'deny'
+'~/.ssh/**' = 'deny'
 
 [permissions.riskrails.filesystem.':workspace_roots']
 '**/.env*' = 'deny'

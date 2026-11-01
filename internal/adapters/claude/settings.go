@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -87,8 +86,8 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 	}
 
 	fs := sandboxFSDoc{
-		DenyRead:  sandboxPaths(in.Home, readDeny),
-		DenyWrite: sandboxPaths(in.Home, writeDeny),
+		DenyRead:  sandboxPaths(readDeny),
+		DenyWrite: sandboxPaths(writeDeny),
 	}
 	required := in.Level >= core.L2
 	if sb.RequiredFrom != nil {
@@ -152,15 +151,11 @@ func permPath(p string) string {
 }
 
 // sandboxPaths expands "~" with home; other paths stay relative to the project root.
-func sandboxPaths(home string, paths []string) []string {
+// `~/x` stays literal: Claude expands it ([V]); committed manifests must not depend on the machine.
+func sandboxPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		for _, r := range depthForms(p) {
-			if r == "~" || strings.HasPrefix(r, "~/") {
-				r = filepath.Join(home, strings.TrimPrefix(r, "~"))
-			}
-			out = append(out, r)
-		}
+		out = append(out, depthForms(p)...)
 	}
 	return dedupe(out)
 }

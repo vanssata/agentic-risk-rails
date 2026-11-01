@@ -90,10 +90,10 @@ func (policyGen) Render(_ context.Context, in core.SyncInput) ([]core.File, erro
 	if re := commandRegex(e.Commands.Deny); re != "" {
 		add(rule{ToolName: []string{"run_shell_command"}, CommandRe: re, Decision: "deny", Priority: prioDeny, DenyMessage: "denied by riskrails.yaml enforcement.commands.deny"})
 	}
-	if re := pathArgs(in.Home, concat(core.AlwaysProtected, e.ProtectedPaths, sb.Readonly, sb.NoWrite), e.SecretReads); re != "" {
+	if re := pathArgs(concat(core.AlwaysProtected, e.ProtectedPaths, sb.Readonly, sb.NoWrite), e.SecretReads); re != "" {
 		add(rule{ToolName: []string{"write_file", "replace"}, ArgsPattern: re, Decision: "deny", Priority: prioDeny, DenyMessage: "protected path (riskrails.yaml)"})
 	}
-	if re := pathArgs(in.Home, concat(e.SecretReads, sb.NoRead), e.SecretReads); re != "" {
+	if re := pathArgs(concat(e.SecretReads, sb.NoRead), e.SecretReads); re != "" {
 		add(rule{ToolName: []string{"read_file"}, ArgsPattern: re, Decision: "deny", Priority: prioDeny, DenyMessage: "secret path (riskrails.yaml)"})
 	}
 	if re := commandRegex(e.Commands.Ask); re != "" {
@@ -135,16 +135,16 @@ func commandRegex(globs []string) string {
 // Relative globs match as a path suffix at any depth (stricter than the
 // root-anchored policy meaning, which is the safe side); "~/" is expanded with
 // home; "$secret_reads" is replaced with secrets, other "$" refs are dropped.
-func pathArgs(home string, globs, secrets []string) string {
+func pathArgs(globs, secrets []string) string {
 	var alts []string
 	seen := map[string]bool{}
 	for _, g := range globs {
 		switch {
 		case g == "$secret_reads":
-			alts = appendUniq(alts, seen, home, secrets...)
+			alts = appendUniq(alts, seen, secrets...)
 		case strings.HasPrefix(g, "$"):
 		default:
-			alts = appendUniq(alts, seen, home, g)
+			alts = appendUniq(alts, seen, g)
 		}
 	}
 	if len(alts) == 0 {
@@ -153,11 +153,11 @@ func pathArgs(home string, globs, secrets []string) string {
 	return `"file_path":"(?:` + strings.Join(alts, "|") + `)"`
 }
 
-func appendUniq(alts []string, seen map[string]bool, home string, globs ...string) []string {
+func appendUniq(alts []string, seen map[string]bool, globs ...string) []string {
 	for _, g := range globs {
 		prefix := `(?:.*/)?`
 		if rest, ok := strings.CutPrefix(g, "~/"); ok {
-			g, prefix = strings.TrimRight(home, "/")+"/"+rest, ""
+			g = rest // any home, `~` or absolute: over-matching a deny is safe, and manifests must not depend on the machine
 		} else if strings.HasPrefix(g, "/") {
 			prefix = ""
 		}

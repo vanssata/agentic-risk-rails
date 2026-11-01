@@ -58,3 +58,14 @@ func TestSyncUnknownRuntimeFails(t *testing.T) {
 		assert.Contains(t, out+err.Error(), `unknown runtime "Claude"`)
 	}
 }
+
+// Committed manifests are checked in CI on another machine: rendering must not
+// depend on $HOME (the fixture policy has ~ paths in secret_reads).
+func TestSyncDoesNotDependOnHome(t *testing.T) {
+	root := taskRepo(t)
+	_, err := runPolicyRR(t, "sync", "--root", root)
+	require.NoError(t, err)
+	t.Setenv("HOME", t.TempDir())
+	out, err := runPolicyRR(t, "sync", "--root", root, "--check")
+	require.NoError(t, err, out)
+}

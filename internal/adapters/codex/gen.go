@@ -126,11 +126,11 @@ func filesystem(in core.SyncInput) map[string]any {
 		for _, e := range entries {
 			if r, ok := refs[e]; ok {
 				for _, x := range r {
-					place(abs, ws, in.Home, x, access)
+					place(abs, ws, x, access)
 				}
 				continue
 			}
-			place(abs, ws, in.Home, e, access)
+			place(abs, ws, e, access)
 		}
 	}
 	add(core.AlwaysProtected, "read")
@@ -147,12 +147,12 @@ func filesystem(in core.SyncInput) map[string]any {
 	return fs
 }
 
-func place(abs, ws map[string]string, home, entry, access string) {
+func place(abs, ws map[string]string, entry, access string) {
 	entry = filepath.ToSlash(strings.TrimSpace(entry))
 	var target map[string]string
 	switch {
 	case entry == "~" || strings.HasPrefix(entry, "~/"):
-		entry, target = strings.TrimRight(home, "/")+entry[1:], abs
+		target = abs // literal `~/x`: Codex expands it (observed, 0.166); manifests must not depend on the machine
 	case strings.HasPrefix(entry, "/"):
 		target = abs
 	}
