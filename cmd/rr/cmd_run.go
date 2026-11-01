@@ -83,6 +83,11 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 	if err != nil {
 		return err
 	}
+	// DES §3.4 step 4: L≥2 only with the live ruleset in place (code-owner
+	// review, last-push approval, pinned status check, no bypass actors).
+	if err := remoteCheck(ctx, branch, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
 	if state == "" {
 		if state, err = defaultStateDir(root); err != nil {
 			return err

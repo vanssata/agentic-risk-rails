@@ -100,10 +100,32 @@ func (permGen) Render(_ context.Context, in core.SyncInput) ([]core.File, error)
 	case !os.IsNotExist(err):
 		return nil, fmt.Errorf("read opencode.json: %w", err)
 	}
+	if why := overrides(cfg); why != "" {
+		return nil, fmt.Errorf("opencode.json %s would override the generated permission, refusing to render", why)
+	}
 	cfg["permission"] = map[string]any{"bash": bash, "edit": edit, "read": read}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return []core.File{{Path: "opencode.json", Content: append(b, '\n')}}, nil
+}
+
+// overrides names a key that can weaken the top-level permission: a plugin
+// (tool.execute.before) or a per-agent/per-mode permission (Opus round 3).
+func overrides(cfg map[string]any) string {
+	if _, ok := cfg["plugin"]; ok {
+		return "plugin"
+	}
+	for _, k := range []string{"agent", "mode"} {
+		m, _ := cfg[k].(map[string]any)
+		for name, v := range m {
+			if a, _ := v.(map[string]any); a != nil {
+				if _, ok := a["permission"]; ok {
+					return k + "." + name + ".permission"
+				}
+			}
+		}
+	}
+	return ""
 }

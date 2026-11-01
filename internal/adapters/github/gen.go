@@ -89,7 +89,8 @@ func (gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	var paths []string
 	// "/.github/" is always owned: a PR must not be able to replace the
 	// policy-check workflow, CODEOWNERS or the ruleset without code-owner review.
-	for _, s := range append([]string{"riskrails.yaml", "/.github/"}, p.Enforcement.ProtectedPaths...) {
+	owned := append([]string{"riskrails.yaml", "/.github/"}, core.AlwaysProtected...)
+	for _, s := range append(owned, p.Enforcement.ProtectedPaths...) {
 		if !seen[s] && !strings.HasPrefix(s, "~") && !strings.Contains(s, "$") {
 			seen[s] = true
 			paths = append(paths, s)

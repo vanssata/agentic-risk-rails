@@ -321,6 +321,22 @@ func (r *Runner) tasksToday() (int, error) {
 	return n + 1, os.WriteFile(p, []byte(strconv.Itoa(n+1)), 0o600)
 }
 
+// haltTask keeps the agent's tracked/untracked work for a human, but not the
+// L2 manifests or ignored files (node_modules/.bin, .envrc …) (Opus round 3).
+func (r *Runner) haltTask(ctx context.Context, reason string, files []core.File, tracked map[string]bool) error {
+	if err := r.restore(ctx, files, tracked); err != nil {
+		reason += "; restore manifests: " + err.Error()
+	}
+	_, _ = r.git(ctx, "clean", "-ffdqX", "-e", "/.rr")
+	return r.halted(ctx, reason)
+}
+
+// discard drops an over-budget task: manifests restored, tree back at base.
+func (r *Runner) discard(ctx context.Context, files []core.File, tracked map[string]bool, base string) {
+	_ = r.restore(ctx, files, tracked) // reset below overwrites tracked files anyway
+	r.reset(ctx, base)
+}
+
 func (r *Runner) reset(ctx context.Context, base string) {
 	_, _ = r.git(ctx, "checkout", "-f", "-q", base)
 	r.clean(ctx)
@@ -406,13 +422,14 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
 		Brief: "Task id: " + t.ID + "\n\n" + t.Brief, Budget: pol.Models.Budgets[t.Mode]})
 
-	if reason := r.halter.Halted(); reason != "" { // the tree stays as the agent left it, for a human
-		return o, r.halted(ctx, reason)
+	if reason := r.halter.Halted(); reason != "" {
+		return o, r.haltTask(ctx, reason, files, tracked)
 	}
 	if err := ctx.Err(); err != nil { // the caller stopped the run: not a wall-clock budget
 		return o, err
 	}
 	if waveCtx.Err() != nil {
+		r.discard(ctx, files, tracked, base)
 		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "wall", "limit": pol.Autonomy.Unattended.MaxWallMinutes})
 		return o, &core.Refusal{Code: "BUDGET", Detail: "max_wall_minutes reached"}
 	}
@@ -426,6 +443,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	}
 	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
 	if b := pol.Models.Budgets[t.Mode]; b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
+		r.discard(ctx, files, tracked, base)
 		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens})
 		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
 	}
@@ -460,7 +478,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return o, nil
 	}
 	for _, c := range changed {
-		for _, p := range pol.Enforcement.ProtectedPaths {
+		for _, p := range append(append([]string{}, core.AlwaysProtected...), pol.Enforcement.ProtectedPaths...) {
 			if globs.Match(p, c) {
 				return block("changes protected path " + c)
 			}

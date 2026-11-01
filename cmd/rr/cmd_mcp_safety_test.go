@@ -32,7 +32,7 @@ func TestMCPRejectsUnsafePaths(t *testing.T) {
 	called := false
 	cs := session(t, t.TempDir(), func(context.Context, ...string) (string, error) { called = true; return "", nil })
 	for _, bad := range []string{"--root=/x", "-h", "../x", "/etc/passwd"} {
-		for tool, key := range map[string]string{"affected": "files", "triage": "files", "research": "reports"} {
+		for tool, key := range map[string]string{"triage": "files", "research": "reports"} {
 			r, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: tool, Arguments: map[string]any{key: []string{bad}}})
 			require.NoError(t, err)
 			assert.True(t, r.IsError, "%s %s", tool, bad)
@@ -41,12 +41,12 @@ func TestMCPRejectsUnsafePaths(t *testing.T) {
 	assert.False(t, called, "the command must not be invoked")
 }
 
-func TestMCPAffectedUsesDoubleDash(t *testing.T) {
-	var got []string
-	cs := session(t, "/r", func(_ context.Context, a ...string) (string, error) { got = a; return "", nil })
-	_, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "affected", Arguments: map[string]any{"files": []string{"a.php"}}})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"affected", "--root", "/r", "--", "a.php"}, got)
+func TestMCPHasNoAffectedTool(t *testing.T) {
+	cs := session(t, "/r", func(context.Context, ...string) (string, error) { t.Fatal("must not run"); return "", nil })
+	r, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "affected", Arguments: map[string]any{"files": []string{"a.php"}}})
+	if err == nil {
+		assert.True(t, r.IsError)
+	}
 }
 
 func TestMCPResearchConfinedToRoot(t *testing.T) {
@@ -77,7 +77,6 @@ func TestMCPNeverWritesStdout(t *testing.T) {
 	for _, c := range []sdk.CallToolParams{
 		{Name: "status", Arguments: map[string]any{}},
 		{Name: "triage", Arguments: map[string]any{"files": []string{"src/Controller/HomeController.php"}}},
-		{Name: "affected", Arguments: map[string]any{"files": []string{"src/Controller/HomeController.php"}}},
 	} {
 		_, err := cs.CallTool(context.Background(), &c)
 		require.NoError(t, err)

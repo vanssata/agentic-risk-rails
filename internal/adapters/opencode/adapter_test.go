@@ -53,3 +53,16 @@ func TestPermissionsGolden(t *testing.T) {
 	// last matching rule wins: the catch-all must come first
 	assert.Regexp(t, `"bash": \{\s*"\*": "ask"`, string(fs[0].Content))
 }
+
+func TestRefusesConfigThatOverridesPermission(t *testing.T) {
+	for _, cfg := range []string{
+		`{"plugin":["x"]}`,
+		`{"agent":{"build":{"permission":{"bash":"allow"}}}}`,
+		`{"mode":{"plan":{"permission":{"edit":"allow"}}}}`,
+	} {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "opencode.json"), []byte(cfg), 0o644))
+		_, err := permGen{}.Render(context.Background(), core.SyncInput{Root: root, Policy: core.EffectivePolicy{Policy: core.StrictDefaults()}})
+		require.ErrorContains(t, err, "would override", cfg)
+	}
+}

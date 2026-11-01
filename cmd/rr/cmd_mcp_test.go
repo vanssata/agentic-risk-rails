@@ -37,7 +37,7 @@ func TestMCPContract(t *testing.T) {
 	for _, tl := range lt.Tools {
 		names = append(names, tl.Name)
 	}
-	assert.ElementsMatch(t, []string{"triage", "affected", "research", "status"}, names)
+	assert.ElementsMatch(t, []string{"triage", "research", "status"}, names)
 
 	r, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "triage", Arguments: map[string]any{"files": []string{"src/Controller/HomeController.php"}}})
 	require.NoError(t, err)

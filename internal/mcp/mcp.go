@@ -1,4 +1,4 @@
-// Package mcp serves the read-only rr tools (triage, affected, research, status)
+// Package mcp serves the read-only rr tools (triage, research, status)
 // over MCP. Each tool runs the matching rr subcommand through Runner, so the
 // CLI stays the single implementation.
 package mcp
@@ -18,10 +18,6 @@ type Runner func(ctx context.Context, args ...string) (string, error)
 type triageIn struct {
 	Files []string `json:"files" jsonschema:"repo-relative files the task touches"`
 	Goal  string   `json:"goal,omitempty" jsonschema:"task goal"`
-}
-
-type affectedIn struct {
-	Files []string `json:"files,omitempty" jsonschema:"changed files; default is the git changes"`
 }
 
 type researchIn struct {
@@ -44,13 +40,8 @@ func NewServer(root string, run Runner) *sdk.Server {
 			}
 			return a, nil
 		})
-	tool(s, "affected", "List the tests affected by changed files and whether a full run is required. Does not write, but runs the project's test tooling to map files; not static.", run,
-		func(in affectedIn) ([]string, error) {
-			if err := relPaths(in.Files); err != nil {
-				return nil, err
-			}
-			return append([]string{"affected", "--root", root, "--"}, in.Files...), nil
-		})
+	// No "affected" tool: mapping runs the project's test tooling (jest config,
+	// node_modules/.bin) and the MCP server runs outside the sandbox (errata #38).
 	tool(s, "research", "Merge scout reports into one brief (read-only).", run,
 		func(in researchIn) ([]string, error) {
 			if err := relPaths(in.Reports); err != nil {

@@ -275,3 +275,37 @@ func TestWallDeadlineIsBudgetButCallerCancelIsNot(t *testing.T) {
 	var ref *core.Refusal
 	assert.False(t, errors.As(err, &ref), "a cancelled caller is not a wall budget")
 }
+
+// Opus round 3: AlwaysProtected paths (agent configs, skills, MCP) block like protected_paths.
+func TestAlwaysProtectedChangeIsBlocked(t *testing.T) {
+	for _, p := range []string{".mcp.json", ".claude/commands/deploy.md", ".agents/skills/x/SKILL.md"} {
+		t.Run(p, func(t *testing.T) {
+			e := newEnv(t)
+			e.worker.fn = func(context.Context, int, core.WorkerSpec) (core.WorkerReport, error) {
+				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(e.root, p)), 0o755))
+				return done("ok"), os.WriteFile(filepath.Join(e.root, p), []byte("x"), 0o644)
+			}
+			out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+			require.NoError(t, err)
+			assert.Equal(t, "blocked", out[0].Status)
+			assert.Contains(t, blockedReason(t, e), "protected path "+p)
+			assert.Empty(t, e.pushed)
+		})
+	}
+}
+
+// Opus round 3: an over-budget task leaves no agent tree, no L2 manifests and no ignored files.
+func TestBudgetDiscardsAgentTree(t *testing.T) {
+	e := newEnv(t)
+	e.pol.Models.Budgets = map[core.Mode]core.TokenCount{core.ModeLight: 50}
+	base := strings.TrimSpace(testutil.Git(t, e.root, "rev-parse", "HEAD"))
+	e.worker.fn = func(context.Context, int, core.WorkerSpec) (core.WorkerReport, error) {
+		require.NoError(t, os.MkdirAll(filepath.Join(e.root, "node_modules/.bin"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(e.root, "node_modules/.bin/jest"), []byte("x"), 0o755))
+		return done("ok"), os.WriteFile(filepath.Join(e.root, "a.txt"), []byte("agent\n"), 0o644)
+	}
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	assert.Equal(t, "BUDGET", e.refusal(t, err).Code)
+	assert.Equal(t, base, strings.TrimSpace(testutil.Git(t, e.root, "rev-parse", "HEAD")))
+	assert.Empty(t, strings.TrimSpace(testutil.Git(t, e.root, "status", "--porcelain", "--ignored", "--", ".", ":!.rr")))
+}
