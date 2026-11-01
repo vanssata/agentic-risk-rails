@@ -29,7 +29,14 @@ func init() {
 				if err != nil {
 					return err
 				}
+				stale, err := rrsync.Stale(cmd.Context(), root, in, rrsync.Generators())
+				if err != nil {
+					return err
+				}
 				if !check {
+					if err := rrsync.Remove(root, stale); err != nil {
+						return err
+					}
 					if err := rrsync.Write(root, files); err != nil {
 						return err
 					}
@@ -43,7 +50,10 @@ func init() {
 				for _, p := range drift {
 					fmt.Fprintln(cmd.OutOrStdout(), "drift:", p)
 				}
-				if len(drift) > 0 {
+				for _, p := range stale {
+					fmt.Fprintln(cmd.OutOrStdout(), "stale (runtime disabled):", p)
+				}
+				if len(drift)+len(stale) > 0 {
 					return ExitError{Code: 1}
 				}
 				if remote {

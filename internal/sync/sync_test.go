@@ -2,6 +2,8 @@ package sync_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +32,46 @@ func TestRenderWriteDrift(t *testing.T) {
 	drift, err = rrsync.Drift(root, files)
 	require.NoError(t, err)
 	assert.Empty(t, drift)
+}
+
+func TestStaleAndRemove(t *testing.T) {
+	root := t.TempDir()
+	ga := fakes.Generator{ID: "st-a-gen", Files: []core.File{{Path: "a/one.json"}, {Path: "shared"}}}
+	gb := fakes.Generator{ID: "st-b-gen", Files: []core.File{{Path: "b/two.json"}, {Path: "b/absent.json"}, {Path: "shared"}}}
+	rrsync.RegisterRuntime("st-a", ga)
+	rrsync.RegisterRuntime("st-b", gb)
+	all := []core.Generator{ga, gb}
+	for _, p := range []string{"a/one.json", "b/two.json", "shared"} {
+		require.NoError(t, rrsync.Write(root, []core.File{{Path: p, Content: []byte("x")}}))
+	}
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "keep"), []byte("k"), 0o644))
+
+	var in core.SyncInput
+	in.Policy.Policy.Project.Runtimes = []string{"st-b"}
+	stale, err := rrsync.Stale(context.Background(), root, in, all)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a/one.json"}, stale, "only existing files of disabled runtimes; shared path belongs to an enabled generator")
+
+	require.NoError(t, rrsync.Remove(root, stale))
+	assert.NoFileExists(t, filepath.Join(root, "a/one.json"))
+	assert.DirExists(t, filepath.Join(root, "a"), "directories stay")
+	assert.FileExists(t, filepath.Join(root, "b/two.json"))
+
+	in.Policy.Policy.Project.Runtimes = nil
+	stale, err = rrsync.Stale(context.Background(), root, in, all)
+	require.NoError(t, err)
+	assert.Empty(t, stale, "nil runtimes = all enabled")
+
+	// a symlink is removed, not followed
+	require.NoError(t, os.Symlink(filepath.Join(outside, "keep"), filepath.Join(root, "a/one.json")))
+	require.NoError(t, rrsync.Remove(root, []string{"a/one.json"}))
+	assert.FileExists(t, filepath.Join(outside, "keep"))
+
+	// a parent directory symlinked out of the repo is refused
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "esc")))
+	assert.Error(t, rrsync.Remove(root, []string{"esc/keep"}))
+	assert.FileExists(t, filepath.Join(outside, "keep"))
 }
 
 func TestRenderRejectsDuplicatesAndEscapes(t *testing.T) {

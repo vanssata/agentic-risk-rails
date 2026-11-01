@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	gosync "sync"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -106,6 +107,86 @@ func Render(ctx context.Context, in core.SyncInput, gens []core.Generator) ([]co
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
+}
+
+// Stale returns the paths, existing under root, that generators of runtimes
+// disabled in project.runtimes would render for the current input. They are
+// rendered only to learn their paths; paths also produced by an enabled
+// generator are never stale.
+func Stale(ctx context.Context, root string, in core.SyncInput, gens []core.Generator) ([]string, error) {
+	rts := in.Policy.Policy.Project.Runtimes
+	if err := checkRuntimes(rts); err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	var off []core.Generator
+	for _, g := range gens {
+		if enabled(g, rts) {
+			fs, err := g.Render(ctx, in)
+			if err != nil {
+				return nil, fmt.Errorf("generator %s: %w", g.Name(), err)
+			}
+			for _, f := range fs {
+				keep[filepath.Clean(f.Path)] = true
+			}
+		} else {
+			off = append(off, g)
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range off {
+		fs, err := g.Render(ctx, in)
+		if err != nil {
+			return nil, fmt.Errorf("generator %s: %w", g.Name(), err)
+		}
+		for _, f := range fs {
+			p := filepath.Clean(f.Path)
+			if filepath.IsAbs(p) || p == ".." || strings.HasPrefix(p, "../") {
+				return nil, fmt.Errorf("generator %s: path %q escapes the repo", g.Name(), f.Path)
+			}
+			if keep[p] || seen[p] {
+				continue
+			}
+			seen[p] = true
+			if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+				out = append(out, p)
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// Remove deletes exactly the given files under root (never directories; a
+// symlink is removed, not followed). A path whose parent directory resolves
+// outside root is refused.
+func Remove(root string, paths []string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		dst := filepath.Join(root, p)
+		dir, err := filepath.EvalSymlinks(filepath.Dir(dst))
+		if err != nil {
+			return err
+		}
+		if dir != realRoot && !strings.HasPrefix(dir, realRoot+string(filepath.Separator)) {
+			return fmt.Errorf("refusing to remove %s: parent resolves outside the repo", p)
+		}
+		if fi, err := os.Lstat(dst); err != nil {
+			return err
+		} else if fi.IsDir() {
+			return fmt.Errorf("refusing to remove directory %s", p)
+		}
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Write writes files under root.

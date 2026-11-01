@@ -159,14 +159,38 @@ func InForce(ctx context.Context, root string) (core.Layer, error) {
 	if !ok {
 		return core.Layer{Policy: core.StrictDefaults(), Source: "default branch not found (strict defaults)"}, nil
 	}
-	return ReadAtRef(ctx, root, ref)
+	l, err := ReadAtRef(ctx, root, ref)
+	if err != nil {
+		return l, err
+	}
+	// An explicit project.default_branch (not the defaulted "main") wins over the guessed branch.
+	if raw, derr := decode(l.Raw); derr == nil && raw.Project.DefaultBranch != "" {
+		b := raw.Project.DefaultBranch
+		if r, ok := DefaultRefFor(ctx, root, b); ok && r != ref {
+			return ReadAtRef(ctx, root, r)
+		}
+	}
+	return l, nil
 }
 
 // DefaultRef returns the fully-qualified ref of the default branch that
 // InForce reads (same selection and trust caveats); ok=false if none exists.
 func DefaultRef(ctx context.Context, root string) (ref string, ok bool) {
+	return DefaultRefFor(ctx, root, "")
+}
+
+// DefaultRefFor is DefaultRef preferring origin/<branch> (project.default_branch)
+// when branch is set and exists, then refs/heads/<branch>; else DefaultRef's choice.
+func DefaultRefFor(ctx context.Context, root, branch string) (ref string, ok bool) {
 	const remote = "refs/remotes/origin/"
 	var refs []string
+	if branch != "" && !strings.HasPrefix(branch, "-") && !strings.Contains(branch, "..") {
+		for _, r := range []string{remote + branch, "refs/heads/" + branch} {
+			if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", r); err == nil {
+				return r, true
+			}
+		}
+	}
 	if out, err := gitOut(ctx, root, "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
 		r := strings.TrimSpace(string(out))
 		refs = []string{r, "refs/heads/" + strings.TrimPrefix(r, remote)}
