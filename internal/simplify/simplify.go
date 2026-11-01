@@ -72,10 +72,10 @@ func jscpd(ctx context.Context, root string, files []string) ToolReport {
 	defer os.RemoveAll(out)
 	cmd := exec.CommandContext(ctx, name, "--silent", "--reporters", "json", "--output", out, ".")
 	cmd.Dir = root
-	runErr := cmd.Run() // may exit non-zero on thresholds; the report decides
+	_ = cmd.Run() // may exit non-zero on thresholds; the report decides
 	b, err := os.ReadFile(filepath.Join(out, "jscpd-report.json"))
 	if err != nil {
-		return failed(name, fmt.Errorf("no report (%v): %w", runErr, err))
+		return failed(name, fmt.Errorf("no report: %w", err))
 	}
 	var rep struct {
 		Duplicates []struct {
