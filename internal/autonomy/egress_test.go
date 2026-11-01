@@ -59,11 +59,16 @@ func TestEgressUpTopologyAndDown(t *testing.T) {
 	assert.NotContains(t, j, "--network bridge")
 	assert.NotContains(t, j, "--network host")
 	assert.Contains(t, j, "dst=/etc/squid/squid.conf,readonly")
+	m, _ := filepath.Glob(filepath.Join(e.Dir, "squid-*.conf"))
+	require.Len(t, m, 1)
+	fi, err := os.Stat(m[0])
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), fi.Mode().Perm(), "squid starts as root without CAP_DAC_OVERRIDE: the conf must be world-readable")
 	n.Down()
 	b, _ = os.ReadFile(log)
 	assert.Contains(t, string(b), "rm -f rr-proxy-")
 	assert.Contains(t, string(b), "network rm "+n.Network+" rr-out-")
-	m, _ := filepath.Glob(filepath.Join(e.Dir, "squid-*.conf"))
+	m, _ = filepath.Glob(filepath.Join(e.Dir, "squid-*.conf"))
 	assert.Empty(t, m, "conf removed")
 }
 

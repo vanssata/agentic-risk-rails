@@ -55,11 +55,17 @@ type DockerRunner struct {
 	// NoRead are the repo-relative patterns of enforcement.secret_reads and
 	// sandbox.no_read (already expanded): every match in the checkout, git-ignored or
 	// not, is masked in the container.
-	NoRead  []string
-	noKeys  bool // Exec/CommandArgv: no API keys, no halt socket, no scope file
-	Level   core.Level
-	Models  map[core.Tier]string
-	Timeout time.Duration // 0 = 90 minutes
+	NoRead []string
+	// AuthFrom is an isolated subscription login dir (e.g. ~/.claude-rr, ~/.codex-rr):
+	// its credentials file is copied per agent container into a fresh dir under
+	// StateDir, mounted as the runtime's config dir (stageAuth). "" = API key only.
+	AuthFrom string
+	StateDir string // runner-owned, outside the checkout
+	authDir  string // the staged login of this container
+	noKeys   bool   // Exec/CommandArgv: no API keys, no login, no halt socket, no scope file
+	Level    core.Level
+	Models   map[core.Tier]string
+	Timeout  time.Duration // 0 = 90 minutes
 }
 
 var (
@@ -300,7 +306,7 @@ func randHex() string {
 }
 
 // Run implements core.WorkerRunner. A worker that fails or prints no result is BLOCKED.
-func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.WorkerReport, error) {
+func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (rep core.WorkerReport, err error) {
 	model, ok := d.Models[spec.Tier]
 	if !ok {
 		return core.WorkerReport{}, fmt.Errorf("docker runner: no model for tier %s", spec.Tier)
@@ -314,6 +320,18 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	inner, err := d.agentCmd(model, spec.MaxTurns)
 	if err != nil {
 		return core.WorkerReport{}, err
+	}
+	if d.AuthFrom != "" {
+		dir, done, serr := d.stageAuth()
+		if serr != nil {
+			return core.WorkerReport{}, serr
+		}
+		d.authDir = dir
+		defer func() {
+			if derr := done(); derr != nil && err == nil {
+				err = derr
+			}
+		}()
 	}
 	root := d.Root
 	if spec.Worktree != "" {
@@ -509,13 +527,24 @@ func (d DockerRunner) configMounts(abs string) (args []string, err error) {
 		}
 		args = append(args, "--mount", "type=bind,src="+f.src+",dst="+f.dst+",readonly")
 	}
+	login := d.authDir != "" && !d.noKeys
+	if login && strings.Contains(d.authDir, ",") {
+		return nil, fmt.Errorf("docker runner: path %q contains a comma", d.authDir)
+	}
+	if login && d.Runtime == "claude" {
+		args = append(args, "--mount", "type=bind,src="+d.authDir+",dst="+claudeHome, "-e", "CLAUDE_CONFIG_DIR="+claudeHome)
+	}
 	if d.Runtime == "codex" && d.CodexConfig != "" {
 		if strings.Contains(d.CodexConfig, ",") {
 			return nil, fmt.Errorf("docker runner: path %q contains a comma", d.CodexConfig)
 		}
-		// a tmpfs owned by the agent user, so codex can write its state; the config is read-only on top
-		args = append(args, "--tmpfs", codexHome+":rw,mode=0700,uid="+strconv.Itoa(os.Getuid())+",gid="+strconv.Itoa(os.Getgid()),
-			"--mount", "type=bind,src="+d.CodexConfig+",dst="+codexHome+"/config.toml,readonly")
+		if login { // the staged login is the codex home
+			args = append(args, "--mount", "type=bind,src="+d.authDir+",dst="+codexHome)
+		} else { // a tmpfs owned by the agent user, so codex can write its state
+			args = append(args, "--tmpfs", codexHome+":rw,mode=0700,uid="+strconv.Itoa(os.Getuid())+",gid="+strconv.Itoa(os.Getgid()))
+		}
+		// the trust config is read-only on top
+		args = append(args, "--mount", "type=bind,src="+d.CodexConfig+",dst="+codexHome+"/config.toml,readonly")
 	}
 	masks, err := secretMasks(abs, d.NoRead)
 	if err != nil {

@@ -38,7 +38,7 @@ var runHosting = func(context.Context, string) (core.Hosting, error) {
 
 func init() {
 	cli.Register(func() *cobra.Command {
-		var level, queue, runtime, root, image, state, branch, proxyImage string
+		var level, queue, runtime, root, image, state, branch, proxyImage, authFrom string
 		c := &cobra.Command{
 			Use:   "run",
 			Short: "Unattended runner: queue of light tasks in a container, draft PRs only (L2+)",
@@ -58,7 +58,7 @@ func init() {
 				if err := dec.Decode(&tasks); err != nil {
 					return fmt.Errorf("queue %s: %w", queue, err)
 				}
-				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch, proxyImage)
+				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch, proxyImage, authFrom)
 			},
 		}
 		wd, _ := os.Getwd()
@@ -70,6 +70,7 @@ func init() {
 		c.Flags().StringVar(&proxyImage, "proxy-image", "", "squid image pinned by digest (name@sha256:...), present locally: the only way out of the agent container")
 		c.Flags().StringVar(&state, "state-dir", "", "runner state outside the checkout (default: $XDG_STATE_HOME/riskrails/<repo-hash>)")
 		c.Flags().StringVar(&branch, "default-branch", "main", "default branch on the remote")
+		c.Flags().StringVar(&authFrom, "auth-from", "", "isolated subscription login dir (e.g. ~/.claude-rr, ~/.codex-rr), copied per container instead of an API key")
 		_ = c.MarkFlagRequired("queue")
 		_ = c.MarkFlagRequired("image")
 		c.AddCommand(enforcementCmd())
@@ -174,7 +175,7 @@ func noReadPatterns(e core.EnforcementSpec) []string {
 	return out
 }
 
-func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, proxyImage string) error {
+func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, proxyImage, authFrom string) error {
 	// SIGINT/SIGTERM cancel the context instead of killing rr, so the proxy and
 	// the networks below are removed on every exit.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -228,11 +229,21 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 	if proxyImage == "" {
 		return fmt.Errorf("--proxy-image is required: the agent reaches the runtime API only through the egress proxy, there is no open-network fallback")
 	}
+	hosts := autonomy.RuntimeHosts(runtime)
+	if authFrom != "" {
+		if authFrom, err = filepath.Abs(authFrom); err != nil {
+			return err
+		}
+		if inside, err := pathWithin(root, authFrom); err != nil || inside {
+			return fmt.Errorf("--auth-from %s must be a directory outside the checkout (err: %v)", authFrom, err) //nolint:errorlint // err may be nil
+		}
+		hosts = autonomy.SubscriptionHosts(runtime)
+	}
 	sock := filepath.Join(state, "halt.sock")
 	return autonomy.Egress{Image: proxyImage, Dir: state, Warn: func(m string) { fmt.Fprintln(cmd.ErrOrStderr(), "warning:", m) },
-		Hosts: append(autonomy.RuntimeHosts(runtime), probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
+		Hosts: append(hosts, probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
-			CodexConfig: filepath.Join(state, autonomy.CodexConfigName), CeilingEnt: filepath.Join(state, autonomy.CeilingEntName),
+			AuthFrom: authFrom, StateDir: state, CodexConfig: filepath.Join(state, autonomy.CodexConfigName), CeilingEnt: filepath.Join(state, autonomy.CeilingEntName),
 			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement),
 			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
 		start, closeTask := runFlow(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]})
@@ -265,4 +276,20 @@ func defaultStateDir(root string) (string, error) {
 	}
 	h := sha256.Sum256([]byte(root))
 	return filepath.Join(base, "riskrails", hex.EncodeToString(h[:8])), nil
+}
+
+// pathWithin reports whether p is root or below it, after resolving symlinks.
+func pathWithin(root, p string) (bool, error) {
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+	if p, err = filepath.EvalSymlinks(p); err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(r, p)
+	if err != nil {
+		return false, err
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))), nil
 }
