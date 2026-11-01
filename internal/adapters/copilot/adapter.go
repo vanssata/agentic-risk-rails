@@ -48,11 +48,11 @@ type input struct {
 }
 
 type args struct {
-	Command  string `json:"command"`
-	Path     string `json:"path"`
-	FileText string `json:"file_text"`
-	OldStr   string `json:"old_str"`
-	NewStr   string `json:"new_str"`
+	Command  string  `json:"command"`
+	Path     string  `json:"path"`
+	FileText *string `json:"file_text"`
+	OldStr   string  `json:"old_str"`
+	NewStr   string  `json:"new_str"`
 }
 
 // ParseHookInput: bash ⇒ Tool "Bash"; edit/create/write ⇒ Tool "Edit" with the
@@ -94,7 +94,7 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 	if a.Path != "" {
 		call.Paths = []string{abs(in.Cwd, a.Path)}
 	}
-	switch name {
+	switch strings.ToLower(name) {
 	case "bash":
 		call.Tool, call.Command = "Bash", a.Command
 	case "edit", "create", "write":
@@ -118,8 +118,8 @@ func abs(cwd, p string) string {
 }
 
 func content(path string, a args) (string, error) {
-	if a.FileText != "" {
-		return a.FileText, nil
+	if a.FileText != nil {
+		return *a.FileText, nil
 	}
 	if a.OldStr == "" {
 		return "", errors.New("copilot: cannot compute post-edit content")

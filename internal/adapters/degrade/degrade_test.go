@@ -51,6 +51,9 @@ func TestAgentsMDMarkers(t *testing.T) {
 	assert.NotContains(t, got, "\nold\n")
 	assert.Contains(t, got, "rr guard --staged")
 
+	require.NoError(t, os.WriteFile(path, []byte("# Mine\n\n"+begin+"\nold\n"+end), 0o644)) // end marker at EOF, no newline
+	assert.Contains(t, string(render(t, root)["AGENTS.md"].Content), "rr guard --staged")
+
 	require.NoError(t, os.WriteFile(path, first, 0o644))
 	assert.Equal(t, first, render(t, root)["AGENTS.md"].Content, "idempotent")
 }

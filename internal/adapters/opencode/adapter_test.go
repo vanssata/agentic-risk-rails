@@ -3,6 +3,8 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +21,27 @@ func TestEnforcementCIOnly(t *testing.T) {
 	e, err := a.Enforcement(context.Background(), t.TempDir())
 	require.NoError(t, err)
 	assert.Equal(t, core.EnforcementCIOnly, e)
+}
+
+func TestMergesIntoExistingConfig(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "opencode.json")
+	in := core.SyncInput{Root: root, Policy: fakes.StrictPolicy(), Level: core.L1}
+
+	require.NoError(t, os.WriteFile(path, []byte(`{"provider":{"x":{"k":1}},"mcp":{"s":{"type":"local"}},"permission":"allow"}`), 0o644))
+	fs, err := permGen{}.Render(context.Background(), in)
+	require.NoError(t, err)
+	testutil.Golden(t, "opencode-merged.json", fs[0].Content)
+	again, err := permGen{}.Render(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, fs, again)
+
+	require.NoError(t, os.WriteFile(path, []byte(`{not json`), 0o644))
+	_, err = permGen{}.Render(context.Background(), in)
+	assert.Error(t, err, "invalid JSON is never overwritten")
+	require.NoError(t, os.WriteFile(path, []byte(`null`), 0o644))
+	_, err = permGen{}.Render(context.Background(), in)
+	assert.Error(t, err)
 }
 
 func TestPermissionsGolden(t *testing.T) {

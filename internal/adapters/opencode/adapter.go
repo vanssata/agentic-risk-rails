@@ -7,6 +7,10 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/adapters/degrade"
@@ -50,7 +54,7 @@ func (o ordered) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// Render compiles the policy to opencode.json. The file is wholly generated.
+// Render compiles the policy to the permission key of opencode.json.
 func (permGen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	e := in.Policy.Policy.Enforcement
 	unlisted := "ask"
@@ -75,7 +79,21 @@ func (permGen) Render(_ context.Context, in core.SyncInput) ([]core.File, error)
 	for _, p := range e.SecretReads {
 		read = append(read, pair{p, "deny"})
 	}
-	cfg := map[string]any{"permission": map[string]any{"bash": bash, "edit": edit, "read": read}}
+	// Only the permission key is ours: keep the user's provider/mcp/... keys.
+	cfg := map[string]any{}
+	old, err := os.ReadFile(filepath.Join(in.Root, "opencode.json"))
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(old, &cfg); err != nil {
+			return nil, fmt.Errorf("opencode.json is invalid, refusing to overwrite: %w", err)
+		}
+		if cfg == nil {
+			return nil, errors.New("opencode.json is not a JSON object, refusing to overwrite")
+		}
+	case !os.IsNotExist(err):
+		return nil, fmt.Errorf("read opencode.json: %w", err)
+	}
+	cfg["permission"] = map[string]any{"bash": bash, "edit": edit, "read": read}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, err

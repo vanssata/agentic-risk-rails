@@ -49,6 +49,10 @@ func TestParse(t *testing.T) {
 				assert.Equal(t, "hi", c.Content)
 				assert.Equal(t, []string{filepath.Join(dir, "n.txt")}, c.Paths)
 			}},
+		{"create empty file", mk("create", `{"path":"e.txt","file_text":""}`),
+			func(t *testing.T, c core.ToolCall) { assert.Equal(t, "Edit", c.Tool); assert.Empty(t, c.Content) }},
+		{"tool name is case-insensitive", mk("Bash", `{"command":"ls"}`),
+			func(t *testing.T, c core.ToolCall) { assert.Equal(t, "Bash", c.Tool); assert.Equal(t, "ls", c.Command) }},
 		{"str_replace", mk("edit", `{"path":"f.txt","old_str":"two","new_str":"2"}`),
 			func(t *testing.T, c core.ToolCall) { assert.Equal(t, "one 2\n", c.Content) }},
 	}

@@ -61,7 +61,7 @@ func replaceBlock(old []byte, block string) ([]byte, bool) {
 	if i < 0 || j < i {
 		return nil, false
 	}
-	return []byte(s[:i] + block + s[j+len(end)+1:]), true
+	return []byte(s[:i] + block + strings.TrimPrefix(s[j+len(end):], "\n")), true
 }
 
 // Protected is core.AlwaysProtected plus the policy's protected paths, deduplicated.

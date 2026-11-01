@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -55,8 +56,22 @@ func Env() []string {
 // Run runs hardened git with args (which include -C or --git-dir as needed)
 // and returns stdout. stdin may be empty.
 func Run(ctx context.Context, stdin string, args ...string) ([]byte, error) {
+	return run(ctx, Env(), stdin, args)
+}
+
+// RunIndex is Run with GIT_INDEX_FILE=indexFile (absolute) added to the
+// otherwise stripped environment: a pre-commit hook of `git commit -a` or
+// `git commit -- <path>` must read git's temporary index, not .git/index.
+func RunIndex(ctx context.Context, indexFile, stdin string, args ...string) ([]byte, error) {
+	if !filepath.IsAbs(indexFile) {
+		return nil, fmt.Errorf("git index file %q is not absolute", indexFile)
+	}
+	return run(ctx, append(Env(), "GIT_INDEX_FILE="+indexFile), stdin, args)
+}
+
+func run(ctx context.Context, env []string, stdin string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, Hardening...), args...)...)
-	cmd.Env = Env()
+	cmd.Env = env
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
