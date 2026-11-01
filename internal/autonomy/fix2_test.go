@@ -81,7 +81,7 @@ func TestFailedDockerRunRemovesTheContainer(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	testutil.FakeBin(t, "docker", `echo "$@" >> `+log+`
 if [ "$1" = run ]; then exit 1; fi`)
-	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Network: "n", Models: map[core.Tier]string{core.TierFast: "haiku"}}
+	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, Network: "n", ProxyURL: "http://p:3128", PolicyFile: policyFile(t), Models: map[core.Tier]string{core.TierFast: "haiku"}}
 	rep, err := d.Run(t.Context(), core.WorkerSpec{Tier: core.TierFast})
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusBlocked, rep.Status)

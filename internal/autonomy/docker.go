@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,10 +32,15 @@ type DockerRunner struct {
 	Runtime string // claude | codex
 	Root    string // host checkout, mounted at /work
 	Sock    string // host halt socket, mounted for the hook ("" = none)
-	Network string // docker network with egress to the runtime API only; "" or "none" blocks the run
-	Level   core.Level
-	Models  map[core.Tier]string
-	Timeout time.Duration // 0 = 90 minutes
+	Network string // the --internal network of Egress.Up; "" or "none" blocks the run
+	// ProxyURL is the egress proxy on Network (HTTPS_PROXY in the agent).
+	ProxyURL string
+	// PolicyFile is the policy in force (riskrails.yaml from the default branch), a file
+	// OUTSIDE the checkout, mounted read-only; the hook reads it via RR_POLICY_IN_FORCE.
+	PolicyFile string
+	Level      core.Level
+	Models     map[core.Tier]string
+	Timeout    time.Duration // 0 = 90 minutes
 }
 
 var (
@@ -44,7 +51,9 @@ var (
 const (
 	workDir  = "/work"
 	sockPath = "/run/rr/halt.sock"
-	readOnly = "riskrails.yaml .git .github"
+	// PolicyPath is where PolicyFile appears in the container.
+	policyPath = "/run/rr/policy.yaml"
+	readOnly   = "riskrails.yaml .git .github"
 )
 
 // argv builds the docker command; cmd runs inside the container.
@@ -52,9 +61,23 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if !imageRe.MatchString(d.Image) {
 		return nil, fmt.Errorf("docker runner: image %q must be pinned by digest (name@sha256:<64 hex>)", d.Image)
 	}
+	switch {
+	case network == "bridge", network == "host", network == "default", strings.HasPrefix(network, "container:"):
+		return nil, fmt.Errorf("docker runner: the agent must never join network %q", network)
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
+	}
+	if d.PolicyFile == "" {
+		return nil, fmt.Errorf("docker runner: no policy in force to mount (RR_POLICY_IN_FORCE)")
+	}
+	pol, err := filepath.Abs(d.PolicyFile)
+	if err != nil {
+		return nil, err
+	}
+	if inside, err := within(abs, filepath.Dir(pol)); err != nil || inside {
+		return nil, fmt.Errorf("docker runner: policy file %q must be outside the checkout (err: %v)", pol, err) //nolint:errorlint // err may be nil
 	}
 	if err := requireRealGitDir(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
@@ -83,10 +106,45 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		}
 		args = append(args, "--mount", opt)
 	}
+	if strings.Contains(pol, ",") {
+		return nil, fmt.Errorf("docker runner: path %q contains a comma", pol)
+	}
+	args = append(args, "--mount", "type=bind,src="+pol+",dst="+policyPath+",readonly", "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	if d.ProxyURL != "" && network != "none" {
+		for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+			args = append(args, "-e", k+"="+d.ProxyURL)
+		}
+		args = append(args, "-e", "NO_PROXY=localhost,127.0.0.1", "-e", "no_proxy=localhost,127.0.0.1", "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+	}
 	if d.Sock != "" {
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
 	}
 	return append(append(args, d.Image), cmd...), nil
+}
+
+// Exec runs cmd in the same sandbox (no network) and returns its stdout.
+func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
+	name := "rr-close-" + randHex()
+	args, err := d.argv(d.Root, name, "none", false, cmd)
+	if err != nil {
+		return nil, err
+	}
+	bin := d.Bin
+	if bin == "" {
+		bin = "docker"
+	}
+	c := exec.CommandContext(ctx, bin, args...)
+	c.Cancel = func() error {
+		_ = exec.Command(bin, "kill", name).Run()
+		return c.Process.Kill()
+	}
+	var out, errb bytes.Buffer
+	c.Stdout, c.Stderr = &out, &errb
+	if err := c.Run(); err != nil {
+		_ = exec.Command(bin, "rm", "-f", name).Run()
+		return out.Bytes(), fmt.Errorf("%s: %w: %s", strings.Join(cmd, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return out.Bytes(), nil
 }
 
 // CommandArgv is the argv (after the docker binary) that runs cmd in the same
@@ -106,7 +164,7 @@ func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {
 		return c, nil
 	case "codex":
 		// never --dangerously-bypass-hook-trust: an untrusted hook would silently not run
-		return []string{"codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never", "--ephemeral", "-m", model, "-"}, nil
+		return []string{"codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never", "--ephemeral", "--json", "-m", model, "-"}, nil
 	}
 	return nil, fmt.Errorf("docker runner: unsupported runtime %q", d.Runtime)
 }
@@ -126,8 +184,8 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if !modelRe.MatchString(model) {
 		return core.WorkerReport{}, fmt.Errorf("docker runner: model %q from the tiers lock is not a plain model id", model)
 	}
-	if d.Network == "" || d.Network == "none" {
-		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network for the runtime API; provide an egress-restricted docker network (rr run --network)"}, nil
+	if d.Network == "" || d.Network == "none" || d.ProxyURL == "" {
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "no egress proxy for the runtime API (rr run --proxy-image)"}, nil
 	}
 	inner, err := d.agentCmd(model, spec.MaxTurns)
 	if err != nil {
@@ -176,11 +234,8 @@ func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport
 	blocked := func(why string) core.WorkerReport {
 		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
 	}
-	if runtime == "codex" { // final message on stdout, no token count
-		if runErr != nil {
-			return blocked("codex: " + runErr.Error())
-		}
-		return core.WorkerReport{Status: statusOf(stdout), Body: stdout}
+	if runtime == "codex" {
+		return parseCodex(stdout, stderr, runErr)
 	}
 	var res struct {
 		Result   string         `json:"result"`
@@ -199,6 +254,65 @@ func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport
 	}
 	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: tokens, Calls: res.NumTurns}
 	if res.IsError || runErr != nil {
+		rep.Status = core.StatusBlocked
+	}
+	return rep
+}
+
+// parseCodex reads `codex exec --json` (docs/research/verified/runner.md): the
+// last agent_message is the report, token usage is the sum of every
+// turn.completed (input_tokens includes cached ones). A stream that does not
+// parse, a turn without both numbers, or no turn.completed at all leaves Tokens
+// at 0 = unknown, which the runner counts as over budget.
+func parseCodex(stdout, stderr string, runErr error) core.WorkerReport {
+	blocked := func(why string) core.WorkerReport {
+		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
+	}
+	var msg string
+	var tokens int64
+	var turns int
+	known, failed := true, false
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	for {
+		var ev struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Usage struct {
+				Input  *int64 `json:"input_tokens"`
+				Output *int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err := dec.Decode(&ev); err != nil {
+			known = known && errors.Is(err, io.EOF)
+			break
+		}
+		switch ev.Type {
+		case "item.completed":
+			if ev.Item.Type == "agent_message" {
+				msg = ev.Item.Text
+			}
+		case "turn.completed":
+			turns++
+			if ev.Usage.Input == nil || ev.Usage.Output == nil || *ev.Usage.Input < 0 || *ev.Usage.Output < 0 {
+				known = false
+				continue
+			}
+			tokens += *ev.Usage.Input + *ev.Usage.Output
+		case "turn.failed":
+			failed = true
+		}
+	}
+	if !known || turns == 0 {
+		tokens = 0
+	}
+	if runErr != nil {
+		return blocked("codex: " + runErr.Error())
+	}
+	rep := core.WorkerReport{Status: statusOf(msg), Body: msg, Tokens: tokens, Calls: turns}
+	if failed {
 		rep.Status = core.StatusBlocked
 	}
 	return rep
