@@ -314,3 +314,25 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **Приложено след затварянето (tag `wave-1.1`):** `core.ToolCall.Edits` (guard проверява всеки файл; Codex подава multi-file apply_patch като Edits), `RenderHookOutput` получава извикването (без глобална променлива в Codex адаптера), `policy.DefaultRef` + wire.go потвърждава glob-ове върху работно копие ∪ default branch.
 
 **Пренесено към следващите вълни:** W2-B: tiers в `wire.go`; W3-A: runner анкер за журнала и доверен SHA за InForce, проверка на Codex hook trust; известни граници: errata #6, #9, #12–#17.
+
+## 11. Статус: вълна 2 (2026-11-01, branch `wave-2`)
+
+**Ревю:** рунд 1 (6× Sonnet, по един на модул) → поправки при всички; рунд 2 (Sonnet) за двата BLOCK модула verify и factory → поправки; рунд 3 (Opus) за verify и factory → factory SHIP_WITH_FIXES (поправено), verify BLOCK → рунд 4 собственикът: **host-only close**. Възпроизведени и затворени: изпълнение на код на хоста чрез подменен `.git` на worktree (factory, с negative control), фалшиво зелено при close (verify: работно копие, pty, `--base=--output=`, самоизтриващ се ignored тест, наследен GOFLAGS/PATH), фалшиви сливания в research merge. Errata #18–#26.
+
+**Решения на собственика:** committed `.rr/tiers.lock` като източник на tiers за манифести и guard (W2-B); close се брои само за full run, пуснат от `rr` след спиране на агента (W2-C).
+
+**Оркестратор:** `core.Weight.Irreversible` (L0 под при programme); `internal/gitx` — един hardened git helper за policy/verify/factory, вкл. `core.attributesFile=/dev/null` и `GIT_ATTR_NOSYSTEM` (поправя и кода от вълна 1); tiers в `wire.go`; reviewer агентът на Claude завършва с `VERDICT: PASS|FAIL`.
+
+**Gate 2:**
+
+| Критерий | Статус |
+|---|---|
+| SQ1 зелени | ✅ 13 реда (+2 разделени) + property тест за rescore |
+| манифест без FAIL модел | ✅ тест с реалния resolver; lock-ът се валидира срещу кандидатите |
+| `selection_misses` се записва | ✅ тест |
+| симулирана full задача: ≤5 скаута, brief ≤3k, два review етапа, cost в ledger | ⚠️ по модули (тестове за брой скаути, ≤3k, review loop, суми); end-to-end изисква `rr task` — вълна 4 |
+| `make check` | ✅ |
+
+**Задължително за W4-A (wiring):** `task_started.data` пише `scope`, `base_sha` (`verify.HeadSHA`), `baseline` (`verify.Baseline`, manifest в `.rr/run/<task>.baseline.json`), `mode`; close вика `verify.Close` само след спиране на агента; пише `ledger_session` (runtime, session, phase, path); проверява `research.Result.Errors`; factory работниците получават `--settings` от rr извън worktree-а със задължителен sandbox; `ClaudeRunner` за reviewer през `ReadOnly()`.
+
+**Пренесено:** W3-A — close run в sandbox (errata #26), autonomy ⇒ L0 при `Weight.Irreversible`, авторитетно копие на журнала при L≥2 (chain-ът е без ключ; `.rr` е доверен само колкото sandbox-а); GAPs: refresh на кеша при 4xx (models), заключване на кеша, symlink-ове в ledger roots, бавен fingerprint върху `node_modules`/`vendor`, `--tools` contract тест за reviewer-а под `RR_CONTRACT=1`.
