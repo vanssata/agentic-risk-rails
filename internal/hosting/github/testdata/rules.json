@@ -1,0 +1,1 @@
+[{"type":"pull_request","ruleset_id":1,"parameters":{"require_code_owner_review":true,"dismiss_stale_reviews_on_push":true,"require_last_push_approval":true,"required_approving_review_count":1}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"rr-policy-check"}]}}]
