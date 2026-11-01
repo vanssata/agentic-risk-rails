@@ -63,7 +63,7 @@ func init() {
 		}
 		wd, _ := os.Getwd()
 		c.Flags().StringVar(&level, "level", "L2", "autonomy level to run at (L2 or above)")
-		c.Flags().StringVar(&queue, "queue", "", "YAML list of tasks: id, brief, mode, irreversible, tier, max_turns")
+		c.Flags().StringVar(&queue, "queue", "", "YAML list of tasks: id, brief, mode, irreversible, tier, max_turns, files, declared (axis: 0..2)")
 		c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
 		c.Flags().StringVar(&root, "root", wd, "clean checkout mounted into the container")
 		c.Flags().StringVar(&image, "image", "", "container image pinned by digest (name@sha256:...) with the runtime CLI and rr")

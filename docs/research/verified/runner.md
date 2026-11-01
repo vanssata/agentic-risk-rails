@@ -67,3 +67,6 @@ Fixes in code: run journal in its own root (`Runner.Tasks`); claude `--settings`
 Runner run log: 4 Claude runs (TASK_IN_FLIGHT → guarded triage → BUDGET/sandbox → BLOCKED/noexec → BLOCKED/no STATUS line → PR), 3 Codex runs (missing helper → bwrap → PR). Tokens: Claude ≈ 55k per successful run (mostly cache reads); Codex 45k + 79k + 112k input (≈ 90% cached).
 
 GAPS (wave 4.2): see errata #47–#54; a second Codex run with the PATH fix was not made (verified with `bash -lc 'go version'` in the image instead).
+
+### Re-run after errata #51–#54 (2026-11-01)
+Claude L2, a code task (`Farewell` in `greet/greet.go` + test) with `declared: {behaviour: 0, domain: 0, novelty: 0}` in the queue ⇒ triage `W=0 -> light` (coverage measured, not lowered) ⇒ **draft PR #3**, body `mode: light (triage of the real files)`, `W=0, declared by the queue: …`; worker `STATUS: DONE` (no `rr verify` concern: the skill's runner branch was followed); CI green; ≈ 94k tokens. The GitHub App path (#54) is covered by httptest only: no App exists for the sandbox yet.

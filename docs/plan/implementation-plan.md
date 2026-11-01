@@ -412,5 +412,6 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 
 **Намерени и поправени (errata #47–#50):** TASK_IN_FLIGHT на собствения run; bwrap в контейнера; `/tmp` noexec; brief без `STATUS:`; squid.conf 0600; trust на staged Claude login; image без codex helper-ите и без go в login shell PATH.
 
-**Отворено:** #51 опашката не декларира оси (само tests-only е light на L2) — решение на собственика; #52 PR body; #53 `rr-build` skill в runner режим; #54 App identity за push (иначе собственикът не може да одобри); Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.
+**Поправени след run-а (errata #51–#54):** опашката декларира оси (`declared`); PR body/labels от triage; `rr-build`/`rr-ship` в runner режим; GitHub App токен (`RR_GITHUB_APP_ID`/`RR_GITHUB_APP_KEY`).
 
+**Отворено:** App-ът за sandbox-а не е създаден (действие на собственика) ⇒ App пътят е тестван само с httptest; refresh на App токена при run > 1 час; Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.

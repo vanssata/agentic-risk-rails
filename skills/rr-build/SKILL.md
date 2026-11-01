@@ -9,5 +9,8 @@ description: Start or continue a RiskRails task. Use when about to implement a c
 2. Follow the reported `mode`; do not lower an axis the triage raised.
 3. Implement test first. Check progress with `rr affected` (in the shell, inside the sandbox).
 4. Before finishing run `rr verify --task <task>` and fix what it reports.
+   Under the unattended runner (`$RR_LEVEL` is L2 or higher) the task journal is outside your
+   container, so `rr verify` cannot see the task: run the project's tests directly instead
+   (e.g. `go test ./...`); the runner verifies and closes on the host.
 
 Never edit policy or generated manifests to get past a refusal; report it instead.

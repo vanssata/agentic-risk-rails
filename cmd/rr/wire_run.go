@@ -47,7 +47,7 @@ var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) (co
 		if err != nil {
 			return core.Weight{}, err
 		}
-		s, err := e.Start(ctx, flow.StartIn{ID: t.ID, Goal: t.Brief, Files: t.Files, Tiers: in.Tiers,
+		s, err := e.Start(ctx, flow.StartIn{ID: t.ID, Goal: t.Brief, Files: t.Files, Declared: t.Declared, Tiers: in.Tiers,
 			Actor: core.ActorAutonomy, Via: "runner"})
 		return s.Weight, err
 	}
@@ -61,14 +61,18 @@ var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) (co
 	return start, closeTask
 }
 
-func ceilingHosting(context.Context, string) (core.Hosting, error) {
+func ceilingHosting(ctx context.Context, _ string) (core.Hosting, error) {
 	ent, user, err := policy.LoadCeilings()
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range []*core.Layer{ent, user} {
 		if l != nil && l.Policy.Remote != "" {
-			return hostgh.New(l.Policy.Remote, hostgh.TokenFromEnv(), "")
+			tok, err := hostgh.TokenFor(ctx, l.Policy.Remote, "")
+			if err != nil {
+				return nil, err
+			}
+			return hostgh.New(l.Policy.Remote, tok, "")
 		}
 	}
 	return nil, fmt.Errorf("no remote pinned in ceiling.yaml: the kill switch and the policy in force cannot be read, refusing to run")

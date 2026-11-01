@@ -89,3 +89,44 @@ func TestBriefAsksForTheStatusLine(t *testing.T) {
 	assert.Contains(t, brief, "End your report with a line `STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT`.")
 	assert.Contains(t, brief, "Do not run git commit")
 }
+
+func TestQueueDeclaredAxesAreValidated(t *testing.T) {
+	for _, d := range []map[core.Axis]int{{"blast": 0}, {core.AxisDomain: 3}, {core.AxisDomain: -1}} {
+		e := newEnv(t)
+		_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x", Declared: d}})
+		require.Error(t, err, "%v", d)
+		assert.Zero(t, e.worker.calls)
+	}
+}
+
+// errata #52: the PR shows the triage of the real files, not the queue's claim.
+func TestPRBodyShowsTheTriageWeight(t *testing.T) {
+	e := newEnv(t)
+	e.r.Start = func(context.Context, Task) (core.Weight, error) {
+		return core.Weight{Mode: core.ModeLight, Axes: map[core.Axis]int{core.AxisCoverage: 1}, Measured: true}, nil
+	}
+	h := &bodyHost{lockedHost: e.host}
+	e.r.Hosting = h
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x", Files: []string{"a.txt"}, Declared: map[core.Axis]int{core.AxisDomain: 0}}})
+	require.NoError(t, err)
+	require.Len(t, h.bodies, 1)
+	b := h.bodies[0]
+	assert.Contains(t, b, "- mode: light (triage of the real files)")
+	assert.Contains(t, b, "- weight: W=1, declared by the queue: domain=0, irreversible=false")
+	assert.NotContains(t, b, "declared only")
+	assert.Equal(t, [][]string{{"rr", "rr:L2", "rr:mode:light"}}, e.host.Labels)
+
+	b = prBody(Task{ID: "t1", Mode: core.ModeLight}, core.L2, core.WorkerReport{Status: core.StatusDone}, core.Weight{})
+	assert.Contains(t, b, "- mode: light (from the queue: not triaged)")
+}
+
+// bodyHost keeps the bodies of the PRs it opens (the fake keeps only the PR).
+type bodyHost struct {
+	*lockedHost
+	bodies []string
+}
+
+func (h *bodyHost) OpenDraftPR(ctx context.Context, head, base, title, body string, labels []string) (core.PullRequest, error) {
+	h.bodies = append(h.bodies, body)
+	return h.lockedHost.OpenDraftPR(ctx, head, base, title, body, labels)
+}

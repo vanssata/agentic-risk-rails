@@ -38,7 +38,11 @@ var newHosting = func(remote string) (prHosting, error) {
 	if inActions() {
 		base = os.Getenv("GITHUB_API_URL")
 	}
-	return hostgh.New(remote, hostgh.TokenFromEnv(), base)
+	tok, err := hostgh.TokenFor(context.Background(), remote, base)
+	if err != nil {
+		return nil, err
+	}
+	return hostgh.New(remote, tok, base)
 }
 
 const codeownersFile = ".github/CODEOWNERS"
