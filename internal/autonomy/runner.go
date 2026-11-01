@@ -55,8 +55,11 @@ type Runner struct {
 	Container     bool       // the Worker runs in a container
 	Runtime       core.RuntimeAdapter
 	Hosting       core.Hosting
-	Journal       core.Journal // the runner's own, authoritative
-	Worker        core.WorkerRunner
+	Journal       core.Journal // the runner's own, authoritative; open for the whole run
+	// Tasks holds the queue tasks' journals (flow.Env.Journal). A separate root from
+	// Journal: one open task per root, and the run itself is open while its tasks run.
+	Tasks  core.Journal
+	Worker core.WorkerRunner
 	// Resolve resolves the policy with `inForce` (riskrails.yaml read from the
 	// default branch through the hosting API) as the DefaultBranch layer and
 	// the ceiling files; the working tree is never a layer at L≥2.
@@ -184,6 +187,9 @@ func (r *Runner) preflight(ctx context.Context, queue []Task) (base string, err 
 	}
 	if r.Clock == nil {
 		r.Clock = realClock{}
+	}
+	if r.Tasks == nil {
+		return "", fmt.Errorf("no task journal: the runner refuses to run tasks it cannot journal")
 	}
 	for _, t := range queue {
 		if !taskIDRe.MatchString(t.ID) {
@@ -492,7 +498,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
 	defer endWave()
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
-		Brief: "Task id: " + t.ID + "\n\n" + t.Brief, Budget: pol.Models.Budgets[t.Mode]})
+		Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: pol.Models.Budgets[t.Mode]})
 
 	if reason := r.halter.Halted(); reason != "" {
 		return o, r.haltTask(ctx, reason, files, tracked)
@@ -516,11 +522,16 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
 	if b := pol.Models.Budgets[t.Mode]; b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
 		r.discard(ctx, files, tracked, base)
-		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens})
-		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
+		worker := string(rep.Status) + ": " + firstLine(rep.Body)
+		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
+		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
 	}
 	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
 }
+
+// briefTail is the worker protocol: the report is parsed by its last line only
+// (statusOf) and the runner, not the agent, commits.
+const briefTail = "\n\nDo not run git commit; rr commits. End your report with a line `STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT`.\n"
 
 // waveContext applies max_wall_minutes to one wave.
 func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Context, context.CancelFunc) {
@@ -559,7 +570,7 @@ func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, bool
 		if err := r.log(ctx, "autonomy_level", map[string]any{"task": t.ID, "level": lvl, "reason": "triage of the real files: " + why, "skipped": true}); err != nil {
 			return o, true, err
 		}
-		return o, true, r.Journal.Close(ctx, t.ID) // the task was opened by Start
+		return o, true, r.Tasks.Close(ctx, t.ID) // the task was opened by Start
 	}
 	return o, false, nil
 }

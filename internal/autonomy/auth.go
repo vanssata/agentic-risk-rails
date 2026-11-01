@@ -58,6 +58,12 @@ func (d DockerRunner) stageAuth() (dir string, done func() error, err error) {
 		_ = os.RemoveAll(dir)
 		return "", nil, err
 	}
+	if d.Runtime == "claude" { // untrusted, claude ignores the project's permissions.allow
+		if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"projects":{"`+workDir+`":{"hasTrustDialogAccepted":true}}}`), 0o600); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", nil, err
+		}
+	}
 	done = func() error {
 		defer func() { _ = os.RemoveAll(dir) }()
 		fi, err := os.Lstat(staged)

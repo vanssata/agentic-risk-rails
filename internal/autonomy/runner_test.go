@@ -115,7 +115,7 @@ func newEnv(t *testing.T) *env {
 		return done("ok"), os.WriteFile(filepath.Join(root, "a.txt"), []byte("changed "+string(rune('0'+n))+"\n"), 0o644)
 	}}
 	e.r = &Runner{Root: root, StateDir: t.TempDir(), RunID: "run1", DefaultBranch: "main", Level: core.L2, Container: true,
-		Runtime: e.rt, Hosting: e.host, Journal: e.jr, Worker: e.worker, Clock: e.clk,
+		Runtime: e.rt, Hosting: e.host, Journal: e.jr, Tasks: e.jr, Worker: e.worker, Clock: e.clk,
 		Gens: []core.Generator{fakes.Generator{ID: "g", Files: []core.File{{Path: ".claude/settings.json", Content: []byte(`{"l2":true,"cmd":"rr guard"}`)}}}},
 		Resolve: func(context.Context, []byte) (core.EffectivePolicy, error) {
 			return core.EffectivePolicy{Policy: e.pol, InForce: e.pol, PolicySHA: "p", CeilingSHA: *e.ceil}, nil

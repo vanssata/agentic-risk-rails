@@ -175,6 +175,19 @@ func noReadPatterns(e core.EnforcementSpec) []string {
 	return out
 }
 
+// readOnlyPatterns are the write-protected patterns the container mounts read-only;
+// "$name" references point at lists included here (protected_paths) or masked
+// anyway (secret_reads).
+func readOnlyPatterns(e core.EnforcementSpec) []string {
+	var out []string
+	for _, p := range slices.Concat(e.ProtectedPaths, e.Sandbox.Readonly, e.Sandbox.NoWrite) {
+		if !strings.HasPrefix(p, "$") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, proxyImage, authFrom string) error {
 	// SIGINT/SIGTERM cancel the context instead of killing rr, so the proxy and
 	// the networks below are removed on every exit.
@@ -244,7 +257,7 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		Hosts: append(hosts, probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
 			AuthFrom: authFrom, StateDir: state, CodexConfig: filepath.Join(state, autonomy.CodexConfigName), CeilingEnt: filepath.Join(state, autonomy.CeilingEntName),
-			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement),
+			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement), ReadOnly: readOnlyPatterns(probe.Policy.Enforcement),
 			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
 		start, closeTask := runFlow(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]})
 		r := &autonomy.Runner{Start: start, Ceilings: policy.LoadCeilings,
@@ -253,7 +266,7 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 				defer cleanup(ctx)
 				return closeTask(verify.WithSandbox(ctx, sandbox), id)
 			}, Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
-			DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
+			DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(filepath.Join(state, "run")), Tasks: journal.New(state),
 			Worker: worker, Probe: worker.Probe, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
 		out, err := r.Run(ctx, tasks)
 		for _, o := range out {

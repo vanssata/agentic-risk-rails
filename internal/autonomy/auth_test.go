@@ -114,3 +114,22 @@ func TestSubscriptionHosts(t *testing.T) {
 	assert.Contains(t, SubscriptionHosts("codex"), "chatgpt.com")
 	assert.Nil(t, SubscriptionHosts("gemini"))
 }
+
+// A staged claude config dir is trusted for the workdir, or claude ignores the
+// project's permissions.allow (wave 4.2 real run).
+func TestClaudeLoginTrustsTheWorkdirOnly(t *testing.T) {
+	d := authRunner(t, "claude", login(t, ".credentials.json", `{"claudeAiOauth":{}}`))
+	dir, done, err := d.stageAuth()
+	require.NoError(t, err)
+	defer func() { _ = done() }()
+	b, err := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"projects":{"/work":{"hasTrustDialogAccepted":true}}}`, string(b))
+
+	d = authRunner(t, "codex", login(t, "auth.json", `{"auth_mode":"chatgpt"}`))
+	dir, done, err = d.stageAuth()
+	require.NoError(t, err)
+	defer func() { _ = done() }()
+	_, err = os.Stat(filepath.Join(dir, ".claude.json"))
+	assert.True(t, os.IsNotExist(err))
+}

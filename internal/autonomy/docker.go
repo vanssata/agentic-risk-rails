@@ -56,6 +56,12 @@ type DockerRunner struct {
 	// sandbox.no_read (already expanded): every match in the checkout, git-ignored or
 	// not, is masked in the container.
 	NoRead []string
+	// ReadOnly are the repo-relative patterns of enforcement.protected_paths,
+	// sandbox.readonly and sandbox.no_write: every existing match is bind-mounted
+	// read-only over itself. The runtimes' own sandboxes cannot start in the
+	// container (bwrap needs user namespaces), so the container enforces them
+	// (errata #42); a new file matching one is caught by the host-side close scope.
+	ReadOnly []string
 	// AuthFrom is an isolated subscription login dir (e.g. ~/.claude-rr, ~/.codex-rr):
 	// its credentials file is copied per agent container into a fresh dir under
 	// StateDir, mounted as the runtime's config dir (stageAuth). "" = API key only.
@@ -111,7 +117,8 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	args := []string{"run", "--rm", "--init", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
-		"--tmpfs", "/tmp", "-e", "HOME=/tmp", "-w", workDir,
+		"--tmpfs", "/tmp:rw,exec,nosuid,nodev", // exec: go test runs its binary from /tmp
+		"-e", "HOME=/tmp", "-w", workDir,
 		"-e", "RR_LEVEL=" + d.Level.String()}
 	args = append(args, d.envArgs(network)...)
 	if stdin {
@@ -286,15 +293,21 @@ func (d DockerRunner) CloseSandbox() (sandbox func([]string) ([]string, error), 
 func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {
 	switch d.Runtime {
 	case "claude":
+		// The project settings rendered at L>=2 require claude's own OS sandbox, which
+		// cannot start under --cap-drop ALL; in the container the container is the
+		// sandbox (errata #42). --settings sits above project settings
+		// (docs/research/verified/claude-code.md); hooks and permissions stay.
 		c := []string{"claude", "-p", "--output-format", "json", "--model", model, "--permission-mode", "dontAsk",
-			"--permission-prompts", "none", "--no-session-persistence"}
+			"--permission-prompts", "none", "--no-session-persistence", "--settings", `{"sandbox":{"enabled":false}}`}
 		if maxTurns > 0 {
 			c = append(c, "--max-turns", strconv.Itoa(maxTurns))
 		}
 		return c, nil
 	case "codex":
-		// never --dangerously-bypass-hook-trust: an untrusted hook would silently not run
-		return []string{"codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never", "--ephemeral", "--json", "-m", model, "-"}, nil
+		// never --dangerously-bypass-hook-trust: an untrusted hook would silently not run.
+		// danger-full-access: codex's bwrap cannot start in the container, which is the
+		// sandbox (errata #42: ro protected paths, masked secrets, egress proxy only).
+		return []string{"codex", "exec", "--sandbox", "danger-full-access", "-c", "approval_policy=never", "--ephemeral", "--json", "-m", model, "-"}, nil
 	}
 	return nil, fmt.Errorf("docker runner: unsupported runtime %q", d.Runtime)
 }
@@ -479,6 +492,29 @@ func statusOf(body string) core.WorkerStatus {
 // read-only tmpfs over a directory, /dev/null over a file. Home and absolute
 // patterns are outside the checkout. A tree that cannot be walked is an error.
 func secretMasks(root string, patterns []string) (args []string, err error) {
+	err = walkMatches(root, patterns, []string{".git"}, func(rel string, dir bool) {
+		if dir {
+			args = append(args, "--mount", "type=tmpfs,dst="+workDir+"/"+rel+",tmpfs-size=4096,readonly")
+			return
+		}
+		args = append(args, "--mount", "type=bind,src=/dev/null,dst="+workDir+"/"+rel+",readonly")
+	})
+	return args, err
+}
+
+// protectedMounts bind-mounts every existing match read-only over itself; paths
+// under the AlwaysProtected mounts are read-only already.
+func protectedMounts(root string, patterns []string) (args []string, err error) {
+	err = walkMatches(root, patterns, append([]string{".git"}, readOnlyPaths()...), func(rel string, _ bool) {
+		args = append(args, "--mount", "type=bind,src="+filepath.Join(root, rel)+",dst="+workDir+"/"+rel+",readonly")
+	})
+	return args, err
+}
+
+// walkMatches walks the checkout (git-ignored files included, the skip paths
+// excluded) and calls fn for each path matching a repo-relative pattern; a
+// matching dir is not descended.
+func walkMatches(root string, patterns, skip []string, fn func(rel string, dir bool)) error {
 	var pats []string
 	for _, p := range patterns {
 		if !strings.HasPrefix(p, "~") && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "$") {
@@ -486,34 +522,35 @@ func secretMasks(root string, patterns []string) (args []string, err error) {
 		}
 	}
 	if len(pats) == 0 {
-		return nil, nil
+		return nil
 	}
-	err = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+	return filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("walk %s for secrets: %w", p, err)
+			return fmt.Errorf("walk %s: %w", p, err)
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil || rel == "." {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == ".git" {
-			return fs.SkipDir
+		if slices.Contains(skip, rel) {
+			if e.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if !slices.ContainsFunc(pats, func(pat string) bool { return globs.Match(pat, rel) }) {
 			return nil
 		}
 		if strings.Contains(rel, ",") {
-			return fmt.Errorf("secret path %q contains a comma", rel)
+			return fmt.Errorf("path %q contains a comma", rel)
 		}
+		fn(rel, e.IsDir())
 		if e.IsDir() {
-			args = append(args, "--mount", "type=tmpfs,dst="+workDir+"/"+rel+",tmpfs-size=4096,readonly")
 			return fs.SkipDir
 		}
-		args = append(args, "--mount", "type=bind,src=/dev/null,dst="+workDir+"/"+rel+",readonly")
 		return nil
 	})
-	return args, err
 }
 
 // configMounts are the read-only runner-owned config files and the secret masks.
@@ -546,10 +583,14 @@ func (d DockerRunner) configMounts(abs string) (args []string, err error) {
 		// the trust config is read-only on top
 		args = append(args, "--mount", "type=bind,src="+d.CodexConfig+",dst="+codexHome+"/config.toml,readonly")
 	}
+	ro, err := protectedMounts(abs, d.ReadOnly)
+	if err != nil {
+		return nil, fmt.Errorf("docker runner: %w", err)
+	}
 	masks, err := secretMasks(abs, d.NoRead)
 	if err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
-	args = append(args, masks...)
+	args = append(append(args, ro...), masks...) // masks last: a protected secret stays unreadable
 	return args, nil
 }

@@ -34,6 +34,9 @@ func TestDockerArgv(t *testing.T) {
 	j := " " + strings.Join(args, " ") + " "
 	assert.Contains(t, j, " --network none ")
 	assert.Contains(t, j, " --cap-drop ALL ")
+	// docker's --tmpfs default is noexec: go test could not run its binary (wave 4.2)
+	assert.Contains(t, j, " --tmpfs /tmp:rw,exec,nosuid,nodev ")
+	assert.Contains(t, j, " -w "+workDir+" ")
 	for _, p := range []string{"riskrails.yaml", ".git", ".github"} {
 		assert.Contains(t, j, "dst="+workDir+"/"+p+",readonly ", p)
 	}
@@ -61,11 +64,12 @@ func TestAgentCmd(t *testing.T) {
 	j := strings.Join(c, " ")
 	assert.Contains(t, j, "--permission-mode dontAsk --permission-prompts none")
 	assert.Contains(t, j, "--max-turns 5")
+	assert.Contains(t, j, `--settings {"sandbox":{"enabled":false}}`, "in the container the container is the sandbox (errata #42)")
 	assert.NotContains(t, j, "bypass")
 	c, err = DockerRunner{Runtime: "codex"}.agentCmd("gpt", 0)
 	require.NoError(t, err)
 	j = strings.Join(c, " ")
-	assert.Contains(t, j, "--sandbox workspace-write -c approval_policy=never")
+	assert.Contains(t, j, "--sandbox danger-full-access -c approval_policy=never")
 	assert.Contains(t, j, " --json ")
 	assert.NotContains(t, j, "-a never")
 	assert.NotContains(t, j, "bypass")

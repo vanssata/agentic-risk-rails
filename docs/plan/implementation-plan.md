@@ -403,3 +403,14 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **Решения на собственика (вълна 4):** egress proxy от rr; `project.runtimes`; code owners от CODEOWNERS; Codex usage се парсва; v0.x tags (първи `v0.4.0`); P2 wiring = вълна 5.
 
 **Отворено (за вълна 5 / собственика):** [U] Codex hook в контейнера (errata #44) и `--permission-mode dontAsk` за Claude — нужен е `RR_CONTRACT=1` run с реален image и API ключ; реален squid; tag `v0.4.0` при release (иначе генерираните workflows не инсталират rr); `--memory/--cpus` за контейнерите; `kill -9` оставя proxy/мрежи; `resolve()` ползва `DefaultRef` без `project.default_branch` (LOW); Gemini/Cursor/Kiro/OpenCode без contract тестове; копиран/преименуван `rr` бинар остава `ask` на L1.
+
+### 13.2 Вълна 4.2: реален run на runner-а (2026-11-01, branch `wave-4.2`)
+
+**Решения на собственика:** публичен sandbox `vanssata/rr-sandbox`; изолирани абонаментни логини `~/.claude-rr` / `~/.codex-rr` (`rr run --auth-from`, копие на контейнер, write-back само при същите JSON ключове); „контейнерът е sandbox-ът“ за `protected_paths` (errata #48).
+
+**Резултат:** L2 run с Claude ⇒ draft PR #1, с Codex ⇒ draft PR #2; CI `rr-verify` + `rr-policy-check` зелени; реален squid (`TestEgressContract`) и ro protected paths (`TestProtectedPathsContract`) минават с `RR_CONTRACT=1`. Факти: `docs/research/verified/runner.md` §WAVE 4.2.
+
+**Намерени и поправени (errata #47–#50):** TASK_IN_FLIGHT на собствения run; bwrap в контейнера; `/tmp` noexec; brief без `STATUS:`; squid.conf 0600; trust на staged Claude login; image без codex helper-ите и без go в login shell PATH.
+
+**Отворено:** #51 опашката не декларира оси (само tests-only е light на L2) — решение на собственика; #52 PR body; #53 `rr-build` skill в runner режим; #54 App identity за push (иначе собственикът не може да одобри); Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.
+
