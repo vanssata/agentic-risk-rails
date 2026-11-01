@@ -67,3 +67,10 @@ hooks doc, config-reference (first 100k chars + permissions section), sandboxing
 
 ## COST
 Research ≈ 12 doc/schema fetches + 5 live `codex exec` runs (≈ 2.7k–5.5k tokens each; gpt model via user's auth copied into a temp CODEX_HOME). No writes to the real `~/.codex`.
+
+## MCP (W4-D, verified 2026-11-01)
+
+| Fact | Source | |
+|---|---|---|
+| `[mcp_servers.<name>]` with `command` (required), `args`, `env`, `env_vars`, `cwd`; `enabled`, `startup_timeout_sec` (10), `tool_timeout_sec` (60), `enabled_tools`, `disabled_tools`, `default_tools_approval_mode` (`auto`\|`prompt`\|`writes`\|`approve`), `tools.<tool>.approval_mode` | https://learn.chatgpt.com/docs/extend/mcp?surface=cli (redirect of developers.openai.com/codex/mcp) | [V] |
+| Project `.codex/config.toml` may scope MCP servers, for trusted projects only | same | [V] |

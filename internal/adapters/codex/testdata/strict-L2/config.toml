@@ -38,3 +38,9 @@ max_concurrent_threads_per_session = 3
 '.rr/**' = 'read'
 'opencode.json' = 'read'
 'riskrails.yaml' = 'read'
+
+[mcp_servers]
+[mcp_servers.rr]
+command = 'rr'
+args = ['mcp']
+default_tools_approval_mode = 'approve'
