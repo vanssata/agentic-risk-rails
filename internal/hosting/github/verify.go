@@ -11,6 +11,10 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 )
 
+// PolicyCheck is the required status check context: the job name of the
+// generated rr-policy-check workflow.
+const PolicyCheck = "rr-policy-check"
+
 // Owners returns the owners of path in a CODEOWNERS file (last matching line
 // wins). Only exact path and "*" patterns are understood; no match ⇒ nil.
 func Owners(codeowners []byte, path string) []string {
