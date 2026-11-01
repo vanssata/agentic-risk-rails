@@ -336,3 +336,32 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **Задължително за W4-A (wiring):** `task_started.data` пише `scope`, `base_sha` (`verify.HeadSHA`), `baseline` (`verify.Baseline`, manifest в `.rr/run/<task>.baseline.json`), `mode`; close вика `verify.Close` само след спиране на агента; пише `ledger_session` (runtime, session, phase, path); проверява `research.Result.Errors`; factory работниците получават `--settings` от rr извън worktree-а със задължителен sandbox; `ClaudeRunner` за reviewer през `ReadOnly()`.
 
 **Пренесено:** W3-A — close run в sandbox (errata #26), autonomy ⇒ L0 при `Weight.Irreversible`, авторитетно копие на журнала при L≥2 (chain-ът е без ключ; `.rr` е доверен само колкото sandbox-а); GAPs: refresh на кеша при 4xx (models), заключване на кеша, symlink-ове в ledger roots, бавен fingerprint върху `node_modules`/`vendor`, `--tools` contract тест за reviewer-а под `RR_CONTRACT=1`.
+
+## 12. Статус: вълна 3 (2026-11-01, branch `wave-3`, tag `wave-3`)
+
+**Ревю:** рунд 1 (Sonnet, по един на модул; за W3-A двама — runner/контейнер и нива/HALT) → BLOCK при W3-A (rename заобикаля protected paths, symlink-нат `.claude` ⇒ изтриване/запис на хоста) и W3-C (preflight изпълнява проектен код на хоста), SHIP_WITH_FIXES при останалите; рунд 2 (Sonnet) за W3-A, W3-B, W3-C → поправки; рунд 3 (Opus) върху интегрирания `wave-3` → SHIP_WITH_FIXES, 3 HIGH (MCP `affected` = код на хоста, runner/CODEOWNERS без `AlwaysProtected`, `rr run` без жив ruleset) — поправени от оркестратора и възпроизведени с тестове. Errata #27–#39.
+
+**Оркестратор:** `core.AlwaysProtected` + `.github/**`, `.githooks/**`, `.agents/**`, `.opencode/**`, `opencode.json`; `core.PullRequest.Base` + `Hosting.PullRequest` (махнат `hostgh.PR`); `cmd/rr/wire_run.go` — `rr run` чете hosting само от `remote` в ceiling-а; ask→deny при L≥2 в degrade/opencode генераторите (хванато от кръстосания тест след merge); `--goal=` в MCP.
+
+**Gate 3 (P3–P5, DES §13):**
+
+| Критерий | Статус |
+|---|---|
+| L2 run на light опашка завършва с draft PR без човек | ✅ тест с fake hosting + fake docker; ⚠️ реален run: нужни egress мрежа (errata #28) и `Hosting.Push` (git push е без credentials под gitx) |
+| HALT на default branch спира ≤60 s | ✅ fake clock, вкл. по време на агента и преди push; грешка при четене ⇒ halt |
+| LOOSEN PR червен без approving review от code-owner човек; label от App не го прави зелен | ✅ таблица (бот, автор, не-член, stale, label, API грешка, чужд PR); `pull_request_target` + `integration_id` |
+| tag → CI публикува без credentials при агента | ✅ golden workflows за composer/npm/pypi/docker, тест „без credentials“, OIDC; ⚠️ не е пускано срещу реален registry |
+| simplify в Claude и Codex на същия SKILL.md | ✅ един източник, golden за `.claude/skills` и `.agents/skills`; ⚠️ не е пускано под живите runtime-и |
+| contract тестове за всеки адаптер срещу pinned версия | ⚠️ gemini, cursor-agent, kiro, opencode не са инсталирани, `copilot` е stub ⇒ golden + документирани [U] |
+| degrade режим минава CI gates | ✅ `rr guard --staged` (вкл. `commit -a`), pre-commit, `rr policy check`/`rr verify` workflows; ⏳ CI на самото repo — вълна 4 |
+| `make check` | ✅ |
+
+**Решения за собственика (преди вълна 4):**
+1. Egress за контейнера на runner-а: proxy с allow = API хостовете на runtime-а ∪ `egress.allow` (днес `--network none` ⇒ всеки реален run е BLOCKED).
+2. Поле `runtimes: [...]` в схемата: днес всеки генератор рендерира за всеки runtime (Symfony проект получава `.gemini/`, `.cursor/`, `opencode.json`); промяна на схемата ⇒ посока за policy diff.
+3. Code-owner екип като поле в политиката (днес се извлича от CODEOWNERS).
+4. Codex usage под токен бюджет: докато не се парсва, Codex на L≥2 спира след първата задача.
+
+**Задължително за W4-A:** `Hosting.Push` (token) и labels в `OpenDraftPR`; `RR_LEVEL` и `RR_HALT_SOCK` в `guardContext` / hook-а (днес контейнерът разчита на `dontAsk`); enforcement да се мери в image-а, не на хоста; close run и `affected` за runner-а през `DockerRunner.CommandArgv` (errata #26); `Hosting.BranchSHA` — HEAD на runner-а == tip на default branch на remote-а, и hook-ът в контейнера да ползва policy in force от API-то; `rr mcp` в генерираните конфигурации; dedup на `safePath` (verify/release/simplify); `rrVersion`/pinned SHA в шаблоните се обновяват при release.
+
+**Пренесено (GAPs):** symlink-safe `rrsync.Write` и генератори, които четат `in.Root` (LOW, Opus); `twine check` следва symlink-и в `dist/`; Gemini/Cursor tool_input форми [U]; Kiro/OpenCode без налагащ hook; flaky `TestGuardRuntime` при `-count>1` (споделено състояние, от вълна 1).
