@@ -1,0 +1,74 @@
+[
+ {
+  "name": "rr task close",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rr task close",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "rr task accept",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rr task accept",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "rr task review PASS",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rr task review --verdict PASS",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "rr task start wide",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "rr task start 'x' --files '**'",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "env -u CLAUDECODE rr task close",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "env -u CLAUDECODE rr task close",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "sh -c rr task close",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "sh -c 'rr task close'",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "absolute rr task close",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "/usr/local/bin/rr task close",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "RR_LEVEL= rr task accept",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "RR_LEVEL= rr task accept",
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
+  "name": "chained rr task close",
+  "level": "L1",
+  "tool": "Bash",
+  "command": "true && rr task close",
+  "fixture": "deny",
+  "strict": "deny"
+ }
+]

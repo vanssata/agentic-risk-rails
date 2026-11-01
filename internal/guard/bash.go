@@ -67,6 +67,11 @@ func text(argv []word) string {
 // `cmd*` never extends the word `cmd` itself.
 func checkCommand(c cmd, e core.EnforcementSpec, gc core.GuardContext) core.Verdict {
 	for _, f := range c.forms {
+		for _, pat := range core.AlwaysDeniedCommands {
+			if matchCommand(pat, f, false) {
+				return core.Verdict{Decision: core.Deny, Reason: "rr task commands are for the human or the runner: " + text(f), Rule: "core.AlwaysDeniedCommands: " + pat}
+			}
+		}
 		for _, pat := range e.Commands.Deny {
 			if matchCommand(pat, f, false) {
 				return core.Verdict{Decision: core.Deny, Reason: "command denied: " + text(f), Rule: "enforcement.commands.deny: " + pat}
