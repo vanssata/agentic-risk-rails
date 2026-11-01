@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,37 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
 )
+
+func TestSyncDisabledRuntimeFilesAreStale(t *testing.T) {
+	orig := rrsync.InputProvider
+	t.Cleanup(func() { rrsync.InputProvider = orig })
+	root := t.TempDir()
+	provider := func(rts []string) {
+		rrsync.InputProvider = func(_ context.Context, r string) (core.SyncInput, error) {
+			in := core.SyncInput{Root: r, Level: core.L1}
+			in.Policy.Policy = core.StrictDefaults()
+			in.Policy.Policy.Project.Runtimes = rts
+			return in, nil
+		}
+	}
+	ctx := context.Background()
+	provider([]string{"claude", "codex"})
+	_, err := runSelf(ctx, "sync", "--root", root)
+	require.NoError(t, err)
+	settings := filepath.Join(root, ".claude", "settings.json")
+	require.FileExists(t, settings)
+
+	provider([]string{"codex"})
+	out, err := runSelf(ctx, "sync", "--check", "--root", root)
+	require.Error(t, err, "stale manifest of a disabled runtime is red")
+	assert.Contains(t, out, "stale (runtime disabled): .claude/settings.json")
+
+	_, err = runSelf(ctx, "sync", "--root", root)
+	require.NoError(t, err)
+	assert.NoFileExists(t, settings)
+	_, err = runSelf(ctx, "sync", "--check", "--root", root)
+	require.NoError(t, err)
+}
 
 func TestSyncUnknownRuntimeFails(t *testing.T) {
 	orig := rrsync.InputProvider
