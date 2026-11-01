@@ -40,7 +40,7 @@ func NewServer(root string, run Runner) *sdk.Server {
 			}
 			a := []string{"triage", "--json", "--root", root, "--files", strings.Join(in.Files, ",")}
 			if in.Goal != "" {
-				a = append(a, "--goal", in.Goal)
+				a = append(a, "--goal="+in.Goal)
 			}
 			return a, nil
 		})
