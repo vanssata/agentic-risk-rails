@@ -166,16 +166,23 @@ func (c *Client) IsTeamMember(ctx context.Context, team, login string) (bool, er
 
 // Rulesets returns the active rules that apply to branch (JSON array).
 func (c *Client) Rulesets(ctx context.Context, branch string) (json.RawMessage, error) {
-	req, err := c.gh.NewRequest(ctx, http.MethodGet, fmt.Sprintf("repos/%s/%s/rules/branches/%s", c.owner, c.repo, url.PathEscape(branch)), nil)
+	all := []json.RawMessage{}
+	for page := 1; page > 0; {
+		req, err := c.gh.NewRequest(ctx, http.MethodGet, fmt.Sprintf("repos/%s/%s/rules/branches/%s?per_page=100&page=%d", c.owner, c.repo, url.PathEscape(branch), page), nil)
+		if err != nil {
+			return nil, fmt.Errorf("github: %w", err)
+		}
+		var rules []json.RawMessage
+		resp, err := c.gh.Do(req, &rules)
+		if err != nil {
+			return nil, fmt.Errorf("github: rules for %s: %w", branch, err)
+		}
+		all = append(all, rules...)
+		page = resp.NextPage
+	}
+	raw, err := json.Marshal(all)
 	if err != nil {
 		return nil, fmt.Errorf("github: %w", err)
-	}
-	var raw json.RawMessage
-	if _, err := c.gh.Do(req, &raw); err != nil {
-		return nil, fmt.Errorf("github: rules for %s: %w", branch, err)
-	}
-	if len(raw) == 0 {
-		return nil, errors.New("github: empty rules response")
 	}
 	return raw, nil
 }

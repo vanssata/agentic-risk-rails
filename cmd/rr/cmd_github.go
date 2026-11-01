@@ -90,11 +90,16 @@ func branchOf(ref string) (string, error) {
 	return ref, nil
 }
 
-// localHeads are the commits the checkout can legitimately be: HEAD and, on a
-// merge ref, its second parent (the PR head).
+// localHeads are the commits the checkout can legitimately be: HEAD and, only
+// in a GitHub Actions pull_request run (merge ref), its second parent (the PR
+// head). Locally an agent could build a merge commit with an approved head.
 func localHeads(ctx context.Context, root string) ([]string, error) {
+	revs := []string{"HEAD"}
+	if inActions() && os.Getenv("GITHUB_EVENT_NAME") == "pull_request" {
+		revs = append(revs, "HEAD^2")
+	}
 	var out []string
-	for _, rev := range []string{"HEAD", "HEAD^2"} {
+	for _, rev := range revs {
 		b, err := gitx.Run(ctx, "", "-C", root, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 		if err != nil {
 			if rev == "HEAD" {

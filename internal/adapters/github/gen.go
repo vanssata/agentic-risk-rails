@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -26,11 +27,15 @@ const (
 
 	// rrVersion is the rr release the workflows install; refreshed on release (GAP).
 	rrVersion = "v4.0.0"
+	// goVersion is the toolchain the workflows build rr with (the go.mod version at release).
+	goVersion = "1.27.3"
 	// Action pins [V]: gh api repos/actions/<name>/commits/<tag> (docs:
 	// https://docs.github.com/en/rest/commits/commits#get-a-commit).
 	checkoutSHA = "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" // actions/checkout v5
 	setupGoSHA  = "924ae3a1cded613372ab5595356fb5720e22ba16" // actions/setup-go v6
 )
+
+var validBranch = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
 type gen struct{}
 
@@ -76,6 +81,9 @@ func (gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	if branch == "" {
 		branch = "main"
 	}
+	if !validBranch.MatchString(branch) || strings.HasPrefix(branch, "-") || strings.Contains(branch, "..") {
+		return nil, fmt.Errorf("github: invalid project.default_branch %q", branch)
+	}
 
 	seen := map[string]bool{}
 	var paths []string
@@ -98,7 +106,7 @@ func (gen) Render(_ context.Context, in core.SyncInput) ([]core.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ Check, Branch, RR, Checkout, SetupGo string }{hosting.PolicyCheck, branch, rrVersion, checkoutSHA, setupGoSHA}
+	data := struct{ Check, Branch, RR, Checkout, SetupGo, GoVersion string }{hosting.PolicyCheck, branch, rrVersion, checkoutSHA, setupGoSHA, goVersion}
 	verify, err := render("rr-verify.yml.tmpl", data)
 	if err != nil {
 		return nil, err

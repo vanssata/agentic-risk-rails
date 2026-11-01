@@ -39,6 +39,9 @@ func (f *policyFlags) compare(ctx context.Context) (core.Direction, []core.Field
 		return core.Loosen, nil, err
 	}
 	cand := core.StrictDefaults() // a missing file is the strictest policy
+	if fi, lerr := os.Lstat(filepath.Join(f.root, f.file)); lerr == nil && !fi.Mode().IsRegular() {
+		return core.Loosen, nil, fmt.Errorf("%s: not a regular file", f.file)
+	}
 	raw, err := os.ReadFile(filepath.Join(f.root, f.file))
 	switch {
 	case err == nil:

@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@{{.SetupGo}} # v6
-        with: { go-version: stable, cache: false }
+        with: { go-version: "{{.GoVersion}}", cache: false }
       - run: go install github.com/vanssata/agentic-risk-rails/cmd/rr@{{.RR}}
         working-directory: ${{"{{"}} runner.temp {{"}}"}}
       - run: rr policy check --base origin/{{.Branch}} --pr ${{"{{"}} github.event.pull_request.number {{"}}"}}

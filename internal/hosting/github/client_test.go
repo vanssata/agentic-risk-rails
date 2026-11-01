@@ -40,6 +40,15 @@ func server(t *testing.T) *Client {
 		http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
 	})
 	mux.HandleFunc("/repos/acme/shop/rules/branches/main", serve("rules.json"))
+	mux.HandleFunc("/repos/acme/shop/rules/branches/paged", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", `<http://`+r.Host+`/repos/acme/shop/rules/branches/paged?per_page=100&page=2>; rel="next"`)
+			_, _ = w.Write([]byte(`[{"type":"deletion"}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[{"type":"non_fast_forward"}]`))
+	})
 	mux.HandleFunc("/orgs/acme/teams/owners/memberships/bob", serve("membership.json"))
 	mux.HandleFunc("/orgs/acme/teams/owners/memberships/denied", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
@@ -110,6 +119,12 @@ func TestReviewsPullTeamRules(t *testing.T) {
 	assert.Empty(t, missing)
 	_, err = c.Rulesets(ctx, "nobranch")
 	assert.Error(t, err)
+}
+
+func TestRulesetsFollowsPages(t *testing.T) {
+	raw, err := server(t).Rulesets(context.Background(), "paged")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"deletion"},{"type":"non_fast_forward"}]`, string(raw))
 }
 
 func TestNewRejectsBadRemote(t *testing.T) {
