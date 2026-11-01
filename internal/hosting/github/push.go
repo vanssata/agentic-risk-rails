@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,12 +45,17 @@ func (c *Client) Push(ctx context.Context, root, branch string) error {
 	if _, err := gitx.Run(ctx, "", "init", "-q", "--bare", "--template=", tmp); err != nil {
 		return fmt.Errorf("github: push: %w", err)
 	}
-	// upload-pack runs in root and reads its config; the -c hardening reaches it via
-	// GIT_CONFIG_PARAMETERS, and uploadpack.packObjectsHook is ignored in repo config [V].
+	// upload-pack runs in root and reads its config, but git unsets GIT_CONFIG_PARAMETERS
+	// for it, so our -c does not reach it. Safety rests on upload-pack running no
+	// repo-controlled code (uploadpack.packObjectsHook is protected config [V]) and on
+	// checkSource, which runs before and after the fetch.
 	ref := "refs/heads/" + branch
 	if _, err := gitx.Run(ctx, "", "-C", tmp, "-c", "protocol.file.allow=always",
 		"fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", src, ref+":"+ref); err != nil {
 		return fmt.Errorf("github: push %s: %w", branch, err)
+	}
+	if err := checkSource(src); err != nil {
+		return err
 	}
 	cmd := c.pushCmd(ctx, tmp, branch)
 	var errb bytes.Buffer
@@ -71,12 +77,26 @@ func checkBranch(ctx context.Context, branch string) error {
 	return nil
 }
 
-// checkSource refuses a repository whose objects may come from elsewhere:
-// a linked worktree (.git file, commondir) or alternates.
+// checkSource refuses a repository whose objects or refs may come from
+// elsewhere: .git is not a real directory (symlink, linked-worktree file),
+// anything under .git is a symlink, or there is commondir or alternates. rr
+// resolves links on the host, so a link could pull in any file rr can read.
 func checkSource(root string) error {
 	g := filepath.Join(root, ".git")
-	if fi, err := os.Stat(g); err != nil || !fi.IsDir() {
+	if fi, err := os.Lstat(g); err != nil || !fi.IsDir() {
 		return fmt.Errorf("github: push refused: %s is not a plain git directory", g)
+	}
+	err := filepath.WalkDir(g, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("symlink %s", p)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("github: push refused: %w", err)
 	}
 	for _, p := range []string{"commondir", "objects/info/alternates", "objects/info/http-alternates"} {
 		if _, err := os.Lstat(filepath.Join(g, p)); !errors.Is(err, os.ErrNotExist) {

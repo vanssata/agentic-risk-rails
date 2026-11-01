@@ -170,6 +170,60 @@ func TestPushRefusesForeignObjects(t *testing.T) {
 	assert.Error(t, c.Push(context.Background(), other, "rr/x"))
 }
 
+func TestPushRefusesSymlinks(t *testing.T) {
+	foreign := testutil.GitRepo(t, map[string]string{"secret": "TOPSECRET"})
+	testutil.Git(t, foreign, "branch", "rr/v")
+	for name, mutate := range map[string]func(t *testing.T, src string){
+		"dot-git": func(t *testing.T, src string) {
+			require.NoError(t, os.RemoveAll(filepath.Join(src, ".git")))
+			require.NoError(t, os.Symlink(filepath.Join(foreign, ".git"), filepath.Join(src, ".git")))
+		},
+		"objects": func(t *testing.T, src string) {
+			require.NoError(t, os.RemoveAll(filepath.Join(src, ".git", "objects")))
+			require.NoError(t, os.Symlink(filepath.Join(foreign, ".git", "objects"), filepath.Join(src, ".git", "objects")))
+		},
+		"loose-dir": func(t *testing.T, src string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(src, ".git", "objects", "ab"), 0o755))
+			require.NoError(t, os.RemoveAll(filepath.Join(src, ".git", "objects", "pack")))
+			require.NoError(t, os.Symlink(filepath.Join(foreign, ".git", "objects", "pack"), filepath.Join(src, ".git", "objects", "pack")))
+		},
+		"ref": func(t *testing.T, src string) {
+			require.NoError(t, os.Remove(filepath.Join(src, ".git", "refs", "heads", "rr", "x")))
+			require.NoError(t, os.Symlink(filepath.Join(foreign, ".git", "refs", "heads", "rr", "v"), filepath.Join(src, ".git", "refs", "heads", "rr", "x")))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, src, target := pushFixture(t)
+			mutate(t, src)
+			err := c.Push(context.Background(), src, "rr/x")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "refused")
+			assert.Empty(t, targetRefs(t, target))
+		})
+	}
+}
+
+func TestPushFetchTimeConfigRunsNothing(t *testing.T) {
+	c, src, target := pushFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := filepath.Join(t.TempDir(), "x.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+	hooks := filepath.Join(src, "hooks")
+	require.NoError(t, os.MkdirAll(hooks, 0o755))
+	for _, h := range []string{"pre-upload-pack", "reference-transaction", "post-fetch", "pre-auto-gc"} {
+		require.NoError(t, os.WriteFile(filepath.Join(hooks, h), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+	}
+	testutil.Git(t, src, "config", "core.fsmonitor", script)
+	testutil.Git(t, src, "config", "core.hooksPath", hooks)
+	testutil.Git(t, src, "config", "uploadpack.packObjectsHook", script)
+	testutil.Git(t, src, "config", "core.gitProxy", script)
+	testutil.Git(t, src, "config", "core.sshCommand", script)
+	testutil.Git(t, src, "config", "core.alternateRefsCommand", script)
+	require.NoError(t, c.Push(context.Background(), src, "rr/x"))
+	assert.Equal(t, []string{"refs/heads/rr/x"}, targetRefs(t, target))
+	assert.NoFileExists(t, marker)
+}
+
 func TestPushMissingBranchFails(t *testing.T) {
 	c, src, target := pushFixture(t)
 	assert.Error(t, c.Push(context.Background(), src, "rr/nope"))
