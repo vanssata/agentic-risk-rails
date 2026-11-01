@@ -63,13 +63,22 @@ type Runner struct {
 	Home     string
 	Clock    Clock
 	HaltSock string // unix socket for the hooks; "" = none
-	Push     func(ctx context.Context, root, branch string) error
+	// Exec runs a command in the agent's container image (no network): the
+	// enforcement probe and the close run happen there, never on the host
+	// (errata #26, wave 4). nil = host Runtime.Enforcement and no close run (tests).
+	Exec     func(ctx context.Context, cmd ...string) ([]byte, error)
 	WallUnit time.Duration // unit of max_wall_minutes; 0 = time.Minute (tests shrink it)
 
-	eff    core.EffectivePolicy
-	halter Halter
-	cancel context.CancelFunc
+	eff     core.EffectivePolicy
+	inForce []byte // riskrails.yaml read from the default branch at the tip the run started from
+	base    string // the commit every task starts from == tip of the default branch at start
+	halter  Halter
+	cancel  context.CancelFunc
 }
+
+// PolicyFileName is the policy in force the runner writes into StateDir (outside
+// the checkout) and mounts read-only into the container.
+const PolicyFileName = "policy-in-force.yaml"
 
 var taskIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,60}$`)
 
@@ -98,9 +107,14 @@ func (r *Runner) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// snapshot reads the policy in force from the remote and resolves it.
+// snapshot reads the policy in force from the remote, at the tip of the default
+// branch, and resolves it.
 func (r *Runner) snapshot(ctx context.Context) (inForceSHA string, err error) {
-	b, err := r.Hosting.ReadFile(ctx, r.DefaultBranch, "riskrails.yaml")
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return "", fmt.Errorf("tip of %s unreadable: %w", r.DefaultBranch, err)
+	}
+	b, err := r.Hosting.ReadFile(ctx, tip, "riskrails.yaml")
 	if err != nil {
 		return "", fmt.Errorf("policy in force unreadable: %w", err)
 	}
@@ -110,7 +124,19 @@ func (r *Runner) snapshot(ctx context.Context) (inForceSHA string, err error) {
 	if r.eff.Policy.Project.DefaultBranch != r.DefaultBranch {
 		return "", fmt.Errorf("default branch %q differs from policy %q", r.DefaultBranch, r.eff.Policy.Project.DefaultBranch)
 	}
+	r.inForce = b
 	return sha(b), nil
+}
+
+// checkBase fails closed unless the commit the run started from is still the
+// tip of the default branch on the remote. moved = false with a non-nil error is
+// an API failure (halt); moved = true means the branch advanced (block the task).
+func (r *Runner) checkBase(ctx context.Context) (moved bool, err error) {
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return false, fmt.Errorf("tip of %s unreadable: %w", r.DefaultBranch, err)
+	}
+	return tip != r.base, nil
 }
 
 // preflight checks everything that must hold before the first wave and returns
@@ -133,8 +159,13 @@ func (r *Runner) preflight(ctx context.Context, queue []Task) (enf core.Enforcem
 	if inside, werr := within(r.Root, r.StateDir); werr != nil || inside {
 		return "", "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
 	}
-	enf, err = r.Runtime.Enforcement(ctx, r.Root)
-	if err != nil {
+	if r.Exec != nil { // measured in the image the agent runs in, not on the host
+		out, xerr := r.Exec(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
+		if xerr != nil {
+			return "", "", fmt.Errorf("enforcement in the image: %w", xerr)
+		}
+		enf = core.Enforcement(strings.TrimSpace(string(out)))
+	} else if enf, err = r.Runtime.Enforcement(ctx, r.Root); err != nil {
 		return "", "", fmt.Errorf("enforcement: %w", err)
 	}
 	if enf != core.EnforcementSandbox {
@@ -146,6 +177,14 @@ func (r *Runner) preflight(ctx context.Context, queue []Task) (enf core.Enforcem
 	if base, err = r.git(ctx, "rev-parse", "HEAD"); err != nil {
 		return "", "", err
 	}
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return "", "", r.refuse(ctx, "BASE_UNKNOWN", err.Error())
+	}
+	if tip != base {
+		return "", "", r.refuse(ctx, "BASE_NOT_TIP", "HEAD "+base+" is not the tip "+tip+" of "+r.DefaultBranch+" on the remote")
+	}
+	r.base = base
 	return enf, base, nil
 }
 
@@ -159,6 +198,9 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 	inForce, err := r.snapshot(ctx)
 	if err != nil {
 		return nil, &core.Refusal{Code: "POLICY_UNREADABLE", Detail: err.Error()}
+	}
+	if err := os.WriteFile(filepath.Join(r.StateDir, PolicyFileName), r.inForce, 0o600); err != nil {
+		return nil, fmt.Errorf("write policy in force: %w", err)
 	}
 	if _, err := r.Journal.Append(ctx, core.Event{Type: "task_started", Task: r.RunID, Actor: core.ActorAutonomy, Via: "runner", PolicySHA: r.eff.PolicySHA}); err != nil {
 		return nil, fmt.Errorf("journal task_started: %w", err)
@@ -389,6 +431,13 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, err
 	}
 
+	if moved, err := r.checkBase(ctx); err != nil {
+		return o, r.halted(ctx, err.Error())
+	} else if moved {
+		o.Status = "blocked"
+		return o, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
+	}
+
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
@@ -490,6 +539,11 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		}
 		return block(why)
 	}
+	if r.Exec != nil { // close run: tests the agent wrote run in the sandbox, not on the host
+		if out, err := r.Exec(ctx, "rr", "verify", "--task", t.ID, "--close"); err != nil {
+			return block("close run in the container failed: " + firstLine(strings.TrimSpace(string(out))+" "+err.Error()))
+		}
+	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
 	if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
 		return block(err.Error())
@@ -497,14 +551,16 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
 		return o, r.halted(ctx, err.Error())
 	}
-	push := r.Push
-	if push == nil {
-		push = gitPush
+	if moved, err := r.checkBase(ctx); err != nil {
+		return o, r.halted(ctx, err.Error())
+	} else if moved {
+		return block("default branch moved before push")
 	}
-	if err := push(ctx, r.Root, branch); err != nil {
+	if err := r.Hosting.Push(ctx, r.Root, branch); err != nil {
 		return block("push: " + err.Error())
 	}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), nil)
+	labels := []string{"rr", "rr:" + o.Level.String(), "rr:mode:" + string(t.Mode)}
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), labels)
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}
@@ -653,17 +709,6 @@ func (r *Runner) rescore(ctx context.Context, t Task, base string, changed []str
 		return fmt.Sprintf("rescored to %s (irreversible=%v) from declared %s", w.Mode, w.Irreversible, t.Mode), nil
 	}
 	return "", nil
-}
-
-// gitPush pushes only rr/* branches, never a default branch. Credentials are not
-// available to the hardened git (CORE_CHANGE_REQUESTS: Hosting.Push).
-func gitPush(ctx context.Context, root, branch string) error {
-	if !strings.HasPrefix(branch, "rr/") {
-		return fmt.Errorf("refusing to push %q", branch)
-	}
-	_, err := gitx.Run(ctx, "", "-C", root, "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always",
-		"push", "origin", "refs/heads/"+branch+":refs/heads/"+branch)
-	return err
 }
 
 // treeAt lists the files of a commit, NUL-separated so unusual names stay intact.

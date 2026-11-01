@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,32 @@ func (w *workerFn) Run(ctx context.Context, s core.WorkerSpec) (core.WorkerRepor
 type lockedHost struct {
 	mu sync.Mutex
 	*fakes.Hosting
+	onPush    func() error // runs inside Push, before the fake records it
+	branchErr error
+}
+
+func (h *lockedHost) Push(ctx context.Context, root, branch string) error {
+	if h.onPush != nil {
+		if err := h.onPush(); err != nil {
+			return err
+		}
+	}
+	return h.Hosting.Push(ctx, root, branch)
+}
+
+func (h *lockedHost) BranchSHA(ctx context.Context, branch string) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.branchErr != nil {
+		return "", h.branchErr
+	}
+	return h.Hosting.BranchSHA(ctx, branch)
+}
+
+func (h *lockedHost) moveTip(sha string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Branches["main"] = sha
 }
 
 func (h *lockedHost) ReadFile(ctx context.Context, ref, path string) ([]byte, error) {
@@ -65,7 +92,7 @@ type env struct {
 	worker *workerFn
 	rt     *fakes.Runtime
 	r      *Runner
-	pushed []string
+	head   string
 	ceil   *string
 	pol    core.Policy
 }
@@ -79,7 +106,10 @@ func newEnv(t *testing.T) *env {
 	ceil := "c1"
 	pol := pol(core.L2)
 	pol.Autonomy.Unattended.MaxTasksPerDay = nil
-	e := &env{root: root, host: &lockedHost{Hosting: &fakes.Hosting{Files: map[string][]byte{"main:riskrails.yaml": []byte("schema: 1\n")}}},
+	head := strings.TrimSpace(testutil.Git(t, root, "rev-parse", "HEAD"))
+	e := &env{root: root, head: head, host: &lockedHost{Hosting: &fakes.Hosting{
+		Files:    map[string][]byte{head + ":riskrails.yaml": []byte("schema: 1\n")},
+		Branches: map[string]string{"main": head}}},
 		jr: &fakes.Journal{}, clk: newFakeClock(), rt: &fakes.Runtime{ID: "claude", Enf: core.EnforcementSandbox}, ceil: &ceil, pol: pol}
 	e.worker = &workerFn{fn: func(_ context.Context, n int, _ core.WorkerSpec) (core.WorkerReport, error) {
 		return done("ok"), os.WriteFile(filepath.Join(root, "a.txt"), []byte("changed "+string(rune('0'+n))+"\n"), 0o644)
@@ -90,7 +120,6 @@ func newEnv(t *testing.T) *env {
 		Resolve: func(context.Context, []byte) (core.EffectivePolicy, error) {
 			return core.EffectivePolicy{Policy: e.pol, InForce: e.pol, PolicySHA: "p", CeilingSHA: *e.ceil}, nil
 		},
-		Push: func(_ context.Context, _, branch string) error { e.pushed = append(e.pushed, branch); return nil },
 	}
 	return e
 }
@@ -108,7 +137,7 @@ func TestL2RunOpensDraftPR(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, "pr", out[0].Status)
 	assert.Equal(t, core.L2, out[0].Level)
-	assert.Equal(t, []string{"rr/t1"}, e.pushed)
+	assert.Equal(t, []string{"rr/t1"}, e.host.Pushed)
 	require.Len(t, e.host.Opened, 1)
 	assert.Contains(t, e.host.Opened[0].URL, "rr/t1")
 	assert.Contains(t, e.jr.Types("run1"), "draft_pr_opened")
@@ -142,6 +171,7 @@ func TestTrackedManifestIsRestored(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(e.root, ".claude/settings.json"), []byte(`{"l1":true}`), 0o644))
 	testutil.Git(t, e.root, "add", "-A")
 	testutil.Git(t, e.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "manifest")
+	e.syncTip(t)
 	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
 	assert.Equal(t, "a.txt\n", testutil.Git(t, e.root, "show", "--name-only", "--format=", "rr/t1"))
@@ -216,8 +246,8 @@ func TestCeilingChangeStopsNextWave(t *testing.T) {
 
 func TestPolicyInForceChangeStopsNextWave(t *testing.T) {
 	e := newEnv(t)
-	e.r.Push = func(context.Context, string, string) error {
-		e.host.set("main:riskrails.yaml", []byte("schema: 1\n# loosened on main\n"))
+	e.host.onPush = func() error {
+		e.host.set(e.head+":riskrails.yaml", []byte("schema: 1\n# loosened on main\n"))
 		return nil
 	}
 	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}, {ID: "t2", Brief: "y"}})
@@ -247,7 +277,7 @@ func TestProtectedPathChangeBlocks(t *testing.T) {
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
 	assert.Equal(t, "blocked", out[0].Status)
-	assert.Empty(t, e.pushed)
+	assert.Empty(t, e.host.Pushed)
 	assert.Empty(t, e.host.Opened)
 	assert.Contains(t, e.jr.Types("run1"), "task_blocked")
 	assert.Equal(t, "schema: 1\n", string(mustRead(t, filepath.Join(e.root, "riskrails.yaml"))))
@@ -310,7 +340,7 @@ func TestJournalCopyDetectsTampering(t *testing.T) {
 		}
 		return done("ok"), os.WriteFile(filepath.Join(e.root, "a.txt"), []byte("n\n"), 0o644)
 	}
-	e.r.Push = func(context.Context, string, string) error { // after t1's copy was taken
+	e.host.onPush = func() error { // after t1's copy was taken
 		return os.Remove(filepath.Join(e.root, ".rr", "run", "t1.jsonl"))
 	}
 	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}, {ID: "t2", Brief: "y"}})
@@ -334,6 +364,122 @@ func TestJournalFailureAborts(t *testing.T) {
 	assert.Zero(t, e.worker.calls, "audit-first: no journal, no work")
 }
 
-func TestGitPushRefusesNonRRBranch(t *testing.T) {
-	assert.Error(t, gitPush(t.Context(), t.TempDir(), "main"))
+func TestPushAndLabelsGoThroughHosting(t *testing.T) {
+	e := newEnv(t)
+	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x", Mode: core.ModeLight}})
+	require.NoError(t, err)
+	assert.Equal(t, "pr", out[0].Status)
+	assert.Equal(t, []string{"rr/t1"}, e.host.Pushed)
+	assert.Equal(t, [][]string{{"rr", "rr:L2", "rr:mode:light"}}, e.host.Labels)
+}
+
+func TestPushFailureBlocksTheTask(t *testing.T) {
+	e := newEnv(t)
+	e.host.PushErr = errors.New("403")
+	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", out[0].Status)
+	assert.Empty(t, e.host.Opened)
+}
+
+func TestHeadMustBeTheRemoteTipBeforeTheAgent(t *testing.T) {
+	e := newEnv(t)
+	e.host.moveTip("deadbeef")
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	assert.Equal(t, "BASE_NOT_TIP", e.refusal(t, err).Code)
+	assert.Zero(t, e.worker.calls)
+
+	e = newEnv(t)
+	e.host.branchErr = errors.New("502")
+	_, err = e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	assert.Equal(t, "BASE_UNKNOWN", e.refusal(t, err).Code)
+	assert.Zero(t, e.worker.calls)
+}
+
+func TestMovedDefaultBranchBlocksPushAndLaterTasks(t *testing.T) {
+	e := newEnv(t)
+	e.worker.fn = func(_ context.Context, _ int, _ core.WorkerSpec) (core.WorkerReport, error) {
+		e.host.moveTip("deadbeef") // someone merged to main while the agent ran
+		return done("ok"), os.WriteFile(filepath.Join(e.root, "a.txt"), []byte("n\n"), 0o644)
+	}
+	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}, {ID: "t2", Brief: "y"}})
+	// the moved tip changes the policy read at the next gate (no file at that sha) or blocks t2 before the agent
+	require.Error(t, err)
+	require.NotEmpty(t, out)
+	assert.Equal(t, "blocked", out[0].Status)
+	assert.Empty(t, e.host.Pushed, "no push from a stale base")
+	assert.Empty(t, e.host.Opened)
+	assert.Equal(t, 1, e.worker.calls)
+}
+
+func TestBranchSHAErrorBeforePushHalts(t *testing.T) {
+	e := newEnv(t)
+	e.worker.fn = func(_ context.Context, _ int, _ core.WorkerSpec) (core.WorkerReport, error) {
+		e.host.mu.Lock()
+		e.host.branchErr = errors.New("502")
+		e.host.mu.Unlock()
+		return done("ok"), os.WriteFile(filepath.Join(e.root, "a.txt"), []byte("n\n"), 0o644)
+	}
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	assert.Equal(t, "HALT", e.refusal(t, err).Code)
+	assert.Empty(t, e.host.Pushed)
+}
+
+func TestPolicyInForceFileWrittenOutsideCheckout(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	require.NoError(t, err)
+	assert.Equal(t, "schema: 1\n", string(mustRead(t, filepath.Join(e.r.StateDir, PolicyFileName))))
+}
+
+func TestEnforcementIsMeasuredInTheImage(t *testing.T) {
+	e := newEnv(t)
+	e.rt.Enf = core.EnforcementCIOnly // the host would refuse; the image decides
+	var calls [][]string
+	e.r.Exec = func(_ context.Context, cmd ...string) ([]byte, error) {
+		calls = append(calls, cmd)
+		if cmd[1] == "run" {
+			return []byte(string(core.EnforcementSandbox) + "\n"), nil
+		}
+		return nil, nil
+	}
+	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	require.NoError(t, err)
+	assert.Equal(t, "pr", out[0].Status)
+	assert.Equal(t, []string{"rr", "run", "enforcement", "--runtime", "claude"}, calls[0])
+	assert.Equal(t, []string{"rr", "verify", "--task", "t1", "--close"}, calls[1], "close run in the container")
+
+	for name, exec := range map[string]func(context.Context, ...string) ([]byte, error){
+		"hook_only": func(context.Context, ...string) ([]byte, error) { return []byte("hook_only"), nil },
+		"garbage":   func(context.Context, ...string) ([]byte, error) { return []byte("???"), nil },
+		"error":     func(context.Context, ...string) ([]byte, error) { return nil, errors.New("docker down") },
+	} {
+		e := newEnv(t)
+		e.r.Exec = exec
+		_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+		require.Error(t, err, name)
+		assert.Zero(t, e.worker.calls, name)
+	}
+}
+
+func TestFailedCloseRunInContainerBlocksBeforePush(t *testing.T) {
+	e := newEnv(t)
+	e.r.Exec = func(_ context.Context, cmd ...string) ([]byte, error) {
+		if cmd[1] == "verify" {
+			return []byte("1 failed"), errors.New("exit 1")
+		}
+		return []byte(string(core.EnforcementSandbox)), nil
+	}
+	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	require.NoError(t, err)
+	assert.Equal(t, "blocked", out[0].Status)
+	assert.Empty(t, e.host.Pushed)
+}
+
+// syncTip makes the fake remote's default branch follow a commit the test made locally.
+func (e *env) syncTip(t *testing.T) {
+	head := strings.TrimSpace(testutil.Git(t, e.root, "rev-parse", "HEAD"))
+	e.host.set(head+":riskrails.yaml", []byte("schema: 1\n"))
+	e.host.moveTip(head)
+	e.head = head
 }

@@ -21,6 +21,7 @@ func TestIgnoredFilesDoNotSurviveIntoTheNextTask(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(e.root, ".gitignore"), []byte(".rr/\nnode_modules/\n.env\n"), 0o644))
 			testutil.Git(t, e.root, "add", "-A")
 			testutil.Git(t, e.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ignore")
+			e.syncTip(t)
 			var leaked []string
 			e.worker.fn = func(_ context.Context, n int, _ core.WorkerSpec) (core.WorkerReport, error) {
 				if n == 1 {
@@ -71,7 +72,7 @@ func TestSymlinkGitlinkAndTypeChangeInDiffAreBlocked(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "blocked", out[0].Status)
 			assert.Contains(t, blockedReason(t, e), "symlink/gitlink in diff")
-			assert.Empty(t, e.pushed)
+			assert.Empty(t, e.host.Pushed)
 		})
 	}
 }

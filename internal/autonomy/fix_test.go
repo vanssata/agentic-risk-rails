@@ -23,6 +23,7 @@ func withProtected(t *testing.T, e *env) {
 	require.NoError(t, os.WriteFile(filepath.Join(e.root, ".github/workflows/ci.yml"), []byte("on: push\n"), 0o644))
 	testutil.Git(t, e.root, "add", "-A")
 	testutil.Git(t, e.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ci")
+	e.syncTip(t)
 }
 
 func blockedReason(t *testing.T, e *env) string {
@@ -52,7 +53,7 @@ func TestRenameOrDeleteOfProtectedPathIsBlocked(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "blocked", out[0].Status)
 			assert.Contains(t, blockedReason(t, e), "protected path .github/workflows/ci.yml")
-			assert.Empty(t, e.pushed)
+			assert.Empty(t, e.host.Pushed)
 		})
 	}
 }
@@ -184,7 +185,7 @@ func TestAnchorRefusesSymlinkOversizeAndChecksAfterTheLastTask(t *testing.T) {
 			agentJournal(t, e, "t1")
 			return done("ok"), os.WriteFile(filepath.Join(e.root, "a.txt"), []byte("n\n"), 0o644)
 		}
-		e.r.Push = func(context.Context, string, string) error {
+		e.host.onPush = func() error {
 			return os.Remove(filepath.Join(e.root, ".rr/run/t1.jsonl"))
 		}
 		_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
@@ -248,7 +249,7 @@ func TestHaltBeforePushStopsThePush(t *testing.T) {
 	}
 	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	assert.Equal(t, "HALT", e.refusal(t, err).Code)
-	assert.Empty(t, e.pushed)
+	assert.Empty(t, e.host.Pushed)
 	assert.Empty(t, e.host.Opened)
 }
 
@@ -289,7 +290,7 @@ func TestAlwaysProtectedChangeIsBlocked(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "blocked", out[0].Status)
 			assert.Contains(t, blockedReason(t, e), "protected path "+p)
-			assert.Empty(t, e.pushed)
+			assert.Empty(t, e.host.Pushed)
 		})
 	}
 }
