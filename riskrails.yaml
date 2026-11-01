@@ -1,0 +1,71 @@
+# riskrails.yaml — RiskRails v4 on itself (dogfooding), schema 1
+schema: 1
+project:
+  name: agentic-risk-rails
+  stack: [go]
+  default_branch: main
+  runtimes: []                     # CI-only dogfooding (owner decision): no runtime manifests in this repo
+
+risk:
+  axes:
+    scope:         { measured: refs, bands: [0, 5] }
+    behaviour:     { declared: true, keywords: [fail-closed, sandbox, token, credential, hook, journal] }
+    reversibility: { measured: paths }
+    domain:        { measured: paths, declared: true }
+    novelty:       { declared: true, manifest_floor: 1 }      # go.mod in the diff ⇒ ≥1
+    coverage:      { measured: tests, test_globs: ["**/*_test.go"] }
+  modes:
+    light:     { max: 2 }
+    guarded:   { min: 3, max: 7 }
+    full:      { min: 8 }
+    programme: { trigger: [spec, ">1 session", "files > 25"] }
+  hard_floors:
+    - { axis: reversibility, value: 2, mode: full }
+    - { axis: domain,        value: 2, mode: full, review: security }
+    - { both: [reversibility, domain], value: 2, mode: full_irreversible }
+  # the enforcement path: guard, policy, autonomy, hosting and the frozen contracts
+  hot_paths: ["internal/core/**", "internal/guard/**", "internal/policy/**", "internal/autonomy/**", "internal/hosting/**", "internal/gitx/**"]
+  domain:
+    identity: ["internal/hosting/**", "internal/gitx/**"]
+    enforcement: ["internal/guard/**", "internal/policy/**", "internal/autonomy/**", "internal/core/**", "internal/flow/hook.go", "cmd/rr/wire*.go"]
+  reversibility:
+    needs_step:   ["templates/**", "skills/**"]
+    irreversible: []
+    irreversible_content: []
+  rescore: { axes: [reversibility, domain], when: [verify, close], direction: up_only }
+  policy_file_weight: { behaviour: 2, domain: 2 }
+
+models:
+  tiers_allowed: [FAST, BALANCED, STRONG]
+  by_runtime:
+    claude: { FAST: [haiku], BALANCED: [sonnet], STRONG: [opus], EXPERT: [fable] }
+    codex:  { FAST: [gpt-5-mini], BALANCED: [gpt-5-mini], STRONG: [gpt-5.3-codex, gpt-5] }
+
+autonomy:
+  ceiling: L1                      # no unattended runs on this repo until the RR_CONTRACT run (wave 4.2)
+
+enforcement:
+  protected_paths: [".env*", ".github/workflows/**", "riskrails.yaml", "go.mod", "go.sum", "cmd/rr/main.go"]
+  secret_reads: [".env*", "~/.ssh/**", "~/.aws/**", "~/.config/gh/**"]
+  commands:
+    deny:  ["git push --force*", "git push * main", "rm -rf /"]
+    ask:   ["git push*", "git commit*", "git tag*", "gh *"]
+    allow: ["make check", "make fmt", "make lint", "go build ./...", "go vet ./...", "go test *", "gofmt -l *", "git status", "git diff*", "git log*"]
+    parser: ast
+    unlisted: ask
+  egress:
+    allow: ["proxy.golang.org", "sum.golang.org", "api.github.com"]
+    deny_default: true
+  fail_closed: true
+
+verify:
+  adapters:
+    - { name: go, cmd: "go test ./..." }
+  full_run_when: [lockfile, ".github/**", "internal/core/**", "uncovered_file", "mode>=full", close]
+  nightly_full: true
+
+release:
+  ecosystem: go
+  channel: tag
+  preflight: ["make check"]
+  publish_via: ci_oidc
