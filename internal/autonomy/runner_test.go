@@ -116,7 +116,7 @@ func newEnv(t *testing.T) *env {
 	}}
 	e.r = &Runner{Root: root, StateDir: t.TempDir(), RunID: "run1", DefaultBranch: "main", Level: core.L2, Container: true,
 		Runtime: e.rt, Hosting: e.host, Journal: e.jr, Worker: e.worker, Clock: e.clk,
-		Gens: []core.Generator{fakes.Generator{ID: "g", Files: []core.File{{Path: ".claude/settings.json", Content: []byte(`{"l2":true}`)}}}},
+		Gens: []core.Generator{fakes.Generator{ID: "g", Files: []core.File{{Path: ".claude/settings.json", Content: []byte(`{"l2":true,"cmd":"rr guard"}`)}}}},
 		Resolve: func(context.Context, []byte) (core.EffectivePolicy, error) {
 			return core.EffectivePolicy{Policy: e.pol, InForce: e.pol, PolicySHA: "p", CeilingSHA: *e.ceil}, nil
 		},
@@ -160,7 +160,7 @@ func TestManifestIsRenderedAtL2WhileAgentRuns(t *testing.T) {
 	}
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
-	assert.Equal(t, `{"l2":true}`, string(seen))
+	assert.Equal(t, `{"l2":true,"cmd":"rr guard"}`, string(seen))
 	assert.Equal(t, "empty", out[0].Status, blockedReason(t, e))
 	assert.Empty(t, e.host.Opened)
 }
@@ -482,14 +482,17 @@ func (e *env) syncTip(t *testing.T) {
 func TestStartTaskWritesScopeFileAndOpensJournal(t *testing.T) {
 	e := newEnv(t)
 	var started []Task
-	e.r.Start = func(_ context.Context, t Task) error { started = append(started, t); return nil }
+	e.r.Start = func(_ context.Context, t Task) (core.Weight, error) {
+		started = append(started, t)
+		return core.Weight{}, nil
+	}
 	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x", Files: []string{"a.txt"}}})
 	require.NoError(t, err)
 	require.Len(t, started, 1)
 	assert.Equal(t, `["a.txt"]`, string(mustRead(t, filepath.Join(e.r.StateDir, ScopeFileName))))
 
 	e = newEnv(t)
-	e.r.Start = func(context.Context, Task) error { return errors.New("no journal") }
+	e.r.Start = func(context.Context, Task) (core.Weight, error) { return core.Weight{}, errors.New("no journal") }
 	_, err = e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	assert.Equal(t, "TASK_START", e.refusal(t, err).Code)
 	assert.Zero(t, e.worker.calls, "no journal, no agent")

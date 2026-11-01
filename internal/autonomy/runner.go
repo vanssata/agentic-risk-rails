@@ -1,6 +1,7 @@
 package autonomy
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,8 +74,13 @@ type Runner struct {
 	// Start opens the task's journal (flow.Env.Start, Actor autonomy, state outside the
 	// checkout); Close is the host-side close (flow.Env.Close with verify.WithSandbox).
 	// nil = not wired (tests).
-	Start func(ctx context.Context, t Task) error
+	// Start returns the triage weight of the task's real files: a mode other than
+	// light, or irreversible work, skips the task before the agent runs.
+	Start func(ctx context.Context, t Task) (core.Weight, error)
 	Close func(ctx context.Context, id string) error
+	// Ceilings loads the ceiling layers (policy.LoadCeilings); their raw bytes are
+	// copied into StateDir for the container's guard. nil = none.
+	Ceilings func() (enterprise, user *core.Layer, err error)
 
 	eff     core.EffectivePolicy
 	inForce []byte // riskrails.yaml read from the default branch at the tip the run started from
@@ -219,6 +226,12 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 	}
 	if err := os.WriteFile(filepath.Join(r.StateDir, PolicyFileName), r.inForce, 0o600); err != nil {
 		return nil, fmt.Errorf("write policy in force: %w", err)
+	}
+	if err := r.runtimeAllowed(); err != nil {
+		return nil, r.refuse(ctx, "RUNTIME", err.Error())
+	}
+	if err := r.writeContainerConfig(); err != nil {
+		return nil, fmt.Errorf("container config: %w", err)
 	}
 	if r.HaltSock != "" {
 		stop, err := r.halter.Serve(r.HaltSock)
@@ -461,7 +474,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
 		return o, err
 	}
-	files, err := rrsync.Render(ctx, core.SyncInput{Root: r.Root, Home: r.Home, Policy: r.eff, Tiers: r.Tiers, Level: lvl}, r.Gens)
+	files, err := r.render(ctx, lvl)
 	if err != nil {
 		r.reset(ctx, base)
 		return o, r.refuse(ctx, "RENDER", err.Error())
@@ -532,8 +545,21 @@ func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, bool
 		o.Status = "blocked"
 		return o, true, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
 	}
-	if err := r.startTask(ctx, t); err != nil {
+	w, err := r.startTask(ctx, t)
+	if err != nil {
 		return o, true, r.refuse(ctx, "TASK_START", err.Error())
+	}
+	if w.Mode == "" { // Start not wired
+		return o, false, nil
+	}
+	lvl, why := TaskLevel(LevelInput{Policy: r.eff.Policy, Mode: w.Mode, Irreversible: w.Irreversible,
+		Enforcement: core.EnforcementSandbox, InContainer: r.Container})
+	if lvl = min(lvl, r.Level); lvl < core.L2 {
+		o.Level = lvl
+		if err := r.log(ctx, "autonomy_level", map[string]any{"task": t.ID, "level": lvl, "reason": "triage of the real files: " + why, "skipped": true}); err != nil {
+			return o, true, err
+		}
+		return o, true, r.Journal.Close(ctx, t.ID) // the task was opened by Start
 	}
 	return o, false, nil
 }
@@ -543,20 +569,20 @@ const ScopeFileName = "scope.json"
 
 // startTask writes the scope file the container mounts read-only (errata #41),
 // then opens the task journal outside the checkout.
-func (r *Runner) startTask(ctx context.Context, t Task) error {
+func (r *Runner) startTask(ctx context.Context, t Task) (core.Weight, error) {
 	files := t.Files
 	if files == nil {
 		files = []string{}
 	}
 	b, err := json.Marshal(files)
 	if err != nil {
-		return err
+		return core.Weight{}, err
 	}
 	if err := os.WriteFile(filepath.Join(r.StateDir, ScopeFileName), b, 0o600); err != nil {
-		return err
+		return core.Weight{}, err
 	}
 	if r.Start == nil {
-		return nil
+		return core.Weight{}, nil
 	}
 	return r.Start(ctx, t)
 }
@@ -831,4 +857,96 @@ func prBody(t Task, lvl core.Level, rep core.WorkerReport) string {
 	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: declared only, irreversible=%v\n"+
 		"- worker: %s, %d calls\n- cost: %d tokens (worker status, calls and cost are reported by the agent: advisory)\n- review verdict: none yet; required human review on the server\n\n"+
 		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, t.Mode, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
+}
+
+// Files the runner writes into StateDir for the container (mounted read-only).
+const (
+	CodexConfigName = "codex-config.toml"
+	CeilingEntName  = "ceiling-enterprise.yaml"
+	CeilingUserName = "ceiling-user.yaml"
+	codexUserConfig = "[projects.\"" + workDir + "\"]\ntrust_level = \"trusted\"\n"
+)
+
+// hookFiles are the files each runtime reads, with a marker that proves they point
+// to rr: the guard hook, and for codex also the permission profile.
+var hookFiles = map[string][][2]string{
+	"claude": {{".claude/settings.json", "rr guard"}},
+	"codex":  {{".codex/hooks.json", "rr guard"}, {".codex/config.toml", "default_permissions"}},
+}
+
+// runtimeAllowed: the runtime must be in project.runtimes (nil = all), else its
+// generated config (hooks, sandbox) would not exist and the agent would run bare.
+func (r *Runner) runtimeAllowed() error {
+	rts := r.eff.Policy.Project.Runtimes
+	if rts != nil && !slices.Contains(rts, r.Runtime.Name()) {
+		return fmt.Errorf("runtime %s is not in project.runtimes %v: its hooks and sandbox config would not be rendered", r.Runtime.Name(), rts)
+	}
+	return nil
+}
+
+// writeContainerConfig writes what the agent container mounts: the codex user
+// config that marks /work trusted (Codex loads the project .codex/ layer only for
+// a trusted project; HOME in the container is empty), and the raw ceiling files the
+// host resolver used, so the guard in the container resolves the same policy.
+func (r *Runner) writeContainerConfig() error {
+	w := func(name string, b []byte) error {
+		p := filepath.Join(r.StateDir, name)
+		if b == nil {
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		}
+		return os.WriteFile(p, b, 0o600)
+	}
+	if r.Runtime.Name() == "codex" {
+		if err := w(CodexConfigName, []byte(codexUserConfig)); err != nil {
+			return err
+		}
+	}
+	if r.Ceilings == nil {
+		return nil
+	}
+	ent, user, err := r.Ceilings()
+	if err != nil {
+		return err
+	}
+	for _, c := range []struct {
+		l    *core.Layer
+		name string
+	}{{ent, CeilingEntName}, {user, CeilingUserName}} {
+		var b []byte
+		if c.l != nil {
+			b = c.l.Raw
+		}
+		if err := w(c.name, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// hookRendered: the files the runtime reads must be in the render and point to rr;
+// otherwise the agent would run without its hook or profile (no run).
+func (r *Runner) hookRendered(files []core.File) error {
+	for _, w := range hookFiles[r.Runtime.Name()] {
+		ok := false
+		for _, f := range files {
+			ok = ok || f.Path == w[0] && bytes.Contains(f.Content, []byte(w[1]))
+		}
+		if !ok {
+			return fmt.Errorf("rendered files lack %s containing %q for %s", w[0], w[1], r.Runtime.Name())
+		}
+	}
+	return nil
+}
+
+// render collects the generated files for the level; in a container the runtime's
+// hook files must be among them.
+func (r *Runner) render(ctx context.Context, lvl core.Level) ([]core.File, error) {
+	files, err := rrsync.Render(ctx, core.SyncInput{Root: r.Root, Home: r.Home, Policy: r.eff, Tiers: r.Tiers, Level: lvl}, r.Gens)
+	if err == nil && r.Container {
+		err = r.hookRendered(files)
+	}
+	return files, err
 }

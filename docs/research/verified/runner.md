@@ -31,3 +31,15 @@ network-config page (claude), non-interactive page (codex, twice). Not run: any 
 
 ## COST
 Tokens: none for models; 4 doc fetches.
+
+## FIX ROUND 4.1 (2026-11-01)
+
+| claim | source | mark |
+|---|---|---|
+| Codex loads the project `.codex/` layer only for a trusted project; with an empty HOME (container) it is untrusted: `codex sandbox` fresh HOME read `.env.local` and wrote `riskrails.yaml`, trusted HOME gave EACCES/EROFS | docs/research/verified/codex.md ; obs `codex sandbox` 0.166 | [V] |
+| Runner mounts a generated user config `[projects."/work"] trust_level = "trusted"` read-only at `$HOME/.codex/config.toml` (HOME=/tmp, on an agent-owned tmpfs so codex can write its state) | codex.md trust row | [V] mechanism, [U] not run against a real image |
+| Hook trust: non-managed hooks are hash-bound and skipped until trusted; `--dangerously-bypass-hook-trust` is the only documented non-interactive path. Config schema has `hooks.state.<key>.{enabled,trusted_hash}` but neither the key format nor the hash algorithm is documented | https://learn.chatgpt.com/docs/hooks ; https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/config.schema.json (first 100k chars) | [V] schema, [U] key/hash |
+| Consequence: under Codex the `rr guard` hook may not run in the container (fail-open); the boundary is the permission profile (loaded for the trusted project) + the container mounts (secret masks, ro protected paths). Needs an RR_CONTRACT test with a real image to confirm the hook fires | | [U] |
+| Probe: `rr run enforcement` reports `hook_only` unless the codex user config trusts the checkout; the runner refuses a render lacking `.claude/settings.json` (claude) or `.codex/hooks.json` + `.codex/config.toml` profile (codex) containing the rr guard / `default_permissions` markers | internal/autonomy, cmd/rr | n/a |
+| The guard in the container resolves ceilings from `/etc/riskrails/ceiling.yaml` and `$HOME/.config/riskrails/ceiling.yaml` (HOME=/tmp), cmd/rr/wire.go via policy.CeilingPaths; the runner mounts the raw bytes it resolved with there | policy/gitsrc.go | code |
+| Secrets: every checkout path matching secret_reads ∪ sandbox.no_read (ignored files included, `.git` skipped) is covered by an empty ro tmpfs (dir) or `/dev/null` (file) in the agent and close containers | | code |

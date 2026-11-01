@@ -29,7 +29,7 @@ type runFlowIn struct {
 // runFlow opens a runner task's journal before the agent and closes it on the host
 // after it (flow.Env with Actor autonomy, Via runner). The tree is read per call so
 // it is the one the agent leaves behind.
-var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) error, closeTask func(context.Context, string) error) {
+var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) (core.Weight, error), closeTask func(context.Context, string) error) {
 	env := func(ctx context.Context) (flow.Env, error) {
 		tree, err := policy.ListFiles(ctx, in.Root)
 		if err != nil {
@@ -38,17 +38,17 @@ var runFlow = func(in runFlowIn) (start func(context.Context, autonomy.Task) err
 		return flow.Env{Root: in.Root, StateRoot: in.StateRoot, Policy: in.Policy, Tree: tree,
 			Journal: journal.New(in.StateRoot), Home: in.Home}, nil
 	}
-	start = func(ctx context.Context, t autonomy.Task) error {
+	start = func(ctx context.Context, t autonomy.Task) (core.Weight, error) {
 		if len(t.Files) == 0 {
-			return fmt.Errorf("task %s declares no files: the scope guard in the container needs a scope (RR_SCOPE_FILE)", t.ID)
+			return core.Weight{}, fmt.Errorf("task %s declares no files: the scope guard in the container needs a scope (RR_SCOPE_FILE)", t.ID)
 		}
 		e, err := env(ctx)
 		if err != nil {
-			return err
+			return core.Weight{}, err
 		}
-		_, err = e.Start(ctx, flow.StartIn{ID: t.ID, Goal: t.Brief, Files: t.Files, Tiers: in.Tiers,
+		s, err := e.Start(ctx, flow.StartIn{ID: t.ID, Goal: t.Brief, Files: t.Files, Tiers: in.Tiers,
 			Actor: core.ActorAutonomy, Via: "runner"})
-		return err
+		return s.Weight, err
 	}
 	closeTask = func(ctx context.Context, id string) error {
 		e, err := env(ctx)
