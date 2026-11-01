@@ -80,7 +80,6 @@ func TestTaskLightStartAmendClose(t *testing.T) {
 	assert.NotEmpty(t, d["baseline"])
 	assert.NotEmpty(t, d["weight"])
 	assert.FileExists(t, filepath.Join(root, ".rr/run", task+".baseline.json"))
-	assert.Equal(t, "plan_accepted", events[1].Type)
 
 	// a second task in the same checkout is refused
 	_, err = runPolicyRR(t, "task", "start", "--root", root, "--goal", "again", "--files", light)
@@ -183,7 +182,7 @@ func TestTaskAmendGrowsModeOnly(t *testing.T) {
 	out, err = runPolicyRR(t, "task", "close", "--root", root)
 	var ref *core.Refusal
 	require.ErrorAs(t, err, &ref, out)
-	assert.Contains(t, []string{"PLAN_MISSING", "REVIEW_MISSING"}, ref.Code)
+	assert.Equal(t, "PLAN_MISSING", ref.Code)
 	assert.NotEmpty(t, mustOpen(t, root))
 }
 

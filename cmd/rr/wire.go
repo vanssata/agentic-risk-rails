@@ -130,8 +130,15 @@ func guardContext(ctx context.Context, root, runtime string) (core.GuardContext,
 	if gc.Level, err = flow.TightenLevel(gc.Level, os.LookupEnv); err != nil {
 		return core.GuardContext{}, err
 	}
-	if err := flow.CheckHalt(os.LookupEnv); err != nil {
+	if err := flow.CheckHalt(gc.Level, os.LookupEnv); err != nil {
 		return core.GuardContext{}, err
+	}
+	scope, armed, err := flow.ScopeFromEnv(r.root, r.files, gc.Level, os.LookupEnv)
+	if err != nil {
+		return core.GuardContext{}, err
+	}
+	if armed {
+		gc.StepFiles = scope
 	}
 	return gc, nil
 }

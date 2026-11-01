@@ -32,6 +32,7 @@ func TestHookEnvLevelOnlyTightens(t *testing.T) {
 		{"", 0, true}, {"L5", 0, true}, {"high", 0, true}, // set but invalid ⇒ deny
 	} {
 		t.Run(tc.val, func(t *testing.T) {
+			runnerEnv(t, `["`+light+`"]`)
 			t.Setenv("RR_LEVEL", tc.val)
 			gc, err := hookCtx(t, root)
 			if tc.err {
@@ -46,6 +47,7 @@ func TestHookEnvLevelOnlyTightens(t *testing.T) {
 	// the effect: ask becomes deny at L2+, and only there
 	ask := core.ToolCall{Tool: "Bash", Command: "git commit -m x"}
 	assert.Equal(t, core.Ask, check(context.Background(), ask, "claude").Decision)
+	runnerEnv(t, `["`+light+`"]`)
 	t.Setenv("RR_LEVEL", "L2")
 	assert.Equal(t, core.Deny, check(context.Background(), ask, "claude").Decision)
 	t.Setenv("RR_LEVEL", "bogus")
@@ -60,6 +62,65 @@ func shortSock(t *testing.T) string {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(d) })
 	return filepath.Join(d, "h.sock")
+}
+
+// runnerEnv is what the runner's container provides besides RR_LEVEL: a live halt
+// socket and a read-only scope file outside the checkout.
+func runnerEnv(t *testing.T, scopeJSON string) {
+	t.Helper()
+	sock := shortSock(t)
+	stop, err := (&autonomy.Halter{}).Serve(sock)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+	t.Setenv("RR_HALT_SOCK", sock)
+	sf := filepath.Join(t.TempDir(), "scope.json")
+	require.NoError(t, os.WriteFile(sf, []byte(scopeJSON), 0o444))
+	t.Setenv("RR_SCOPE_FILE", sf)
+}
+
+func TestHookRunnerLevelNeedsHaltSocketAndScope(t *testing.T) {
+	root := taskRepo(t)
+	edit := func(f string) core.ToolCall {
+		return core.ToolCall{Tool: "Write", Paths: []string{filepath.Join(root, f)}, Content: "<?php\n"}
+	}
+
+	t.Run("level without a halt socket", func(t *testing.T) {
+		t.Setenv("RR_LEVEL", "L2")
+		_, err := hookCtx(t, root)
+		require.ErrorContains(t, err, "RR_HALT_SOCK")
+	})
+	t.Run("level without a scope", func(t *testing.T) {
+		runnerEnv(t, `["`+light+`"]`)
+		require.NoError(t, os.Unsetenv("RR_SCOPE_FILE"))
+		t.Setenv("RR_LEVEL", "L2")
+		_, err := hookCtx(t, root)
+		require.ErrorContains(t, err, "RR_SCOPE_FILE")
+	})
+	t.Run("scope from the file arms the scope guard", func(t *testing.T) {
+		runnerEnv(t, `["`+light+`"]`)
+		t.Setenv("RR_LEVEL", "L2")
+		assert.Equal(t, core.Allow, check(context.Background(), edit(light), "claude").Decision)
+		v := check(context.Background(), edit("src/Controller/Other.php"), "claude")
+		assert.Equal(t, core.Deny, v.Decision)
+		assert.Equal(t, "scope_guard", v.Rule)
+	})
+	for name, body := range map[string]string{"not json": "{", "empty": "[]", "absolute": `["/etc/passwd"]`, "parent": `["../x"]`} {
+		t.Run("deny: "+name, func(t *testing.T) {
+			runnerEnv(t, body)
+			t.Setenv("RR_LEVEL", "L2")
+			_, err := hookCtx(t, root)
+			require.Error(t, err)
+		})
+	}
+	t.Run("deny: scope file inside the checkout", func(t *testing.T) {
+		runnerEnv(t, `["`+light+`"]`)
+		in := filepath.Join(root, "scope.json")
+		require.NoError(t, os.WriteFile(in, []byte(`["`+light+`"]`), 0o644))
+		t.Setenv("RR_SCOPE_FILE", in)
+		t.Setenv("RR_LEVEL", "L2")
+		_, err := hookCtx(t, root)
+		require.ErrorContains(t, err, "inside the checkout")
+	})
 }
 
 func TestHookHaltSocket(t *testing.T) {

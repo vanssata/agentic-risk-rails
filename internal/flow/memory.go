@@ -2,7 +2,6 @@ package flow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -44,7 +43,7 @@ func (e Env) Handoff(ctx context.Context, task string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tr, err := verify.LoadTrust(e.Root, task, events)
+	tr, err := verify.LoadTrust(e.state(), task, events)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +77,7 @@ func (e Env) Handoff(ctx context.Context, task string) (string, error) {
 		fmt.Fprintf(&b, "- %s\n", oneLine(c, 200))
 	}
 	fmt.Fprintf(&b, "\n```\n%s```\n\n## Last event\n\n- %s\n", stat, oneLine(lastEvent(events), 300))
-	dir := filepath.Join(journal.RunDir(e.Root), task)
+	dir := filepath.Join(journal.RunDir(e.state()), task)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -97,7 +96,7 @@ func lastEvent(events []core.Event) string {
 // budget tokens (4 bytes each).
 func (e Env) Recall(ctx context.Context, files []string, budget int) (string, error) {
 	var paths []string
-	for _, dir := range []string{journal.TasksDir(e.Root), journal.RunDir(e.Root)} {
+	for _, dir := range []string{journal.TasksDir(e.state()), journal.RunDir(e.state())} {
 		m, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 		paths = append(paths, m...)
 	}
@@ -145,8 +144,8 @@ func (e Env) Recall(ctx context.Context, files []string, budget int) (string, er
 		}
 	}
 	out := b.String()
-	if max := budget * 4; len(out) > max {
-		out = out[:max] + "\n(truncated to the token budget)\n"
+	if r := []rune(out); len(r) > budget*4 {
+		out = string(r[:budget*4]) + "\n(truncated to the token budget)\n"
 	}
 	return out, nil
 }
@@ -162,5 +161,3 @@ func touches(scope, files []string) bool {
 	}
 	return false
 }
-
-var _ = json.Marshal

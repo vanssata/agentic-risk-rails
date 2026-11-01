@@ -30,11 +30,14 @@ import (
 // resolved policy (resolved by the caller, so a resolve error never reaches here
 // as a default).
 type Env struct {
-	Root    string
-	Policy  core.EffectivePolicy
-	Tree    []string // git ls-files ∪ default branch tree
-	Journal core.Journal
-	Home    string // for transcript roots and cost
+	Root string // the checkout: git, tree, verify
+	// StateRoot holds the journal and .rr/run/<task>.baseline.json; empty = Root.
+	// The caller builds Journal with journal.New(StateRoot).
+	StateRoot string
+	Policy    core.EffectivePolicy
+	Tree      []string // git ls-files ∪ default branch tree
+	Journal   core.Journal
+	Home      string // for transcript roots and cost
 }
 
 // StartIn is the input of Start.
@@ -46,6 +49,16 @@ type StartIn struct {
 	Sessions int
 	Tiers    core.EffectiveTiers // from the committed lock; no BALANCED ⇒ NO_TIER
 	Actor    core.Actor
+	ID       string // empty = generated
+	Via      string // empty = "cli"
+}
+
+// state is where the journal and the baseline live.
+func (e Env) state() string {
+	if e.StateRoot != "" {
+		return e.StateRoot
+	}
+	return e.Root
 }
 
 // Started is the result of Start.
@@ -169,28 +182,29 @@ func (e Env) Start(ctx context.Context, in StartIn) (Started, error) {
 	if err != nil {
 		return Started{}, err
 	}
-	task := taskID(time.Now(), in.Goal)
-	if err := os.MkdirAll(journal.RunDir(e.Root), 0o755); err != nil {
+	task, via := in.ID, in.Via
+	if task == "" {
+		task = taskID(time.Now(), in.Goal)
+	}
+	if via == "" {
+		via = "cli"
+	}
+	if err := os.MkdirAll(journal.RunDir(e.state()), 0o755); err != nil {
 		return Started{}, err
 	}
-	bpath := filepath.Join(journal.RunDir(e.Root), task+".baseline.json")
+	bpath := filepath.Join(journal.RunDir(e.state()), task+".baseline.json")
 	if err := writeNew(bpath, manifest); err != nil {
 		return Started{}, err
 	}
 	raw, err := json.Marshal(map[string]any{"goal": in.Goal, "scope": scope, "base_sha": base, "baseline": sum, "mode": w.Mode,
 		"weight": w, "declared": in.Declared, "level": level, "level_reason": why, "ceiling_sha": e.Policy.CeilingSHA})
 	if err == nil {
-		_, err = e.Journal.Append(ctx, core.Event{Schema: 1, Type: "task_started", Task: task, Actor: in.Actor, Via: "cli",
+		_, err = e.Journal.Append(ctx, core.Event{Schema: 1, Type: "task_started", Task: task, Actor: in.Actor, Via: via,
 			PolicySHA: e.Policy.PolicySHA, TiersEffective: in.Tiers.Models, Data: raw})
 	}
 	if err != nil {
 		_ = os.Remove(bpath)
 		return Started{}, err
-	}
-	if w.Mode == core.ModeLight { // light has an inline plan: the task's own goal
-		if err := e.append(ctx, task, "plan_accepted", in.Actor, map[string]any{"by": in.Actor, "plan": "inline"}); err != nil {
-			return Started{}, err
-		}
 	}
 	return Started{Task: task, Weight: w, Level: level}, nil
 }
@@ -297,7 +311,7 @@ func (e Env) Amend(ctx context.Context, task string, declared map[core.Axis]int,
 	if err != nil {
 		return core.Weight{}, err
 	}
-	tr, err := verify.LoadTrust(e.Root, task, events)
+	tr, err := verify.LoadTrust(e.state(), task, events)
 	if err != nil {
 		return core.Weight{}, err
 	}
@@ -326,15 +340,6 @@ type CloseIn struct {
 	Session *ledger.SessionData  // optional transcript of this task's session
 }
 
-// Cost is the task_closed.cost summary.
-type Cost struct {
-	USD      float64 `json:"usd"`
-	Input    int64   `json:"input"`
-	Output   int64   `json:"output"`
-	Unpriced int     `json:"unpriced,omitempty"`
-	Error    string  `json:"error,omitempty"`
-}
-
 func (e Env) refuse(ctx context.Context, task string, actor core.Actor, code, detail string) error {
 	r := &core.Refusal{Code: code, Detail: detail}
 	if err := e.append(ctx, task, "refused", actor, map[string]any{"code": code, "detail": detail}); err != nil {
@@ -350,7 +355,7 @@ func (e Env) Close(ctx context.Context, in CloseIn) error {
 	if err != nil {
 		return err
 	}
-	tr, err := verify.LoadTrust(e.Root, in.Task, events)
+	tr, err := verify.LoadTrust(e.state(), in.Task, events)
 	if err != nil {
 		return err
 	}
@@ -405,6 +410,15 @@ func (e Env) process(ctx context.Context, task string, actor core.Actor, mode co
 	last := ""
 	for _, ev := range events {
 		has[ev.Type] = true
+		if ev.Type == "plan_accepted" {
+			var d struct {
+				Plan string `json:"plan"`
+			}
+			_ = json.Unmarshal(ev.Data, &d)
+			if d.Plan != "inline" { // an inline plan never satisfies a heavier mode
+				has["plan_written"] = true
+			}
+		}
 		if ev.Type == "review_verdict" {
 			var d struct {
 				Verdict string `json:"verdict"`
@@ -413,7 +427,12 @@ func (e Env) process(ctx context.Context, task string, actor core.Actor, mode co
 			last = d.Verdict
 		}
 	}
-	if mode == core.ModeLight {
+	if mode == core.ModeLight { // light: the goal is the plan and there is no review stage; both recorded so the required events hold
+		if !has["plan_accepted"] {
+			if err := e.append(ctx, task, "plan_accepted", actor, map[string]any{"by": actor, "plan": "inline"}); err != nil {
+				return nil, err
+			}
+		}
 		if !has["review_verdict"] {
 			last = "SKIPPED"
 			if err := e.append(ctx, task, "review_verdict", actor, map[string]any{"verdict": last, "reason": "light mode has no review stage"}); err != nil {
@@ -422,7 +441,7 @@ func (e Env) process(ctx context.Context, task string, actor core.Actor, mode co
 		}
 		return map[string]any{"last": last}, nil
 	}
-	if !has["plan_accepted"] {
+	if !has["plan_written"] {
 		return nil, e.refuse(ctx, task, actor, "PLAN_MISSING", "mode "+string(mode)+" needs an accepted plan (rr task accept)")
 	}
 	if last != "PASS" {
@@ -438,27 +457,20 @@ func (e Env) recordSession(ctx context.Context, task string, actor core.Actor, s
 	if err != nil {
 		return err
 	}
-	if _, err := ledger.Collect([]core.Event{{Type: ledger.EventSession, Data: raw}}, ledger.TranscriptRoots(e.Home, e.Root)); err != nil {
+	if _, err := ledger.Collect([]core.Event{{Type: ledger.EventSession, Data: raw}}, ledger.TranscriptRoots(e.Home, e.state())); err != nil {
 		return err
 	}
 	return e.append(ctx, task, ledger.EventSession, actor, s)
 }
 
-func (e Env) cost(events []core.Event) Cost {
-	items, err := ledger.Collect(events, ledger.TranscriptRoots(e.Home, e.Root))
+func (e Env) cost(events []core.Event) map[string]any {
+	items, err := ledger.Collect(events, ledger.TranscriptRoots(e.Home, e.state()))
 	if err != nil {
-		return Cost{Error: err.Error()}
+		return map[string]any{"error": err.Error()}
 	}
 	prices, err := ledger.DefaultPrices()
 	if err != nil {
-		return Cost{Error: err.Error()}
+		return map[string]any{"error": err.Error()}
 	}
-	var c Cost
-	for _, r := range ledger.Group(items, prices, "phase") {
-		c.USD += r.USD
-		c.Input += r.Input
-		c.Output += r.Output
-		c.Unpriced += r.Unpriced
-	}
-	return c
+	return map[string]any{"by_phase": ledger.Group(items, prices, "phase")}
 }

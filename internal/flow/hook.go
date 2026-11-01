@@ -2,9 +2,11 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/autonomy"
@@ -30,12 +32,19 @@ func TaskHook(ctx context.Context, root string, tree []string) (h Hook, ok bool,
 	if err != nil {
 		return Hook{}, false, err
 	}
+	if err := orphanBaselines(root, open); err != nil {
+		return Hook{}, false, err
+	}
 	switch len(open) {
 	case 0:
 		return Hook{}, false, nil
 	case 1:
 	default:
 		return Hook{}, false, fmt.Errorf("%d tasks in flight in one checkout", len(open))
+	}
+	// A rewritten scope breaks the chain; the doctor reports the same.
+	if err := journal.Verify(filepath.Join(journal.RunDir(root), open[0]+".jsonl")); err != nil {
+		return Hook{}, false, err
 	}
 	events, err := j.Events(ctx, open[0])
 	if err != nil {
@@ -52,11 +61,28 @@ func TaskHook(ctx context.Context, root string, tree []string) (h Hook, ok bool,
 	return Hook{Task: open[0], Level: *d.Level, StepFiles: Expand(d.Scope, tree)}, true, nil
 }
 
+// orphanBaselines fails when a baseline manifest in .rr/run has no journal, open
+// or archived: a deleted journal must not silently disarm the scope guard.
+func orphanBaselines(root string, open []string) error {
+	m, _ := filepath.Glob(filepath.Join(journal.RunDir(root), "*.baseline.json"))
+	for _, p := range m {
+		task := strings.TrimSuffix(filepath.Base(p), ".baseline.json")
+		if slices.Contains(open, task) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(journal.TasksDir(root), task+".jsonl")); err != nil {
+			return fmt.Errorf("task %s: baseline without a journal (deleted or moved)", task)
+		}
+	}
+	return nil
+}
+
 // Env variables the runner (W4-B) sets in the container; they can only tighten.
 const (
 	EnvLevel    = "RR_LEVEL"
 	EnvHaltSock = "RR_HALT_SOCK"
 	EnvInForce  = "RR_POLICY_IN_FORCE"
+	EnvScope    = "RR_SCOPE_FILE"
 )
 
 // TightenLevel applies RR_LEVEL: a level ≥ L2 turns ask into deny; anything
@@ -79,9 +105,12 @@ func TightenLevel(cur core.Level, getenv func(string) (string, bool)) (core.Leve
 // CheckHalt asks the runner's halt socket (RR_HALT_SOCK, protocol of
 // autonomy.Halter.Serve: one line "ok" or "halt <reason>" per connection). An
 // unreachable socket or any answer but "ok" is an error: deny.
-func CheckHalt(getenv func(string) (string, bool)) error {
+func CheckHalt(level core.Level, getenv func(string) (string, bool)) error {
 	p, set := getenv(EnvHaltSock)
 	if !set {
+		if level >= core.L2 {
+			return fmt.Errorf("level %s without %s: the runner cannot halt this session", level, EnvHaltSock)
+		}
 		return nil
 	}
 	if p == "" {
@@ -104,30 +133,70 @@ func InForceFromEnv(root string, getenv func(string) (string, bool)) (*core.Laye
 	if !set {
 		return nil, nil
 	}
-	if !filepath.IsAbs(p) {
-		return nil, fmt.Errorf("%s: %q is not an absolute path", EnvInForce, p)
-	}
-	real, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvInForce, err)
-	}
-	rootReal, err := filepath.EvalSymlinks(root)
+	raw, err := readOutside(root, EnvInForce, p)
 	if err != nil {
 		return nil, err
-	}
-	if rel, err := filepath.Rel(rootReal, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("%s: %s is inside the checkout", EnvInForce, p)
-	}
-	raw, err := os.ReadFile(real)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvInForce, err)
-	}
-	if len(raw) > maxPolicyBytes {
-		return nil, fmt.Errorf("%s: over %d bytes", EnvInForce, maxPolicyBytes)
 	}
 	pol, err := policy.Load(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", EnvInForce, err)
 	}
 	return &core.Layer{Policy: pol, Raw: raw, Source: "env:" + EnvInForce}, nil
+}
+
+// readOutside reads a runner-provided file: absolute, and outside root even after
+// symlinks (inside the checkout the agent could have written it).
+func readOutside(root, name, p string) ([]byte, error) {
+	if !filepath.IsAbs(p) {
+		return nil, fmt.Errorf("%s: %q is not an absolute path", name, p)
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+	if rel, err := filepath.Rel(rootReal, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%s: %s is inside the checkout", name, p)
+	}
+	raw, err := os.ReadFile(real)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	if len(raw) > maxPolicyBytes {
+		return nil, fmt.Errorf("%s: over %d bytes", name, maxPolicyBytes)
+	}
+	return raw, nil
+}
+
+// ScopeFromEnv is the scope of an unattended task: the runner does not write a
+// journal into the container, so RR_SCOPE_FILE (a read-only JSON array of files
+// outside the checkout) arms the scope guard. Required from level L2 up; an
+// invalid or empty file is an error.
+func ScopeFromEnv(root string, tree []string, level core.Level, getenv func(string) (string, bool)) ([]string, bool, error) {
+	p, set := getenv(EnvScope)
+	if !set {
+		if level >= core.L2 {
+			return nil, false, fmt.Errorf("level %s without %s: no scope for the task", level, EnvScope)
+		}
+		return nil, false, nil
+	}
+	raw, err := readOutside(root, EnvScope, p)
+	if err != nil {
+		return nil, false, err
+	}
+	var files []string
+	if err := json.Unmarshal(raw, &files); err != nil {
+		return nil, false, fmt.Errorf("%s: %w", EnvScope, err)
+	}
+	scope, err := cleanScope(files)
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", EnvScope, err)
+	}
+	if len(scope) == 0 {
+		return nil, false, fmt.Errorf("%s: empty scope", EnvScope)
+	}
+	return Expand(scope, tree), true, nil
 }

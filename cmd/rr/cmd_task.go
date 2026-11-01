@@ -30,7 +30,8 @@ func flowEnv(ctx context.Context, root string) (flow.Env, resolved, error) {
 
 // notAgent refuses the human gates (close, accept, review) when the process looks like
 // an agent's shell: CLAUDECODE is set by Claude Code in the Bash tool [U], RR_LEVEL by
-// the runner's container. The real boundary is the sandbox; this stops the obvious self-approval.
+// the runner's container. This is a second layer: the boundary is core.AlwaysDeniedCommands
+// ("rr task*" is denied to the agent by the guard) plus the sandbox.
 func notAgent() error {
 	for _, k := range []string{"CLAUDECODE", flow.EnvLevel} {
 		if os.Getenv(k) != "" {
