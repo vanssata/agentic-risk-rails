@@ -84,3 +84,18 @@ func TestRunEnforcementProbePrintsALevel(t *testing.T) {
 	_, err = runRR("run", "enforcement", "--runtime", "nope")
 	assert.Error(t, err)
 }
+
+func TestEnforcementProbeIsFunctionalNotLookPath(t *testing.T) {
+	restore := policy.SetCeilingPaths(filepath.Join(t.TempDir(), "none"), filepath.Join(t.TempDir(), "none"))
+	defer restore()
+	repo := testutil.CopyFixture(t, "php-symfony")
+	t.Setenv("RR_POLICY_IN_FORCE", filepath.Join(t.TempDir(), "p.yaml"))
+	out, err := runRR("run", "enforcement", "--runtime", "claude", "--root", repo)
+	require.NoError(t, err)
+	assert.Equal(t, "sandbox", strings.TrimSpace(out), "the real guard denies both known-bad calls inside the runner container")
+
+	t.Setenv("RR_POLICY_IN_FORCE", "")
+	out, err = runRR("run", "enforcement", "--runtime", "claude", "--root", repo)
+	require.NoError(t, err)
+	assert.Equal(t, "hook_only", strings.TrimSpace(out), "not the runner's container")
+}

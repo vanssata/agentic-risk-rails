@@ -187,3 +187,46 @@ func TestParseCodexJSON(t *testing.T) {
 	assert.Equal(t, core.StatusBlocked, parseReport("codex", ok+`{"type":"turn.failed","error":{"message":"x"}}`, "", nil).Status)
 	assert.Equal(t, core.StatusBlocked, parseReport("codex", ok, "boom", assert.AnError).Status)
 }
+
+func TestExecAndCommandArgvCarryNoSocketKeysOrScope(t *testing.T) {
+	root := repo(t)
+	t.Setenv("ANTHROPIC_API_KEY", "k")
+	d := DockerRunner{Image: testImage, Runtime: "claude", Root: root, PolicyFile: policyFile(t), Sock: "/state/halt.sock",
+		ScopeFile: policyFile(t), ProxyURL: "http://p:3128"}
+	cmdArgs, err := d.CommandArgv("rr", "x")
+	require.NoError(t, err)
+	log := filepath.Join(t.TempDir(), "args")
+	testutil.FakeBin(t, "docker", `echo "$@" >> `+log)
+	_, err = d.Exec(t.Context(), "rr", "run", "enforcement")
+	require.NoError(t, err)
+	b, _ := os.ReadFile(log)
+	for name, j := range map[string]string{"CommandArgv": strings.Join(cmdArgs, " "), "Exec": string(b)} {
+		assert.NotContains(t, j, "halt.sock", name+": the socket does not exist before Serve")
+		assert.NotContains(t, j, "RR_HALT_SOCK", name)
+		assert.NotContains(t, j, "API_KEY", name)
+		assert.NotContains(t, j, "scope.json", name)
+		assert.Contains(t, j, "--network none", name)
+		assert.Contains(t, j, "RR_POLICY_IN_FORCE", name)
+	}
+}
+
+func TestAgentGetsOnlyItsRuntimeKeyAndScopeReadOnly(t *testing.T) {
+	root := repo(t)
+	scope := policyFile(t)
+	for rt, want := range map[string]string{"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"} {
+		d := DockerRunner{Image: testImage, Runtime: rt, Root: root, PolicyFile: policyFile(t), ScopeFile: scope, Sock: "/s/halt.sock"}
+		args, err := d.argv(root, "n", "rr-int-x", true, nil)
+		require.NoError(t, err)
+		j := " " + strings.Join(args, " ") + " "
+		assert.Contains(t, j, " -e "+want+" ")
+		assert.Equal(t, 1, strings.Count(j, "API_KEY"), rt)
+		assert.Contains(t, j, "src="+scope+",dst=/run/rr/scope.json,readonly ")
+		assert.Contains(t, j, " -e RR_SCOPE_FILE=/run/rr/scope.json ")
+		assert.Contains(t, j, "dst=/run/rr/halt.sock")
+	}
+	inside := filepath.Join(root, ".rr", "scope.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(inside), 0o755))
+	require.NoError(t, os.WriteFile(inside, []byte("[]"), 0o600))
+	_, err := DockerRunner{Image: testImage, Root: root, PolicyFile: policyFile(t), ScopeFile: inside}.argv(root, "n", "none", true, nil)
+	assert.Error(t, err, "scope file inside the checkout is agent-writable")
+}

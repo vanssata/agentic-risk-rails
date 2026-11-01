@@ -18,10 +18,11 @@ import (
 // docker network (no gateway) with nothing but a Squid CONNECT allowlist; only
 // the proxy also sits on a network with a way out. See docs/research/verified/runner.md.
 type Egress struct {
-	Bin   string   // default "docker"
-	Image string   // squid image pinned by digest; must be present locally
-	Hosts []string // runtime API hosts ∪ enforcement.egress.allow
-	Dir   string   // runner-owned directory for squid.conf (outside the checkout)
+	Bin   string       // default "docker"
+	Image string       // squid image pinned by digest; must be present locally
+	Hosts []string     // runtime API hosts ∪ enforcement.egress.allow
+	Dir   string       // runner-owned directory for squid.conf (outside the checkout)
+	Warn  func(string) // cleanup failures; nil = dropped
 }
 
 // EgressNet is a running proxy. Down removes it and both networks.
@@ -42,14 +43,18 @@ func RuntimeHosts(runtime string) []string {
 	return nil
 }
 
-var hostRe = regexp.MustCompile(`^\.?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+// hostRe: exact DNS names of two or more labels. A leading dot (subdomain
+// wildcard) is refused: `.github.io` or `.co.uk` would allow every tenant of a
+// public suffix. A numeric last label rejects IPv4 literals. ASSUMPTION: list exact hosts.
+var hostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+var numericTLD = regexp.MustCompile(`\.[0-9]+$`)
 
 // squidConf allows CONNECT to port 443 of the listed hosts and nothing else.
 func squidConf(hosts []string) (string, error) {
 	set := map[string]bool{}
 	for _, h := range hosts {
 		h = strings.ToLower(strings.TrimSpace(h))
-		if !hostRe.MatchString(h) {
+		if !hostRe.MatchString(h) || numericTLD.MatchString(h) {
 			return "", fmt.Errorf("egress: %q is not a plain host name", h)
 		}
 		set[h] = true
@@ -62,7 +67,9 @@ func squidConf(hosts []string) (string, error) {
 		list = append(list, h)
 	}
 	sort.Strings(list)
-	return "http_port 3128\nacl allowed dstdomain " + strings.Join(list, " ") + "\nacl SSL_ports port 443\nacl CONNECT method CONNECT\n" +
+	// IP literals are denied first: dstdomain would reverse-resolve the IP, and a PTR
+	// record is attacker-controlled. [U] not run against a real squid.
+	return "http_port 3128\nacl ipliteral dstdom_regex ^[0-9.x]+$ ^\\[?[0-9a-f]*:[0-9a-f:.]*\\]?$\nhttp_access deny ipliteral\nacl allowed dstdomain " + strings.Join(list, " ") + "\nacl SSL_ports port 443\nacl CONNECT method CONNECT\n" +
 		"http_access allow CONNECT SSL_ports allowed\nhttp_access deny all\naccess_log none\ncache deny all\n", nil
 }
 
@@ -105,8 +112,11 @@ func (e Egress) Up(ctx context.Context) (_ *EgressNet, err error) {
 	down := func() { // runs on every exit, also after the run's context was cancelled
 		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		_ = e.docker(c, "rm", "-f", proxy)
-		_ = e.docker(c, "network", "rm", in, out)
+		for _, a := range [][]string{{"rm", "-f", proxy}, {"network", "rm", in, out}} {
+			if err := e.docker(c, a...); err != nil && e.Warn != nil {
+				e.Warn("egress cleanup: " + err.Error())
+			}
+		}
 		_ = os.Remove(confPath)
 	}
 	defer func() {

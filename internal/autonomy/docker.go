@@ -38,9 +38,13 @@ type DockerRunner struct {
 	// PolicyFile is the policy in force (riskrails.yaml from the default branch), a file
 	// OUTSIDE the checkout, mounted read-only; the hook reads it via RR_POLICY_IN_FORCE.
 	PolicyFile string
-	Level      core.Level
-	Models     map[core.Tier]string
-	Timeout    time.Duration // 0 = 90 minutes
+	// ScopeFile is the task's file list (JSON array), outside the checkout, mounted
+	// read-only for the agent container (RR_SCOPE_FILE). "" = none.
+	ScopeFile string
+	noKeys    bool // Exec/CommandArgv: no API keys, no halt socket, no scope file
+	Level     core.Level
+	Models    map[core.Tier]string
+	Timeout   time.Duration // 0 = 90 minutes
 }
 
 var (
@@ -53,6 +57,7 @@ const (
 	sockPath = "/run/rr/halt.sock"
 	// PolicyPath is where PolicyFile appears in the container.
 	policyPath = "/run/rr/policy.yaml"
+	scopePath  = "/run/rr/scope.json"
 	readOnly   = "riskrails.yaml .git .github"
 )
 
@@ -72,12 +77,9 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if d.PolicyFile == "" {
 		return nil, fmt.Errorf("docker runner: no policy in force to mount (RR_POLICY_IN_FORCE)")
 	}
-	pol, err := filepath.Abs(d.PolicyFile)
+	pol, err := outsideRoot(abs, d.PolicyFile)
 	if err != nil {
 		return nil, err
-	}
-	if inside, err := within(abs, filepath.Dir(pol)); err != nil || inside {
-		return nil, fmt.Errorf("docker runner: policy file %q must be outside the checkout (err: %v)", pol, err) //nolint:errorlint // err may be nil
 	}
 	if err := requireRealGitDir(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
@@ -86,7 +88,8 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		"--tmpfs", "/tmp", "-e", "HOME=/tmp", "-w", workDir,
-		"-e", "RR_LEVEL=" + d.Level.String(), "-e", "ANTHROPIC_API_KEY", "-e", "OPENAI_API_KEY"}
+		"-e", "RR_LEVEL=" + d.Level.String()}
+	args = append(args, d.envArgs(network)...)
 	if stdin {
 		args = append(args, "-i")
 	}
@@ -110,11 +113,12 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		return nil, fmt.Errorf("docker runner: path %q contains a comma", pol)
 	}
 	args = append(args, "--mount", "type=bind,src="+pol+",dst="+policyPath+",readonly", "-e", "RR_POLICY_IN_FORCE="+policyPath)
-	if d.ProxyURL != "" && network != "none" {
-		for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
-			args = append(args, "-e", k+"="+d.ProxyURL)
+	if d.ScopeFile != "" {
+		scope, err := outsideRoot(abs, d.ScopeFile)
+		if err != nil {
+			return nil, err
 		}
-		args = append(args, "-e", "NO_PROXY=localhost,127.0.0.1", "-e", "no_proxy=localhost,127.0.0.1", "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+		args = append(args, "--mount", "type=bind,src="+scope+",dst="+scopePath+",readonly", "-e", "RR_SCOPE_FILE="+scopePath)
 	}
 	if d.Sock != "" {
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
@@ -122,10 +126,50 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	return append(append(args, d.Image), cmd...), nil
 }
 
+// outsideRoot returns the absolute path of a runner-owned file that must not be
+// inside the (agent-writable) checkout and must be mountable.
+func outsideRoot(root, file string) (string, error) {
+	p, err := filepath.Abs(file)
+	if err != nil {
+		return "", err
+	}
+	if inside, err := within(root, filepath.Dir(p)); err != nil || inside {
+		return "", fmt.Errorf("docker runner: %q must be outside the checkout (err: %v)", p, err) //nolint:errorlint // err may be nil
+	}
+	return p, nil
+}
+
+// envArgs: only the API key of the runtime that runs (none for Exec/CommandArgv),
+// and the proxy settings when the container has a network.
+func (d DockerRunner) envArgs(network string) (args []string) {
+	if !d.noKeys {
+		switch d.Runtime {
+		case "claude":
+			args = append(args, "-e", "ANTHROPIC_API_KEY")
+		case "codex":
+			args = append(args, "-e", "OPENAI_API_KEY")
+		}
+	}
+	if d.ProxyURL != "" && network != "none" {
+		for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+			args = append(args, "-e", k+"="+d.ProxyURL)
+		}
+		args = append(args, "-e", "NO_PROXY=localhost,127.0.0.1", "-e", "no_proxy=localhost,127.0.0.1", "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+	}
+	return args
+}
+
+// offline is the same sandbox for commands that are not the agent: no halt
+// socket (it does not exist before Serve), no scope file, no API keys.
+func (d DockerRunner) offline() DockerRunner {
+	d.Sock, d.ScopeFile, d.noKeys = "", "", true
+	return d
+}
+
 // Exec runs cmd in the same sandbox (no network) and returns its stdout.
 func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
 	name := "rr-close-" + randHex()
-	args, err := d.argv(d.Root, name, "none", false, cmd)
+	args, err := d.offline().argv(d.Root, name, "none", false, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +194,7 @@ func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
 // CommandArgv is the argv (after the docker binary) that runs cmd in the same
 // sandbox, for the close run (errata #26): W4-A hands it to verify as its runner.
 func (d DockerRunner) CommandArgv(cmd ...string) ([]string, error) {
-	return d.argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
+	return d.offline().argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
 }
 
 func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {

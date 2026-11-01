@@ -23,6 +23,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 	"github.com/vanssata/agentic-risk-rails/internal/runtimes"
 	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
+	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
 
 // runHosting builds the hosting client for the repo (reads the pinned `remote`
@@ -73,8 +74,20 @@ func init() {
 	})
 }
 
-// enforcementCmd prints what enforces in THIS environment; the runner calls it
-// inside the agent's image (DES §8.2), so the answer is the image's, not the host's.
+// probeCalls are known-bad tool calls the real guard must deny (errata #42).
+func probeCalls(runtime, root string) []core.ToolCall {
+	yaml := filepath.Join(root, "riskrails.yaml")
+	return []core.ToolCall{
+		{Runtime: runtime, Tool: "Bash", Command: "rr task close", Cwd: root},
+		{Runtime: runtime, Tool: "Write", Paths: []string{yaml}, Content: "x", Cwd: root,
+			Edits: []core.FileEdit{{Path: yaml, Content: "x"}}},
+	}
+}
+
+// enforcementCmd is the functional probe the runner executes inside the agent's
+// image (errata #42): in the runner's container the container is the sandbox, so
+// it prints `sandbox` only if RR_POLICY_IN_FORCE marks that container and the real
+// guard denies every known-bad call; anything else prints `hook_only`. No LookPath.
 func enforcementCmd() *cobra.Command {
 	var runtime, root string
 	c := &cobra.Command{
@@ -82,13 +95,17 @@ func enforcementCmd() *cobra.Command {
 		Short: "Print the enforcement level of this environment (run inside the agent image)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			rt, ok := runtimes.Lookup(runtime)
-			if !ok {
+			if _, ok := runtimes.Lookup(runtime); !ok {
 				return fmt.Errorf("unknown runtime %q", runtime)
 			}
-			enf, err := rt.Enforcement(cmd.Context(), root)
-			if err != nil {
-				return err
+			enf := core.EnforcementSandbox
+			if os.Getenv("RR_POLICY_IN_FORCE") == "" {
+				enf = core.EnforcementHookOnly
+			}
+			for _, call := range probeCalls(runtime, root) {
+				if check(cmd.Context(), call, runtime).Decision != core.Deny {
+					enf = core.EnforcementHookOnly
+				}
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), enf)
 			return nil
@@ -155,11 +172,17 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		return fmt.Errorf("--proxy-image is required: the agent reaches the runtime API only through the egress proxy, there is no open-network fallback")
 	}
 	sock := filepath.Join(state, "halt.sock")
-	return autonomy.Egress{Image: proxyImage, Dir: state,
+	return autonomy.Egress{Image: proxyImage, Dir: state, Warn: func(m string) { fmt.Fprintln(cmd.ErrOrStderr(), "warning:", m) },
 		Hosts: append(autonomy.RuntimeHosts(runtime), probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
-			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), Level: lvl, Models: tiers[runtime].Models}
-		r := &autonomy.Runner{Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
+			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
+		sandbox := func(argv []string) ([]string, error) {
+			a, err := worker.CommandArgv(argv...)
+			return append([]string{"docker"}, a...), err
+		}
+		start, closeTask := runFlow(root, state)
+		r := &autonomy.Runner{Start: start,
+			Close: func(ctx context.Context, id string) error { return closeTask(verify.WithSandbox(ctx, sandbox), id) }, Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
 			DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
 			Worker: worker, Exec: worker.Exec, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
 		out, err := r.Run(ctx, tasks)

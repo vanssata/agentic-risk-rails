@@ -31,6 +31,7 @@ type Task struct {
 	Irreversible bool      `yaml:"irreversible"`
 	Tier         core.Tier `yaml:"tier"` // default BALANCED
 	MaxTurns     int       `yaml:"max_turns"`
+	Files        []string  `yaml:"files"` // declared scope; handed to the agent's hook read-only
 }
 
 // Outcome is what happened to one queue item.
@@ -68,6 +69,11 @@ type Runner struct {
 	// (errata #26, wave 4). nil = host Runtime.Enforcement and no close run (tests).
 	Exec     func(ctx context.Context, cmd ...string) ([]byte, error)
 	WallUnit time.Duration // unit of max_wall_minutes; 0 = time.Minute (tests shrink it)
+	// Start opens the task's journal (flow.Env.Start, Actor autonomy, state outside the
+	// checkout); Close is the host-side close (flow.Env.Close with verify.WithSandbox).
+	// nil = not wired (tests).
+	Start func(ctx context.Context, t Task) error
+	Close func(ctx context.Context, id string) error
 
 	eff     core.EffectivePolicy
 	inForce []byte // riskrails.yaml read from the default branch at the tip the run started from
@@ -443,13 +449,9 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, err
 	}
 
-	if moved, err := r.checkBase(ctx); err != nil {
-		return o, r.halted(ctx, err.Error())
-	} else if moved {
-		o.Status = "blocked"
-		return o, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
+	if o, stop, err := r.gateTask(ctx, o, t); stop {
+		return o, err
 	}
-
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
@@ -515,14 +517,54 @@ func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Co
 	return context.WithTimeout(agentCtx, time.Duration(*minutes)*unit)
 }
 
-// closeRun runs the close verification in the sandbox (errata #26); "" = passed or not wired.
+// gateTask runs before the agent: the base must still be the remote tip, then the
+// task journal and scope file. stop = the task does not run (err may be nil: blocked).
+func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, bool, error) {
+	moved, err := r.checkBase(ctx)
+	if err != nil {
+		return o, true, r.halted(ctx, err.Error())
+	}
+	if moved {
+		o.Status = "blocked"
+		return o, true, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
+	}
+	if err := r.startTask(ctx, t); err != nil {
+		return o, true, r.refuse(ctx, "TASK_START", err.Error())
+	}
+	return o, false, nil
+}
+
+// ScopeFileName is the task's file list the runner writes into StateDir.
+const ScopeFileName = "scope.json"
+
+// startTask writes the scope file the container mounts read-only (errata #41),
+// then opens the task journal outside the checkout.
+func (r *Runner) startTask(ctx context.Context, t Task) error {
+	files := t.Files
+	if files == nil {
+		files = []string{}
+	}
+	b, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(r.StateDir, ScopeFileName), b, 0o600); err != nil {
+		return err
+	}
+	if r.Start == nil {
+		return nil
+	}
+	return r.Start(ctx, t)
+}
+
+// closeRun is the host-side close of the task (adapters run in a fresh sandbox
+// container, errata #41); "" = passed or not wired.
 func (r *Runner) closeRun(ctx context.Context, id string) string {
-	if r.Exec == nil {
+	if r.Close == nil {
 		return ""
 	}
-	out, err := r.Exec(ctx, "rr", "verify", "--task", id, "--close")
-	if err != nil {
-		return "close run in the container failed: " + firstLine(strings.TrimSpace(string(out))+" "+err.Error())
+	if err := r.Close(ctx, id); err != nil {
+		return "close failed: " + firstLine(err.Error())
 	}
 	return ""
 }

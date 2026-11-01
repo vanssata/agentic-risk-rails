@@ -8,12 +8,23 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/vanssata/agentic-risk-rails/internal/autonomy"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	hostgh "github.com/vanssata/agentic-risk-rails/internal/hosting/github"
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 )
 
 func init() { runHosting = ceilingHosting }
+
+// runFlow opens a runner task's journal and closes it on the host (errata #41:
+// state under stateRoot, outside the checkout; Actor autonomy). The body is
+// replaced by flow.Env.Start/Close when internal/flow is merged (W4-A); until
+// then it fails closed, so no task runs without a journal and a host-side close.
+var runFlow = func(root, stateRoot string) (start func(context.Context, autonomy.Task) error, closeTask func(context.Context, string) error) {
+	errNoFlow := fmt.Errorf("internal/flow is not linked: no task journal / host-side close for %s (state %s)", root, stateRoot)
+	return func(context.Context, autonomy.Task) error { return errNoFlow },
+		func(context.Context, string) error { return errNoFlow }
+}
 
 func ceilingHosting(context.Context, string) (core.Hosting, error) {
 	ent, user, err := policy.LoadCeilings()

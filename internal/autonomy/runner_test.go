@@ -438,16 +438,16 @@ func TestEnforcementIsMeasuredInTheImage(t *testing.T) {
 	var calls [][]string
 	e.r.Exec = func(_ context.Context, cmd ...string) ([]byte, error) {
 		calls = append(calls, cmd)
-		if cmd[1] == "run" {
-			return []byte(string(core.EnforcementSandbox) + "\n"), nil
-		}
-		return nil, nil
+		return []byte(string(core.EnforcementSandbox) + "\n"), nil
 	}
+	var closed []string
+	e.r.Close = func(_ context.Context, id string) error { closed = append(closed, id); return nil }
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
 	assert.Equal(t, "pr", out[0].Status)
 	assert.Equal(t, []string{"rr", "run", "enforcement", "--runtime", "claude"}, calls[0])
-	assert.Equal(t, []string{"rr", "verify", "--task", "t1", "--close"}, calls[1], "close run in the container")
+	assert.Len(t, calls, 1, "no verify in the agent's container any more")
+	assert.Equal(t, []string{"t1"}, closed, "host-side close")
 
 	for name, exec := range map[string]func(context.Context, ...string) ([]byte, error){
 		"hook_only": func(context.Context, ...string) ([]byte, error) { return []byte("hook_only"), nil },
@@ -462,14 +462,9 @@ func TestEnforcementIsMeasuredInTheImage(t *testing.T) {
 	}
 }
 
-func TestFailedCloseRunInContainerBlocksBeforePush(t *testing.T) {
+func TestFailedCloseBlocksBeforePush(t *testing.T) {
 	e := newEnv(t)
-	e.r.Exec = func(_ context.Context, cmd ...string) ([]byte, error) {
-		if cmd[1] == "verify" {
-			return []byte("1 failed"), errors.New("exit 1")
-		}
-		return []byte(string(core.EnforcementSandbox)), nil
-	}
+	e.r.Close = func(context.Context, string) error { return errors.New("1 failed") }
 	out, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
 	require.NoError(t, err)
 	assert.Equal(t, "blocked", out[0].Status)
@@ -482,4 +477,20 @@ func (e *env) syncTip(t *testing.T) {
 	e.host.set(head+":riskrails.yaml", []byte("schema: 1\n"))
 	e.host.moveTip(head)
 	e.head = head
+}
+
+func TestStartTaskWritesScopeFileAndOpensJournal(t *testing.T) {
+	e := newEnv(t)
+	var started []Task
+	e.r.Start = func(_ context.Context, t Task) error { started = append(started, t); return nil }
+	_, err := e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x", Files: []string{"a.txt"}}})
+	require.NoError(t, err)
+	require.Len(t, started, 1)
+	assert.Equal(t, `["a.txt"]`, string(mustRead(t, filepath.Join(e.r.StateDir, ScopeFileName))))
+
+	e = newEnv(t)
+	e.r.Start = func(context.Context, Task) error { return errors.New("no journal") }
+	_, err = e.r.Run(t.Context(), []Task{{ID: "t1", Brief: "x"}})
+	assert.Equal(t, "TASK_START", e.refusal(t, err).Code)
+	assert.Zero(t, e.worker.calls, "no journal, no agent")
 }

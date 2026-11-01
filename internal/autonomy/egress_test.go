@@ -15,12 +15,15 @@ import (
 )
 
 func TestSquidConfAllowsOnlyListedHostsOnConnect(t *testing.T) {
-	c, err := squidConf([]string{"API.anthropic.com", "packagist.org", "api.anthropic.com", ".github.com"})
+	c, err := squidConf([]string{"API.anthropic.com", "packagist.org", "api.anthropic.com", "github.com"})
 	require.NoError(t, err)
-	assert.Contains(t, c, "acl allowed dstdomain .github.com api.anthropic.com packagist.org\n")
+	assert.Contains(t, c, "acl allowed dstdomain api.anthropic.com github.com packagist.org\n")
+	assert.Contains(t, c, "http_access deny ipliteral\nacl allowed", "IP literals are denied before the allowlist")
+	assert.Contains(t, c, "acl ipliteral dstdom_regex")
 	assert.Contains(t, c, "http_access allow CONNECT SSL_ports allowed\nhttp_access deny all\n")
 	assert.NotContains(t, c, "http_access allow all")
-	for _, bad := range []string{"", "a b.com", "x.com\nhttp_access allow all", "https://x.com", "localhost", "*.x.com"} {
+	for _, bad := range []string{"", "a b.com", "x.com\nhttp_access allow all", "https://x.com", "localhost", "*.x.com",
+		"169.254.169.254", "1.2.3.4", "0x7f.1", ".co.uk", ".github.io", ".github.com", "[::1]", "::1"} {
 		_, err := squidConf([]string{"api.anthropic.com", bad})
 		assert.Error(t, err, bad)
 	}
@@ -111,4 +114,14 @@ func TestEgressWithCleansUpOnEveryExit(t *testing.T) {
 	_ = Egress{Image: testImage, Hosts: RuntimeHosts("codex"), Dir: t.TempDir()}.With(ctx, func(*EgressNet) error { cancel(); return ctx.Err() })
 	b, _ = os.ReadFile(log)
 	assert.Contains(t, string(b), "network rm rr-int-", "cancelled")
+}
+
+func TestEgressCleanupFailureIsReported(t *testing.T) {
+	fakeDocker(t, "network rm")
+	var warns []string
+	n, err := Egress{Image: testImage, Hosts: RuntimeHosts("claude"), Dir: t.TempDir(), Warn: func(m string) { warns = append(warns, m) }}.Up(t.Context())
+	require.NoError(t, err)
+	n.Down()
+	require.Len(t, warns, 1)
+	assert.Contains(t, warns[0], "boom")
 }
