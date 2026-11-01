@@ -382,3 +382,24 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 | W4-D generators | `internal/sync/**`, `internal/runtimes/**`, `internal/policy/**`, `cmd/rr/cmd_sync.go`, `internal/adapters/{claude,codex}/**` | филтър по `project.runtimes`; direction rule; `rr mcp` в генерираните конфигурации на Claude/Codex |
 
 След merge: E2E (§6.3) върху `testdata/php-symfony` + финален adversarial review (2 reviewer-а).
+
+### 13.1 Статус: вълна 4 затворена (2026-11-01, tag `wave-4`)
+
+**Ревю:** рунд 1 (Sonnet, по един на модул; за W4-A двама) → W4-B и W4-C BLOCK, W4-A и W4-D SHIP_WITH_FIXES; рунд 2 (Sonnet) за W4-B и W4-C → поправки. Финален review (2× Opus: security по DES §15 и consistency с DES/ADR) → SHIP_WITH_FIXES ⇒ fix рунд 4.1 (4 агента: guard, runner, flow, sync/github) + оркестратор. Възпроизведени и затворени: push през отровен `config.worktree`/`followTags`/symlink-нат `.git/objects` (изнасяне на файлове от хоста); MCP `research` ехо на `.env`; агентът затваря задачата си (`rr task*` ⇒ `core.AlwaysDeniedCommands`); `git diff --output=` пише извън scope/root; close на runner задача чете агентски журнал; probe с несъществуващ socket; squid PTR атака през IP литерал; Codex в контейнера untrusted; секретите в `/work`; CI `rr verify` без задължителния `--task` (от вълна 3). Errata #40–#45.
+
+**Оркестратор:** `ProjectSpec.Runtimes`, `Hosting.Push/BranchSHA`, labels; `verify.WithSandbox`; `core.AlwaysDeniedCommands`; `rr verify --full` за CI; Env полетата на runner-а; deflake `TestGuardRuntime`.
+
+**Gate 4:**
+
+| Критерий | Статус |
+|---|---|
+| `rr task start|amend|close`, handoff, recall с реалните модули | ✅ cmd + e2e тестове |
+| E2E: light/Claude, full/Codex, LOOSEN, full_irreversible ⇒ L0, runner L2 ⇒ draft PR, sync drift | ✅ `go test ./e2e/...` (runner — през Go API, без docker) |
+| runner: egress proxy, Codex usage, Push/BranchSHA, host-side close в sandbox | ✅ тестове с fake docker/hosting; ⚠️ реален docker+squid+API не е пускан |
+| `rr sync --check` в CI | ✅ шаблонът (`rr@v0.4.0`, `rr verify --full`); ⏳ dogfooding на самото repo (няма `riskrails.yaml`/`.github/` тук) |
+| P2 full задача end-to-end (скаути, factory, review) | ❌ ⇒ вълна 5 (errata #45) |
+| `make check` | ✅ |
+
+**Решения на собственика (вълна 4):** egress proxy от rr; `project.runtimes`; code owners от CODEOWNERS; Codex usage се парсва; v0.x tags (първи `v0.4.0`); P2 wiring = вълна 5.
+
+**Отворено (за вълна 5 / собственика):** [U] Codex hook в контейнера (errata #44) и `--permission-mode dontAsk` за Claude — нужен е `RR_CONTRACT=1` run с реален image и API ключ; реален squid; tag `v0.4.0` при release (иначе генерираните workflows не инсталират rr); `--memory/--cpus` за контейнерите; `kill -9` оставя proxy/мрежи; `resolve()` ползва `DefaultRef` без `project.default_branch` (LOW); Gemini/Cursor/Kiro/OpenCode без contract тестове; копиран/преименуван `rr` бинар остава `ask` на L1.

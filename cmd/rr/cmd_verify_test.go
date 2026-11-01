@@ -54,3 +54,23 @@ func splitLinesKeep(s string) []string {
 	}
 	return out
 }
+
+func TestVerifyFullWithoutTask(t *testing.T) {
+	root := taskRepo(t)
+	out, err := runPolicyRR(t, "verify", "--root", root, "--full")
+	require.NoError(t, err, out)
+	var rep struct{ Full, Passed bool }
+	require.NoError(t, json.Unmarshal([]byte(out), &rep))
+	assert.True(t, rep.Full && rep.Passed, out)
+	_, statErr := os.Stat(filepath.Join(root, ".rr", "run"))
+	assert.True(t, os.IsNotExist(statErr), "a CI full run writes no journal")
+
+	testutil.FakeBin(t, "php", "exit 1")
+	_, err = runPolicyRR(t, "verify", "--root", root, "--full")
+	require.Error(t, err, "red suite ⇒ red check")
+
+	for _, args := range [][]string{{"verify", "--root", root}, {"verify", "--root", root, "--full", "--task", "t1"}} {
+		_, err = runPolicyRR(t, args...)
+		require.ErrorContains(t, err, "exactly one of", "%v", args)
+	}
+}

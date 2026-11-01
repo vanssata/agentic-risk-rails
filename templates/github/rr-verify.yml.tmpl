@@ -19,11 +19,4 @@ jobs:
       - run: go install github.com/vanssata/agentic-risk-rails/cmd/rr@{{.RR}}
         working-directory: ${{"{{"}} runner.temp {{"}}"}}
       - run: rr sync --check
-{{- if .Nightly}}
-      - run: rr verify
-        if: ${{"{{"}} github.event_name != 'schedule' {{"}}"}}
-      - run: rr verify --close
-        if: ${{"{{"}} github.event_name == 'schedule' {{"}}"}}
-{{- else}}
-      - run: rr verify
-{{- end}}
+      - run: rr verify --full

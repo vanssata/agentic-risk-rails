@@ -70,7 +70,7 @@ func TestNightlySchedule(t *testing.T) {
 		require.NoError(t, err)
 		v := string(files[2].Content)
 		assert.Equal(t, on, strings.Contains(v, "schedule:"))
-		assert.Equal(t, on, strings.Contains(v, "rr verify --close"))
+		assert.Contains(t, v, "rr verify --full\n", "PR and nightly runs: the whole suite, no task")
 	}
 }
 
