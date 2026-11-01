@@ -21,10 +21,9 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 )
 
-// prHosting is core.Hosting plus the PR read the policy check needs.
+// prHosting is core.Hosting plus the GitHub-only ruleset bypass read.
 type prHosting interface {
 	core.Hosting
-	PullRequest(ctx context.Context, n int) (hostgh.PR, error)
 	BypassActors(ctx context.Context, rules json.RawMessage) ([]string, error)
 }
 
@@ -145,7 +144,7 @@ func loosenApproved(ctx context.Context, h prHosting, base string, n int, heads 
 	if err != nil {
 		return false, err
 	}
-	ok, err := hostgh.HumanApproved(ctx, h, pr.PullRequest, owners)
+	ok, err := hostgh.HumanApproved(ctx, h, pr, owners)
 	if err == nil && !ok {
 		fmt.Fprintf(out, "PR #%d: no approving review from a human code owner (%s) other than the author on %s\n", n, strings.Join(owners, " "), pr.HeadSHA)
 	}

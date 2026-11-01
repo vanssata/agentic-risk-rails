@@ -100,25 +100,19 @@ func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string
 	return toPR(pr), nil
 }
 
-// PR is a pull request with its base branch (CORE_CHANGE_REQUEST: Base in core.PullRequest).
-type PR struct {
-	core.PullRequest
-	Base string
-}
-
 // PullRequest reads one PR (author, head SHA and base branch for the policy check).
-func (c *Client) PullRequest(ctx context.Context, n int) (PR, error) {
+func (c *Client) PullRequest(ctx context.Context, n int) (core.PullRequest, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, c.owner, c.repo, n)
 	if err != nil {
-		return PR{}, fmt.Errorf("github: PR %d: %w", n, err)
+		return core.PullRequest{}, fmt.Errorf("github: PR %d: %w", n, err)
 	}
-	return PR{toPR(pr), pr.GetBase().GetRef()}, nil
+	return toPR(pr), nil
 }
 
 func toPR(pr *gh.PullRequest) core.PullRequest {
 	return core.PullRequest{
 		Number: pr.GetNumber(), Author: pr.GetUser().GetLogin(),
-		URL: pr.GetHTMLURL(), HeadSHA: pr.GetHead().GetSHA(),
+		URL: pr.GetHTMLURL(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(),
 	}
 }
 

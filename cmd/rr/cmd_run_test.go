@@ -53,7 +53,7 @@ func TestRunFailsClosedWithoutHosting(t *testing.T) {
 	require.NoError(t, os.WriteFile(q, []byte("- {id: t1, brief: do it}\n"), 0o644))
 	_, err := runRR("run", "--queue", q, "--image", "img", "--root", t.TempDir())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no hosting client")
+	assert.Contains(t, err.Error(), "refusing to run")
 }
 
 func TestRunRejectsLevelBelowL2AndBadQueue(t *testing.T) {

@@ -316,6 +316,7 @@ type PullRequest struct {
 	Author  string `json:"author"`
 	URL     string `json:"url"`
 	HeadSHA string `json:"head_sha"`
+	Base    string `json:"base"` // base branch name
 }
 
 // ErrNotFound is the only "absent" error from Hosting.ReadFile. Any other error
@@ -326,6 +327,7 @@ var ErrNotFound = errors.New("not found")
 type Hosting interface {
 	ReadFile(ctx context.Context, ref, path string) ([]byte, error)
 	OpenDraftPR(ctx context.Context, head, base, title, body string) (PullRequest, error)
+	PullRequest(ctx context.Context, n int) (PullRequest, error)
 	Reviews(ctx context.Context, pr int) ([]Review, error)
 	IsTeamMember(ctx context.Context, team, login string) (bool, error)
 	Rulesets(ctx context.Context, branch string) (json.RawMessage, error)

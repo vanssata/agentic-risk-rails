@@ -15,20 +15,19 @@ import (
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/core/fakes"
-	hostgh "github.com/vanssata/agentic-risk-rails/internal/hosting/github"
 	"github.com/vanssata/agentic-risk-rails/internal/policy"
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
 type fakePR struct {
 	*fakes.Hosting
-	pr         hostgh.PR
+	pr         core.PullRequest
 	reviewsErr error
 	bypass     []string
 	bypassErr  error
 }
 
-func (f fakePR) PullRequest(context.Context, int) (hostgh.PR, error) { return f.pr, nil }
+func (f fakePR) PullRequest(context.Context, int) (core.PullRequest, error) { return f.pr, nil }
 
 func (f fakePR) BypassActors(context.Context, json.RawMessage) ([]string, error) {
 	return f.bypass, f.bypassErr
@@ -50,7 +49,7 @@ func prHost(reviews []core.Review, reviewsErr error) fakePR {
 			ReviewsM: map[int][]core.Review{7: reviews},
 			Teams:    map[string][]string{"acme/owners": {"bob", "alice"}},
 		},
-		pr:         hostgh.PR{PullRequest: core.PullRequest{Number: 7, Author: "alice", HeadSHA: head}, Base: "main"},
+		pr:         core.PullRequest{Number: 7, Author: "alice", HeadSHA: head, Base: "main"},
 		reviewsErr: reviewsErr,
 	}
 }

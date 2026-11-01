@@ -99,7 +99,7 @@ func TestReviewsPullTeamRules(t *testing.T) {
 
 	pr, err := c.PullRequest(ctx, 7)
 	require.NoError(t, err)
-	assert.Equal(t, PR{core.PullRequest{Number: 7, Author: "alice", URL: "https://example.test/pull/7", HeadSHA: "abc123"}, "main"}, pr)
+	assert.Equal(t, core.PullRequest{Number: 7, Author: "alice", URL: "https://example.test/pull/7", HeadSHA: "abc123", Base: "main"}, pr)
 
 	ok, err := c.IsTeamMember(ctx, "owners", "bob")
 	require.NoError(t, err)
