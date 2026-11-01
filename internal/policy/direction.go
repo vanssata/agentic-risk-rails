@@ -56,6 +56,7 @@ var directions = func() map[string]rule {
 		"project.name":           opq,
 		"project.stack":          opq,
 		"project.default_branch": opq,
+		"project.runtimes":       opq, // TODO(W4-D): nil = all; subset = LOOSEN
 
 		"risk.axes.*.measured":                    opq,
 		"risk.axes.*.declared":                    raise,

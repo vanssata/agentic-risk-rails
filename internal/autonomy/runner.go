@@ -504,7 +504,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	if err := push(ctx, r.Root, branch); err != nil {
 		return block("push: " + err.Error())
 	}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep))
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), nil)
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}

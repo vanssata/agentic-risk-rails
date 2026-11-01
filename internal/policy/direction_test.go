@@ -194,6 +194,7 @@ func TestOpaqueFieldsAnyChangeLoosens(t *testing.T) {
 		"project.name":           func(p *core.Policy) { p.Project.Name = "x" },
 		"project.stack":          func(p *core.Policy) { p.Project.Stack = []string{"go"} },
 		"project.default_branch": func(p *core.Policy) { p.Project.DefaultBranch = "dev" },
+		"project.runtimes":       func(p *core.Policy) { p.Project.Runtimes = []string{"claude"} },
 		"risk.axes.*.measured": func(p *core.Policy) {
 			s := p.Risk.Axes[core.AxisScope]
 			s.Measured = "paths"

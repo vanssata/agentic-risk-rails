@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -170,7 +171,11 @@ type Hosting struct {
 	Teams    map[string][]string
 	Rules    json.RawMessage
 	Opened   []core.PullRequest
+	Labels   [][]string // labels of each Opened PR
 	PRs      map[int]core.PullRequest
+	Pushed   []string // branches pushed
+	PushErr  error
+	Branches map[string]string // branch → tip SHA for BranchSHA
 }
 
 func (h *Hosting) ReadFile(_ context.Context, ref, path string) ([]byte, error) {
@@ -184,10 +189,33 @@ func (h *Hosting) ReadFile(_ context.Context, ref, path string) ([]byte, error) 
 	return b, nil
 }
 
-func (h *Hosting) OpenDraftPR(_ context.Context, head, _, title, _ string) (core.PullRequest, error) {
-	pr := core.PullRequest{Number: len(h.Opened) + 1, Author: "rr-app[bot]", URL: "fake://pr/" + head + "/" + title}
+func (h *Hosting) OpenDraftPR(_ context.Context, head, base, title, _ string, labels []string) (core.PullRequest, error) {
+	pr := core.PullRequest{Number: len(h.Opened) + 1, Author: "rr-app[bot]", URL: "fake://pr/" + head + "/" + title, Base: base}
 	h.Opened = append(h.Opened, pr)
+	h.Labels = append(h.Labels, labels)
 	return pr, nil
+}
+
+func (h *Hosting) Push(_ context.Context, _, branch string) error {
+	if h.PushErr != nil {
+		return h.PushErr
+	}
+	if !strings.HasPrefix(branch, "rr/") {
+		return fmt.Errorf("refusing to push %q", branch)
+	}
+	h.Pushed = append(h.Pushed, branch)
+	return nil
+}
+
+func (h *Hosting) BranchSHA(_ context.Context, branch string) (string, error) {
+	if h.ReadErr != nil {
+		return "", h.ReadErr
+	}
+	sha, ok := h.Branches[branch]
+	if !ok {
+		return "", fmt.Errorf("branch %s: %w", branch, core.ErrNotFound)
+	}
+	return sha, nil
 }
 
 func (h *Hosting) PullRequest(_ context.Context, n int) (core.PullRequest, error) {

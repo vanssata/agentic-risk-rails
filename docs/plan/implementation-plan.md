@@ -365,3 +365,20 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **Задължително за W4-A:** `Hosting.Push` (token) и labels в `OpenDraftPR`; `RR_LEVEL` и `RR_HALT_SOCK` в `guardContext` / hook-а (днес контейнерът разчита на `dontAsk`); enforcement да се мери в image-а, не на хоста; close run и `affected` за runner-а през `DockerRunner.CommandArgv` (errata #26); `Hosting.BranchSHA` — HEAD на runner-а == tip на default branch на remote-а, и hook-ът в контейнера да ползва policy in force от API-то; `rr mcp` в генерираните конфигурации; dedup на `safePath` (verify/release/simplify); `rrVersion`/pinned SHA в шаблоните се обновяват при release.
 
 **Пренесено (GAPs):** symlink-safe `rrsync.Write` и генератори, които четат `in.Root` (LOW, Opus); `twine check` следва symlink-и в `dist/`; Gemini/Cursor tool_input форми [U]; Kiro/OpenCode без налагащ hook; flaky `TestGuardRuntime` при `-count>1` (споделено състояние, от вълна 1).
+
+## 13. Вълна 4 (2026-11-01, branch `wave-4`)
+
+**Решения на собственика (по §12):** (1) egress — rr стартира proxy в отделна docker мрежа, allow = API хостовете на runtime-а ∪ `enforcement.egress.allow`; (2) `project.runtimes: [...]` — nil = всички, премахване на runtime = LOOSEN; (3) code-owner екип — остава от CODEOWNERS (`.github/**` е AlwaysProtected); (4) Codex usage — парсва се (`codex exec --json` / rollout), неизвестен usage = превишен бюджет.
+
+**Core (оркестратор, преди агентите):** `ProjectSpec.Runtimes`; `Hosting.Push`, `Hosting.BranchSHA`, `labels` в `OpenDraftPR`; fakes; GitHub клиентът fail-closed до W4-C; `project.runtimes` временно opaque в direction table.
+
+**Разделяне (непресичащи се OWNS):**
+
+| Агент | OWNS | Обхват |
+|---|---|---|
+| W4-A flow | `internal/flow/**`, `cmd/rr/cmd_task.go`, `cmd/rr/cmd_handoff.go`, `cmd/rr/cmd_recall.go`, `cmd/rr/wire.go`, `internal/wiring/**` | `rr task start|amend|close`, `rr handoff`, `rr recall`; задълженията от §11; hook-ът научава task/Level/StepFiles; `RR_LEVEL`, `RR_HALT_SOCK`, `RR_POLICY_IN_FORCE` в guardContext |
+| W4-B runner | `internal/autonomy/**`, `cmd/rr/cmd_run.go`, `cmd/rr/wire_run.go` | egress proxy; Codex usage; `Hosting.Push`/`BranchSHA`/labels в runner-а; close/affected през `DockerRunner.CommandArgv`; policy in force към контейнера; enforcement в image-а |
+| W4-C hosting | `internal/hosting/github/**`, `internal/verify/exec.go`, `internal/simplify/simplify.go`, `internal/release/release.go`, `internal/gitx/**` | `Push` (token, само `rr/*`, без force), `BranchSHA`, labels; dedup на `safePath` в `gitx` |
+| W4-D generators | `internal/sync/**`, `internal/runtimes/**`, `internal/policy/**`, `cmd/rr/cmd_sync.go`, `internal/adapters/{claude,codex}/**` | филтър по `project.runtimes`; direction rule; `rr mcp` в генерираните конфигурации на Claude/Codex |
+
+След merge: E2E (§6.3) върху `testdata/php-symfony` + финален adversarial review (2 reviewer-а).

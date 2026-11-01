@@ -89,7 +89,11 @@ func (c *Client) ReadFile(ctx context.Context, ref, path string) ([]byte, error)
 }
 
 // OpenDraftPR opens a draft pull request from head into base.
-func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string) (core.PullRequest, error) {
+// TODO(W4-C): apply labels.
+func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string, labels []string) (core.PullRequest, error) {
+	if len(labels) > 0 {
+		return core.PullRequest{}, errors.New("github: labels not implemented")
+	}
 	draft := true
 	pr, _, err := c.gh.PullRequests.Create(ctx, c.owner, c.repo, gh.CreatePullRequest{
 		Title: &title, Head: head, Base: base, Body: &body, Draft: &draft,
@@ -98,6 +102,16 @@ func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string
 		return core.PullRequest{}, fmt.Errorf("github: open draft PR: %w", err)
 	}
 	return toPR(pr), nil
+}
+
+// Push is implemented in W4-C; until then it fails closed.
+func (c *Client) Push(context.Context, string, string) error {
+	return errors.New("github: push not implemented")
+}
+
+// BranchSHA is implemented in W4-C; until then it fails closed.
+func (c *Client) BranchSHA(context.Context, string) (string, error) {
+	return "", errors.New("github: branch SHA not implemented")
 }
 
 // PullRequest reads one PR (author, head SHA and base branch for the policy check).
