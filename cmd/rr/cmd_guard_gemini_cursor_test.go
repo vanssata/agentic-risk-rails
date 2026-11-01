@@ -32,6 +32,8 @@ func TestGuardGeminiEndToEnd(t *testing.T) {
 		"rm -rf":            bt("run_shell_command", map[string]any{"command": "rm -rf /"}),
 		"hook config write": bt("write_file", map[string]any{"file_path": ".gemini/settings.json", "content": "{}"}),
 		"unparseable":       "not json",
+		"grep dir_path":     bt("grep_search", map[string]any{"pattern": "x", "dir_path": "~/.ssh"}),
+		"unknown tool":      bt("teleport", map[string]any{"x": "y"}),
 		"unknown event":     hookJSON(t, "AfterTool", map[string]any{"tool_name": "read_file"}),
 		"replace absent":    bt("replace", map[string]any{"file_path": "nope.txt", "old_string": "a", "new_string": "b"}),
 	} {
@@ -55,6 +57,7 @@ func TestGuardCursorEndToEnd(t *testing.T) {
 		"hook config write": {"preToolUse", pre("Write", map[string]any{"file_path": ".cursor/hooks.json", "contents": "{}"})},
 		"unlisted":          {"preToolUse", pre("Shell", map[string]any{"command": "python3 x.py"})}, // ask => deny
 		"unparseable":       {"preToolUse", "not json"},
+		"grep ssh":          {"preToolUse", pre("Grep", map[string]any{"pattern": "x", "target_directory": "~/.ssh"})},
 		"bad event":         {"afterFileEdit", hookJSON(t, "afterFileEdit", map[string]any{"file_path": root + "/a"})},
 	} {
 		out, err := runGuard(t, c.in, "--runtime", "cursor", "--event", c.event)

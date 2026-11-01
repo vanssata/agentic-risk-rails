@@ -16,6 +16,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -97,6 +99,13 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 		if p == "" {
 			return "", fmt.Errorf("gemini: %s: empty path", in.ToolName)
 		}
+		if p == "~" || strings.HasPrefix(p, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("gemini: %s: cannot expand ~: %w", in.ToolName, err)
+			}
+			p = filepath.Join(home, p[1:])
+		}
 		if !filepath.IsAbs(p) {
 			if !filepath.IsAbs(in.Cwd) {
 				return "", fmt.Errorf("gemini: %s: relative path %q and no absolute cwd", in.ToolName, p)
@@ -136,23 +145,102 @@ func fillTool(call *core.ToolCall, in hookInput, ti toolInput, abs func(string) 
 		if err = setPath(ti.FilePath); err == nil {
 			call.Content, err = applyReplace(call.Paths[0], ti)
 		}
-	case "read_file":
+	case "read_file", "list_directory", "read_many_files":
 		call.Tool = "Read"
-		err = setPath(ti.FilePath)
-	case "list_directory":
-		call.Tool = "Read"
-		err = setPath(ti.DirPath)
-	case "glob", "grep_search":
-		call.Tool = map[string]string{"glob": "Glob", "grep_search": "Grep"}[in.ToolName]
-		p := ti.Path
-		if p == "" {
-			p = in.Cwd
+		err = setPaths(call, abs, ti.FilePath, ti.DirPath, ti.Path)
+		if err == nil && len(call.Paths) == 0 && in.ToolName != "read_many_files" {
+			err = fmt.Errorf("gemini: %s: no path", in.ToolName)
 		}
-		err = setPath(p)
+	case "glob", "grep_search", "search_file_content":
+		err = fillSearch(call, in, ti, abs)
 	default:
+		if !strings.HasPrefix(in.ToolName, "mcp_") && !passThrough[in.ToolName] {
+			return fmt.Errorf("gemini: unsupported tool %q", in.ToolName)
+		}
 		err = fillGeneric(call, in.ToolInput, abs)
 	}
+	if err != nil {
+		return err
+	}
+	if call.Tool == "Bash" {
+		return nil
+	}
+	return addLooksLikePaths(call, in.ToolInput, abs)
+}
+
+// fillSearch handles glob and grep: dir_path and path are both searched; with
+// neither the search root is the working directory.
+func fillSearch(call *core.ToolCall, in hookInput, ti toolInput, abs func(string) (string, error)) error {
+	call.Tool = "Grep"
+	if in.ToolName == "glob" {
+		call.Tool = "Glob"
+	}
+	err := setPaths(call, abs, ti.DirPath, ti.Path)
+	if err == nil && len(call.Paths) == 0 {
+		err = setPaths(call, abs, in.Cwd)
+	}
+	if err == nil && len(call.Paths) == 0 {
+		err = fmt.Errorf("gemini: %s: no path and no cwd", in.ToolName)
+	}
 	return err
+}
+
+// passThrough lists Gemini built-in tools (names from packages/core/src/tools/
+// definitions/base-declarations.ts) that carry no file edit; they go through
+// generic extraction. Any other non-mcp_ name is an error (deny).
+var passThrough = map[string]bool{
+	"google_web_search": true, "web_fetch": true, "write_todos": true, "get_internal_docs": true,
+	"activate_skill": true, "ask_user": true, "enter_plan_mode": true, "exit_plan_mode": true,
+	"update_topic": true, "complete_task": true, "read_mcp_resource": true, "list_mcp_resources": true,
+}
+
+// setPaths appends the non-empty paths (absolute, Clean) to call.Paths.
+func setPaths(call *core.ToolCall, abs func(string) (string, error), paths ...string) error {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		a, err := abs(p)
+		if err != nil {
+			return err
+		}
+		call.Paths = append(call.Paths, a)
+	}
+	return nil
+}
+
+// notPath are keys whose string values are text, never paths.
+var notPath = map[string]bool{
+	"command": true, "content": true, "old_string": true, "new_string": true,
+	"instruction": true, "description": true, "prompt": true, "query": true, "pattern": true,
+}
+
+// addLooksLikePaths adds every top-level string value of tool_input that looks
+// like a path (/, ~, ./, ../) under a key the adapter did not read. Stricter is fine.
+func addLooksLikePaths(call *core.ToolCall, input json.RawMessage, abs func(string) (string, error)) error {
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return nil //nolint:nilerr // not an object: nothing to scan
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		s, ok := m[k].(string)
+		if !ok || notPath[k] || !pathLike(s) {
+			continue
+		}
+		a, err := abs(s)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(call.Paths, a) {
+			call.Paths = append(call.Paths, a)
+		}
+	}
+	return nil
 }
 
 // applyReplace applies Gemini's replace (exact old_string, one match unless
@@ -264,4 +352,9 @@ func askTarget(c core.ToolCall) string {
 		return c.Tool
 	}
 	return "(the blocked action)"
+}
+
+// pathLike reports whether s starts like a path: /, ~, ./ or ../.
+func pathLike(s string) bool {
+	return strings.HasPrefix(s, "/") || s == "~" || strings.HasPrefix(s, "~/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../")
 }

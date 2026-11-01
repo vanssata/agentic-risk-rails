@@ -29,6 +29,8 @@ Label: [V] read in the docs this session, [U] unverified.
 
 ## GAPS [U]
 
+- **Known limitation:** Cursor's partial-edit tools (e.g. `StrReplace`/`Edit`) and `Glob` are unknown to the adapter and are denied. An edit tool without the full file content cannot satisfy the core ToolCall invariant until its tool_input shape is confirmed. Cursor Write/Delete are handled.
+- Grep/Read path argument names are guessed: Grep `path|target_directory|dir_path|directory`, Read/Write/Delete `file_path|path|target_file`; any other string value that looks like a path is added to Paths.
 - `tool_input` shapes of Write/Read/Delete/Grep/Task in preToolUse. The adapter accepts `file_path`|`path` and `contents`|`content` for Write; a Write without full contents is a parse error, hence deny. If Cursor edits files through another tool name (partial edits), that name is unknown to the adapter: deny (fail-closed, but it would block the agent's edits).
 - Default `timeout` (documented only as "platform default").
 - Whether `tool_input` of beforeMCPExecution is an object or a JSON string (both handled).

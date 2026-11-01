@@ -9,12 +9,16 @@ package cursor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -70,24 +74,24 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return core.ToolCall{}, fmt.Errorf("cursor: malformed hook input: %w", err)
 	}
-	known := false
-	for _, e := range events {
-		known = known || e == event
-	}
-	if !known {
+	if !slices.Contains(events, event) {
 		return core.ToolCall{}, fmt.Errorf("cursor: unsupported event %q", event)
 	}
 	if in.HookEventName != "" && in.HookEventName != event {
 		return core.ToolCall{}, fmt.Errorf("cursor: hook_event_name %q does not match event %q", in.HookEventName, event)
 	}
-	cwd := in.Cwd
-	if cwd == "" && len(in.WorkspaceRoots) > 0 {
-		cwd = in.WorkspaceRoots[0]
-	}
+	cwd := cmp.Or(in.Cwd, firstOf(in.WorkspaceRoots))
 	call := core.ToolCall{Runtime: Name, Event: event, Cwd: cwd, Raw: bytes.Clone(raw)}
 	abs := func(p string) (string, error) {
 		if p == "" {
 			return "", errors.New("cursor: empty path")
+		}
+		if p == "~" || strings.HasPrefix(p, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("cursor: cannot expand ~: %w", err)
+			}
+			p = filepath.Join(home, p[1:])
 		}
 		if !filepath.IsAbs(p) {
 			if !filepath.IsAbs(cwd) {
@@ -102,7 +106,7 @@ func (Adapter) ParseHookInput(event string, r io.Reader) (core.ToolCall, error) 
 		return shell(call, in.Command)
 	case "beforeReadFile":
 		call.Tool = "Read"
-		return withPath(call, abs, in.FilePath)
+		return withPaths(call, abs, false, in.FilePath)
 	case "subagentStart":
 		call.Tool, call.Model = "Task", in.SubagentModel
 		return call, nil
@@ -129,6 +133,10 @@ func parsePre(call core.ToolCall, in hookInput, abs func(string) (string, error)
 		Path       string  `json:"path"`
 		Content    *string `json:"content"`
 		Model      string  `json:"model"`
+		TargetFile string  `json:"target_file"`
+		TargetDir  string  `json:"target_directory"`
+		DirPath    string  `json:"dir_path"`
+		Directory  string  `json:"directory"`
 	}
 	var contents struct {
 		Contents *string `json:"contents"`
@@ -141,43 +149,53 @@ func parsePre(call core.ToolCall, in hookInput, abs func(string) (string, error)
 		}
 		_ = json.Unmarshal(in.ToolInput, &contents)
 	}
-	file := ti.FilePath
-	if file == "" {
-		file = ti.Path
+	files := []string{ti.FilePath, ti.Path, ti.TargetFile}
+	dirs := []string{ti.Path, ti.TargetDir, ti.DirPath, ti.Directory}
+	var out core.ToolCall
+	out, err = preTool(call, in, ti.Command, ti.WorkingDir, ti.Model, ti.Content, contents.Contents, files, dirs, abs)
+	if err != nil {
+		return core.ToolCall{}, err
 	}
+	if out.Tool == "Bash" {
+		return out, nil
+	}
+	return out, addLooksLikePaths(&out, in.ToolInput, abs)
+}
+
+// preTool maps one preToolUse tool to a call; files/dirs are the candidate
+// path arguments (every non-empty one goes into Paths).
+func preTool(call core.ToolCall, in hookInput, command, workDir, model string, content, contents *string, files, dirs []string, abs func(string) (string, error)) (core.ToolCall, error) {
+	var err error
 	switch {
 	case in.ToolName == "Shell":
-		if ti.WorkingDir != "" {
-			if call.Cwd, err = abs(ti.WorkingDir); err != nil {
+		if workDir != "" {
+			if call.Cwd, err = abs(workDir); err != nil {
 				return core.ToolCall{}, err
 			}
 		}
-		return shell(call, ti.Command)
+		return shell(call, command)
 	case in.ToolName == "Write":
 		call.Tool = "Write"
-		body := contents.Contents
+		body := contents
 		if body == nil {
-			body = ti.Content
+			body = content
 		}
 		if body == nil {
 			return core.ToolCall{}, errors.New("cursor: Write has no file contents")
 		}
 		call.Content = *body
-		return withPath(call, abs, file)
+		return withPaths(call, abs, false, files...)
 	case in.ToolName == "Delete":
 		call.Tool = "Edit"
-		return withPath(call, abs, file)
+		return withPaths(call, abs, false, files...)
 	case in.ToolName == "Read":
 		call.Tool = "Read"
-		return withPath(call, abs, file)
+		return withPaths(call, abs, false, files...)
 	case in.ToolName == "Grep":
 		call.Tool = "Grep"
-		if file == "" {
-			file = call.Cwd
-		}
-		return withPath(call, abs, file)
+		return withPaths(call, abs, true, dirs...)
 	case in.ToolName == "Task":
-		call.Tool, call.Model = "Task", ti.Model
+		call.Tool, call.Model = "Task", model
 		return call, nil
 	case strings.HasPrefix(in.ToolName, "MCP:"):
 		call.Tool = "mcp__cursor__" + strings.TrimPrefix(in.ToolName, "MCP:")
@@ -194,13 +212,65 @@ func shell(call core.ToolCall, command string) (core.ToolCall, error) {
 	return call, nil
 }
 
-func withPath(call core.ToolCall, abs func(string) (string, error), p string) (core.ToolCall, error) {
-	a, err := abs(p)
-	if err != nil {
-		return core.ToolCall{}, fmt.Errorf("cursor: %s: %w", call.Tool, err)
+// withPaths sets Paths to every non-empty candidate. None is an error, except
+// with orCwd (searches) where it falls back to the working directory.
+func withPaths(call core.ToolCall, abs func(string) (string, error), orCwd bool, candidates ...string) (core.ToolCall, error) {
+	var paths []string
+	for _, p := range candidates {
+		if p != "" {
+			paths = append(paths, p)
+		}
 	}
-	call.Paths = []string{a}
+	if len(paths) == 0 && orCwd {
+		paths = []string{call.Cwd}
+	}
+	if len(paths) == 0 {
+		return core.ToolCall{}, fmt.Errorf("cursor: %s: no path", call.Tool)
+	}
+	for _, p := range paths {
+		a, err := abs(p)
+		if err != nil {
+			return core.ToolCall{}, fmt.Errorf("cursor: %s: %w", call.Tool, err)
+		}
+		if !slices.Contains(call.Paths, a) {
+			call.Paths = append(call.Paths, a)
+		}
+	}
 	return call, nil
+}
+
+// notPath are keys whose string values are text, never paths.
+var notPath = map[string]bool{
+	"command": true, "content": true, "contents": true, "old_string": true, "new_string": true,
+	"instruction": true, "description": true, "prompt": true, "query": true, "pattern": true,
+}
+
+// addLooksLikePaths adds every top-level string value of tool_input that looks
+// like a path (/, ~, ./, ../) to Paths, whatever its key. Stricter is fine.
+func addLooksLikePaths(call *core.ToolCall, input json.RawMessage, abs func(string) (string, error)) error {
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return nil //nolint:nilerr // not an object: nothing to scan
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		s, ok := m[k].(string)
+		if !ok || notPath[k] || !pathLike(s) {
+			continue
+		}
+		a, err := abs(s)
+		if err != nil {
+			return fmt.Errorf("cursor: %s: %w", call.Tool, err)
+		}
+		if !slices.Contains(call.Paths, a) {
+			call.Paths = append(call.Paths, a)
+		}
+	}
+	return nil
 }
 
 var (
@@ -253,7 +323,7 @@ func generic(call core.ToolCall, input json.RawMessage, abs func(string) (string
 	if c, ok := m["command"].(string); ok {
 		call.Command = c
 	}
-	return call, nil
+	return call, addLooksLikePaths(&call, input, abs)
 }
 
 type hookOutput struct {
@@ -267,10 +337,7 @@ type hookOutput struct {
 // a deny on every event: preToolUse ignores ask, subagentStart treats it as
 // deny, and the same call is also seen by preToolUse (deny beats ask).
 func (Adapter) RenderHookOutput(event string, call core.ToolCall, v core.Verdict, stdout, stderr io.Writer) (int, error) {
-	known := false
-	for _, e := range events {
-		known = known || e == event
-	}
+	known := slices.Contains(events, event)
 	if known && v.Decision == core.Allow {
 		if err := json.NewEncoder(stdout).Encode(hookOutput{Permission: "allow"}); err != nil {
 			return 2, err
@@ -304,4 +371,16 @@ func askTarget(c core.ToolCall) string {
 		return c.Tool
 	}
 	return "(the blocked action)"
+}
+
+// pathLike reports whether s starts like a path: /, ~, ./ or ../.
+func pathLike(s string) bool {
+	return strings.HasPrefix(s, "/") || s == "~" || strings.HasPrefix(s, "~/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../")
+}
+
+func firstOf(l []string) string {
+	if len(l) == 0 {
+		return ""
+	}
+	return l[0]
 }

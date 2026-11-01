@@ -34,6 +34,8 @@ func parse(s string) (core.ToolCall, error) {
 
 func TestParse(t *testing.T) {
 	dir := t.TempDir()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
 	file := filepath.Join(dir, "a.txt")
 	require.NoError(t, os.WriteFile(file, []byte("one two\nthree\n"), 0o644))
 	cases := []struct {
@@ -57,6 +59,18 @@ func TestParse(t *testing.T) {
 			core.ToolCall{Tool: "Glob", Paths: []string{dir}, Cwd: dir}},
 		{"grep", sample("grep_search", dir, map[string]any{"pattern": "x", "path": "src"}),
 			core.ToolCall{Tool: "Grep", Paths: []string{filepath.Join(dir, "src")}, Cwd: dir}},
+		{"grep dir_path", sample("grep_search", dir, map[string]any{"pattern": "x", "dir_path": "/outside/.ssh"}),
+			core.ToolCall{Tool: "Grep", Paths: []string{"/outside/.ssh"}, Cwd: dir}},
+		{"glob both", sample("glob", dir, map[string]any{"pattern": "*", "dir_path": "/a", "path": "b"}),
+			core.ToolCall{Tool: "Glob", Paths: []string{"/a", filepath.Join(dir, "b")}, Cwd: dir}},
+		{"legacy search_file_content", sample("search_file_content", dir, map[string]any{"pattern": "x"}),
+			core.ToolCall{Tool: "Grep", Paths: []string{dir}, Cwd: dir}},
+		{"tilde", sample("read_file", dir, map[string]any{"file_path": "~/.ssh/id_rsa"}),
+			core.ToolCall{Tool: "Read", Paths: []string{filepath.Join(home, ".ssh/id_rsa")}, Cwd: dir}},
+		{"unread key that looks like a path", sample("write_file", dir, map[string]any{"file_path": "a", "content": "/not/a/path", "target_dir": "../up"}),
+			core.ToolCall{Tool: "Write", Paths: []string{filepath.Join(dir, "a"), filepath.Join(filepath.Dir(dir), "up")}, Content: "/not/a/path", Cwd: dir}},
+		{"known passthrough", sample("web_fetch", dir, map[string]any{"prompt": "summarize https://x.test"}),
+			core.ToolCall{Tool: "web_fetch", Cwd: dir}},
 		{"mcp", sample("mcp_srv_fetch", dir, map[string]any{"url": "https://x.test/a", "path": "f"}),
 			core.ToolCall{Tool: "mcp_srv_fetch", URL: "https://x.test/a", Paths: []string{filepath.Join(dir, "f")}, Cwd: dir}},
 	}
@@ -88,6 +102,8 @@ func TestParseErrorsDeny(t *testing.T) {
 		"replace missing":   sample("replace", dir, map[string]any{"file_path": filepath.Join(dir, "none"), "old_string": "a", "new_string": "b"}),
 		"replace not found": sample("replace", dir, map[string]any{"file_path": file, "old_string": "zzz", "new_string": "b"}),
 		"replace ambiguous": sample("replace", dir, map[string]any{"file_path": file, "old_string": "x", "new_string": "b"}),
+		"unknown tool":      sample("teleport", dir, map[string]any{"x": 1}),
+		"no path":           sample("read_file", dir, map[string]any{}),
 		"bad tool_input":    sample("write_file", dir, []int{1}),
 	}
 	for name, in := range cases {

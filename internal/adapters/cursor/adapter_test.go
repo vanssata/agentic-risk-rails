@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,6 +32,8 @@ func parse(event, s string) (core.ToolCall, error) {
 }
 
 func TestParse(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
 	pre := func(tool string, in any) string {
 		return sample("preToolUse", map[string]any{"tool_name": tool, "tool_input": in, "cwd": "/ws"})
 	}
@@ -49,6 +53,18 @@ func TestParse(t *testing.T) {
 			core.ToolCall{Tool: "Edit", Paths: []string{"/ws/a"}, Cwd: "/ws"}},
 		{"pre read", "preToolUse", pre("Read", map[string]any{"file_path": "a"}),
 			core.ToolCall{Tool: "Read", Paths: []string{"/ws/a"}, Cwd: "/ws"}},
+		{"pre grep target_directory", "preToolUse", pre("Grep", map[string]any{"pattern": "x", "target_directory": "/home/u/.ssh"}),
+			core.ToolCall{Tool: "Grep", Paths: []string{"/home/u/.ssh"}, Cwd: "/ws"}},
+		{"pre grep dir_path+directory", "preToolUse", pre("Grep", map[string]any{"dir_path": "/a", "directory": "b"}),
+			core.ToolCall{Tool: "Grep", Paths: []string{"/a", "/ws/b"}, Cwd: "/ws"}},
+		{"pre read target_file", "preToolUse", pre("Read", map[string]any{"target_file": "/ws/.env"}),
+			core.ToolCall{Tool: "Read", Paths: []string{"/ws/.env"}, Cwd: "/ws"}},
+		{"pre read tilde", "preToolUse", pre("Read", map[string]any{"file_path": "~/.ssh/id"}),
+			core.ToolCall{Tool: "Read", Paths: []string{filepath.Join(home, ".ssh/id")}, Cwd: "/ws"}},
+		{"pre read extra path-like key", "preToolUse", pre("Read", map[string]any{"file_path": "a", "other": "../up"}),
+			core.ToolCall{Tool: "Read", Paths: []string{"/ws/a", "/up"}, Cwd: "/ws"}},
+		{"pre write content not a path", "preToolUse", pre("Write", map[string]any{"file_path": "a", "contents": "/etc/passwd"}),
+			core.ToolCall{Tool: "Write", Paths: []string{"/ws/a"}, Content: "/etc/passwd", Cwd: "/ws"}},
 		{"pre grep default", "preToolUse", pre("Grep", map[string]any{"pattern": "x"}),
 			core.ToolCall{Tool: "Grep", Paths: []string{"/ws"}, Cwd: "/ws"}},
 		{"pre task", "preToolUse", pre("Task", map[string]any{"model": "fast"}),
