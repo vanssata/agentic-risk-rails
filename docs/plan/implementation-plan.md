@@ -378,7 +378,7 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 |---|---|---|
 | W4-A flow | `internal/flow/**`, `cmd/rr/cmd_task.go`, `cmd/rr/cmd_handoff.go`, `cmd/rr/cmd_recall.go`, `cmd/rr/wire.go`, `internal/wiring/**` | `rr task start|amend|close`, `rr handoff`, `rr recall`; задълженията от §11; hook-ът научава task/Level/StepFiles; `RR_LEVEL`, `RR_HALT_SOCK`, `RR_POLICY_IN_FORCE` в guardContext |
 | W4-B runner | `internal/autonomy/**`, `cmd/rr/cmd_run.go`, `cmd/rr/wire_run.go` | egress proxy; Codex usage; `Hosting.Push`/`BranchSHA`/labels в runner-а; close/affected през `DockerRunner.CommandArgv`; policy in force към контейнера; enforcement в image-а |
-| W4-C hosting | `internal/hosting/github/**`, `internal/verify/exec.go`, `internal/simplify/simplify.go`, `internal/release/release.go`, `internal/gitx/**` | `Push` (token, само `rr/*`, без force), `BranchSHA`, labels; dedup на `safePath` в `gitx` |
+| W4-C hosting | `internal/hosting/github/**`, `internal/verify/exec.go`, `internal/simplify/simplify.go`, `internal/release/release.go`, `internal/hostexec/**` | `Push` (token, само `rr/*`, без force), `BranchSHA`, labels; dedup на `safePath` в `internal/hostexec` |
 | W4-D generators | `internal/sync/**`, `internal/runtimes/**`, `internal/policy/**`, `cmd/rr/cmd_sync.go`, `internal/adapters/{claude,codex}/**` | филтър по `project.runtimes`; direction rule; `rr mcp` в генерираните конфигурации на Claude/Codex |
 
 След merge: E2E (§6.3) върху `testdata/php-symfony` + финален adversarial review (2 reviewer-а).
