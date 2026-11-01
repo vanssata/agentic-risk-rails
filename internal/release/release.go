@@ -108,7 +108,10 @@ func run(ctx context.Context, root string, argv []string) core.Check {
 	c.Env = []string{
 		"PATH=" + strings.Join(dirs, string(filepath.ListSeparator)), "HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, "config"), "XDG_CACHE_HOME=" + filepath.Join(home, "cache"),
-		"NPM_CONFIG_USERCONFIG=/dev/null",
+		// env beats the project .npmrc: no onload-script / node-options / global config from it
+		"NPM_CONFIG_USERCONFIG=/dev/null", "NPM_CONFIG_GLOBALCONFIG=/dev/null",
+		"NPM_CONFIG_ONLOAD_SCRIPT=", "NPM_CONFIG_NODE_OPTIONS=",
+		"COMPOSER_HOME=" + filepath.Join(home, "composer"),
 	}
 	for _, k := range passEnv {
 		if v, ok := os.LookupEnv(k); ok {
@@ -139,11 +142,17 @@ type step struct {
 
 func (s step) run(ctx context.Context, root string) core.Check {
 	name := strings.Join(s.argv, " ")
+	if s.dist {
+		name += " dist"
+	}
 	if s.ciOnly {
 		return core.Check{Name: name, OK: true, Detail: "skipped: runs in CI (executes project code)"}
 	}
 	argv := s.argv
 	if s.dist {
+		if fi, err := os.Lstat(filepath.Join(root, "dist")); err == nil && !fi.IsDir() {
+			return core.Check{Name: name, Detail: "dist is not a plain directory"}
+		}
 		files, _ := filepath.Glob(filepath.Join(root, "dist", "*"))
 		if len(files) == 0 {
 			return core.Check{Name: name, Detail: "no dist/: build runs in CI"}
@@ -170,6 +179,7 @@ type adapter struct {
 	dryRun    step
 	bumpFile  string
 	bump      func(content, version string) (string, error) // nil: the tag is the version
+	workflow  core.File
 }
 
 func (a adapter) Name() string { return a.name }
@@ -210,12 +220,15 @@ func (a adapter) PrepareTag(_ context.Context, root, version string) ([]core.Fil
 	return []core.File{{Path: a.bumpFile, Content: []byte(s)}}, nil
 }
 
-func (a adapter) CIWorkflow() core.File {
-	b, err := releasetpl.FS.ReadFile(a.name + ".yml")
-	if err != nil { // embedded at build time: cannot happen
+func (a adapter) CIWorkflow() core.File { return a.workflow }
+
+// workflow reads the embedded template; init() may panic (AGENTS.md).
+func workflow(name string) core.File {
+	b, err := releasetpl.FS.ReadFile(name + ".yml")
+	if err != nil {
 		panic(err)
 	}
-	return core.File{Path: ".github/workflows/rr-release-" + a.name + ".yml", Content: b}
+	return core.File{Path: ".github/workflows/rr-release-" + name + ".yml", Content: b}
 }
 
 func replaceFirst(re *regexp.Regexp, content, repl string) (string, error) {
@@ -252,17 +265,18 @@ func bumpPy(c, v string) (string, error) {
 
 func init() {
 	Register(adapter{name: "composer", marker: "composer.json",
-		preflight: steps("composer validate --strict", "composer audit"),
-		dryRun:    steps("composer validate --strict")[0]})
-	Register(adapter{name: "npm", marker: "package.json",
+		workflow:  workflow("composer"),
+		preflight: steps("composer validate --strict --no-plugins --no-scripts", "composer audit --no-plugins --no-scripts"),
+		dryRun:    steps("composer validate --strict --no-plugins --no-scripts")[0]})
+	Register(adapter{name: "npm", marker: "package.json", workflow: workflow("npm"),
 		preflight: steps("npm pack --dry-run --ignore-scripts"),
 		dryRun:    steps("npm publish --dry-run --ignore-scripts")[0], bumpFile: "package.json",
 		bump: func(c, v string) (string, error) { return replaceFirst(npmVersionRe, c, v) }})
-	twine := step{argv: []string{"twine", "check", "dist/*"}, dist: true}
-	Register(adapter{name: "pypi", marker: "pyproject.toml",
+	twine := step{argv: []string{"twine", "check"}, dist: true}
+	Register(adapter{name: "pypi", marker: "pyproject.toml", workflow: workflow("pypi"),
 		preflight: []step{{argv: []string{"python", "-m", "build"}, ciOnly: true}, twine},
 		dryRun:    twine, bumpFile: "pyproject.toml",
 		bump: bumpPy})
 	build := step{argv: []string{"docker", "build", "."}, ciOnly: true}
-	Register(adapter{name: "docker", marker: "Dockerfile", preflight: []step{build}, dryRun: build})
+	Register(adapter{name: "docker", marker: "Dockerfile", workflow: workflow("docker"), preflight: []step{build}, dryRun: build})
 }

@@ -121,7 +121,7 @@ func TestNoProjectCodeOnHost(t *testing.T) {
 	testutil.FakeBin(t, "twine", `echo "$@"`)
 	ch, _ = py.DryRun(ctx, root)
 	assert.True(t, ch.OK)
-	assert.Equal(t, "twine check dist/*", ch.Name)
+	assert.Equal(t, "twine check dist", ch.Name)
 	assert.Contains(t, ch.Detail, "x.whl")
 }
 
@@ -233,4 +233,32 @@ func TestCheckChangelog(t *testing.T) {
 		})
 	}
 	assert.Error(t, CheckChangelog(t.TempDir(), ""))
+}
+
+func TestComposerFlags(t *testing.T) {
+	testutil.FakeBin(t, "composer", `echo "$@"`)
+	a, _ := Get("composer")
+	cs := a.Preflight(context.Background(), t.TempDir())
+	require.Len(t, cs, 2)
+	assert.Equal(t, "validate --strict --no-plugins --no-scripts", cs[0].Detail)
+	assert.Equal(t, "audit --no-plugins --no-scripts", cs[1].Detail)
+}
+
+func TestNpmEnvBeatsProjectNpmrc(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".npmrc", "onload-script=./evil.js\nnode-options=--require ./evil.js\nscript-shell=./evil.sh\n")
+	t.Setenv("NODE_OPTIONS", "--require /evil.js")
+	testutil.FakeBin(t, "npm", `[ -z "$NODE_OPTIONS" ] && [ -z "${NPM_CONFIG_ONLOAD_SCRIPT-x}" ] && [ -z "${NPM_CONFIG_NODE_OPTIONS-x}" ] && [ "$NPM_CONFIG_GLOBALCONFIG" = /dev/null ] && [ "$NPM_CONFIG_USERCONFIG" = /dev/null ] || { echo bad env; exit 1; }`)
+	a, _ := Get("npm")
+	ch, _ := a.DryRun(context.Background(), root)
+	assert.True(t, ch.OK, ch.Detail)
+}
+
+func TestDistSymlinkRefused(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, "dist")))
+	testutil.FakeBin(t, "twine", "exit 0")
+	a, _ := Get("pypi")
+	ch, _ := a.DryRun(context.Background(), root)
+	assert.False(t, ch.OK)
 }

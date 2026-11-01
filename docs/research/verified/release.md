@@ -49,3 +49,12 @@ None with DES §9.1. Note: DES lists "provenance" under npm preflight; with trus
 
 ## COST
 4 pages fetched.
+
+## Round 2 facts
+| claim | URL | |
+|---|---|---|
+| `--no-plugins` ("Disables plugins") and `--no-scripts` ("Skips execution of scripts defined in composer.json") are options available with every composer command (so validate and audit) | https://getcomposer.org/doc/03-cli.md | [V] |
+| `COMPOSER_HOME` sets composer's home dir; `COMPOSER_ALLOW_SUPERUSER=1` only silences the root warning (we do not set it) | https://getcomposer.org/doc/03-cli.md | [V] |
+| npm 11 config documents `script-shell`, `node-options`, `globalconfig`, `ignore-scripts`; `onload-script` does not appear on the page | https://docs.npmjs.com/cli/v11/using-npm/config | [V] / onload-script [U] (set empty anyway) |
+| npm config priority lists command-line flags and environment variables before project `.npmrc`, so `NPM_CONFIG_*` env overrides it (implied by the ordering, not stated in one sentence) | same | [V] |
+| npm.yml pins `npm@11.5.1`, the documented minimum for trusted publishing | https://docs.npmjs.com/trusted-publishers | [V] |
