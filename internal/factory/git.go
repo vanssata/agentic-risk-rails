@@ -1,79 +1,26 @@
 package factory
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/vanssata/agentic-risk-rails/internal/gitx"
 )
 
-// gitHardening is a copy of internal/policy.gitHardening (errata #16) plus
-// attribute hardening: rr runs git outside the agent sandbox in a repo the
-// agent may have poisoned. Replace with a shared helper after merge.
-var gitHardening = []string{
-	"-c", "core.fsmonitor=false",
-	"-c", "core.hooksPath=/dev/null",
-	"-c", "core.pager=cat",
-	"-c", "core.sshCommand=false",
-	"-c", "core.askPass=false",
-	"-c", "core.alternateRefsCommand=",
-	"-c", "core.untrackedCache=false",
-	"-c", "core.attributesFile=/dev/null",
-	"-c", "protocol.allow=never",
-	"-c", "credential.helper=",
-	"-c", "diff.external=",
-	"-c", "commit.gpgsign=false",
-	"-c", "user.name=rr",
-	"-c", "user.email=rr@localhost",
-	"--no-pager",
-}
-
-func gitEnv() []string {
-	env := []string{
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_ATTR_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_OPTIONAL_LOCKS=0",
-		"LC_ALL=C",
-	}
-	for _, k := range []string{"PATH", "HOME", "TMPDIR"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
+// commitIdentity makes rr's step commits independent of user config (which
+// gitx disables) and unsigned.
+var commitIdentity = []string{"-c", "commit.gpgsign=false", "-c", "user.name=rr", "-c", "user.email=rr@localhost"}
 
 func run(ctx context.Context, dir, stdin string, args ...string) (string, error) {
-	full := append(append(append([]string{}, gitHardening...), "-C", dir), args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = gitEnv()
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", subcommand(args), err, strings.TrimSpace(errb.String()))
-	}
-	return out.String(), nil
+	out, err := gitx.Run(ctx, stdin, append(append(append([]string{}, commitIdentity...), "-C", dir), args...)...)
+	return string(out), err
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return run(ctx, dir, "", args...)
-}
-
-func subcommand(args []string) string {
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			return a
-		}
-	}
-	return "?"
 }
 
 // worktree is a step checkout. Its `.git` FILE is writable by the worker, so it

@@ -7,65 +7,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/gitx"
 )
 
 const policyFile = "riskrails.yaml"
 
-// gitHardening neutralises every git config key that can make git execute a
-// program. rr runs git from the hook process, OUTSIDE the agent sandbox, in a
-// repo whose .git/config (or included / common-dir config) the agent may have
-// poisoned, so these must win over every config file: `-c` has the highest
-// precedence, and global/system config is disabled entirely.
-var gitHardening = []string{
-	"-c", "core.fsmonitor=false",
-	"-c", "core.hooksPath=/dev/null",
-	"-c", "core.pager=cat",
-	"-c", "core.sshCommand=false",
-	"-c", "core.askPass=false",
-	"-c", "core.alternateRefsCommand=",
-	"-c", "core.untrackedCache=false",
-	"-c", "protocol.allow=never",
-	"-c", "credential.helper=",
-	"-c", "diff.external=",
-	"-c", "core.attributesFile=/dev/null",
-	"--no-pager",
-}
-
-// gitEnv is a minimal environment: no inherited GIT_* variables (GIT_DIR,
-// GIT_CONFIG_*, GIT_EXEC_PATH …) and no global/system config.
-func gitEnv() []string {
-	env := []string{
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_OPTIONAL_LOCKS=0",
-		"GIT_ATTR_NOSYSTEM=1",
-		"LC_ALL=C",
-	}
-	for _, k := range []string{"PATH", "HOME", "TMPDIR", "SYSTEMROOT"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
 func gitOut(ctx context.Context, root string, args ...string) ([]byte, error) {
-	full := append(append(append([]string{}, gitHardening...), "-C", root), args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = gitEnv()
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
-	}
-	return out.Bytes(), nil
+	return gitx.Run(ctx, "", append([]string{"-C", root}, args...)...)
 }
 
 func splitNUL(out []byte) []string {
