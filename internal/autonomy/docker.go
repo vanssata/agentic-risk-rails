@@ -6,13 +6,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,10 +33,19 @@ type DockerRunner struct {
 	Runtime string // claude | codex
 	Root    string // host checkout, mounted at /work
 	Sock    string // host halt socket, mounted for the hook ("" = none)
-	Network string // docker network with egress to the runtime API only; "" or "none" blocks the run
-	Level   core.Level
-	Models  map[core.Tier]string
-	Timeout time.Duration // 0 = 90 minutes
+	Network string // the --internal network of Egress.Up; "" or "none" blocks the run
+	// ProxyURL is the egress proxy on Network (HTTPS_PROXY in the agent).
+	ProxyURL string
+	// PolicyFile is the policy in force (riskrails.yaml from the default branch), a file
+	// OUTSIDE the checkout, mounted read-only; the hook reads it via RR_POLICY_IN_FORCE.
+	PolicyFile string
+	// ScopeFile is the task's file list (JSON array), outside the checkout, mounted
+	// read-only for the agent container (RR_SCOPE_FILE). "" = none.
+	ScopeFile string
+	noKeys    bool // Exec/CommandArgv: no API keys, no halt socket, no scope file
+	Level     core.Level
+	Models    map[core.Tier]string
+	Timeout   time.Duration // 0 = 90 minutes
 }
 
 var (
@@ -44,7 +56,9 @@ var (
 const (
 	workDir  = "/work"
 	sockPath = "/run/rr/halt.sock"
-	readOnly = "riskrails.yaml .git .github"
+	// PolicyPath is where PolicyFile appears in the container.
+	policyPath = "/run/rr/policy.yaml"
+	scopePath  = "/run/rr/scope.json"
 )
 
 // argv builds the docker command; cmd runs inside the container.
@@ -52,23 +66,35 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if !imageRe.MatchString(d.Image) {
 		return nil, fmt.Errorf("docker runner: image %q must be pinned by digest (name@sha256:<64 hex>)", d.Image)
 	}
+	switch {
+	case network == "bridge", network == "host", network == "default", strings.HasPrefix(network, "container:"):
+		return nil, fmt.Errorf("docker runner: the agent must never join network %q", network)
+	}
 	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	if d.PolicyFile == "" {
+		return nil, fmt.Errorf("docker runner: no policy in force to mount (RR_POLICY_IN_FORCE)")
+	}
+	pol, err := outsideRoot(abs, d.PolicyFile)
 	if err != nil {
 		return nil, err
 	}
 	if err := requireRealGitDir(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
-	args := []string{"run", "--rm", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
+	args := []string{"run", "--rm", "--init", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		"--tmpfs", "/tmp", "-e", "HOME=/tmp", "-w", workDir,
-		"-e", "RR_LEVEL=" + d.Level.String(), "-e", "ANTHROPIC_API_KEY", "-e", "OPENAI_API_KEY"}
+		"-e", "RR_LEVEL=" + d.Level.String()}
+	args = append(args, d.envArgs(network)...)
 	if stdin {
 		args = append(args, "-i")
 	}
 	mounts := [][2]string{{abs, workDir}}
-	for _, p := range strings.Fields(readOnly) {
+	for _, p := range readOnlyPaths() {
 		if _, err := os.Lstat(filepath.Join(abs, p)); err == nil {
 			mounts = append(mounts, [2]string{filepath.Join(abs, p), workDir + "/" + p})
 		}
@@ -83,16 +109,149 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		}
 		args = append(args, "--mount", opt)
 	}
+	if strings.Contains(pol, ",") {
+		return nil, fmt.Errorf("docker runner: path %q contains a comma", pol)
+	}
+	args = append(args, "--mount", "type=bind,src="+pol+",dst="+policyPath+",readonly", "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	if d.ScopeFile != "" {
+		scope, err := outsideRoot(abs, d.ScopeFile)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--mount", "type=bind,src="+scope+",dst="+scopePath+",readonly", "-e", "RR_SCOPE_FILE="+scopePath)
+	}
 	if d.Sock != "" {
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
 	}
 	return append(append(args, d.Image), cmd...), nil
 }
 
+// outsideRoot returns the absolute path of a runner-owned file that must not be
+// inside the (agent-writable) checkout and must be mountable.
+func outsideRoot(root, file string) (string, error) {
+	p, err := filepath.Abs(file)
+	if err != nil {
+		return "", err
+	}
+	if inside, err := within(root, filepath.Dir(p)); err != nil || inside {
+		return "", fmt.Errorf("docker runner: %q must be outside the checkout (err: %v)", p, err) //nolint:errorlint // err may be nil
+	}
+	return p, nil
+}
+
+// envArgs: only the API key of the runtime that runs (none for Exec/CommandArgv),
+// and the proxy settings when the container has a network.
+func (d DockerRunner) envArgs(network string) (args []string) {
+	if !d.noKeys {
+		switch d.Runtime {
+		case "claude":
+			args = append(args, "-e", "ANTHROPIC_API_KEY")
+		case "codex":
+			args = append(args, "-e", "OPENAI_API_KEY")
+		}
+	}
+	if d.ProxyURL != "" && network != "none" {
+		for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+			args = append(args, "-e", k+"="+d.ProxyURL)
+		}
+		args = append(args, "-e", "NO_PROXY=localhost,127.0.0.1", "-e", "no_proxy=localhost,127.0.0.1", "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+	}
+	return args
+}
+
+// offline is the same sandbox for commands that are not the agent: no halt
+// socket (it does not exist before Serve), no scope file, no API keys.
+func (d DockerRunner) offline() DockerRunner {
+	d.Sock, d.ScopeFile, d.noKeys = "", "", true
+	return d
+}
+
+// readOnlyPaths are the concrete paths of core.AlwaysProtected (the agent has no
+// business writing them; the journal lives in the runner's StateDir) that exist
+// get a read-only mount over the writable checkout.
+func readOnlyPaths() []string {
+	var out []string
+	for _, p := range core.AlwaysProtected {
+		p = strings.TrimSuffix(p, "/**")
+		if !strings.ContainsAny(p, "*?[{") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Probe runs cmd as the agent would see it (halt socket, scope file) but without
+// network and API keys, and returns its stdout.
+func (d DockerRunner) Probe(ctx context.Context, cmd ...string) ([]byte, error) {
+	d.noKeys = true
+	return d.runOnce(ctx, cmd)
+}
+
+// Exec runs cmd in the same sandbox (no network, no socket, no keys) and returns its stdout.
+func (d DockerRunner) Exec(ctx context.Context, cmd ...string) ([]byte, error) {
+	return d.offline().runOnce(ctx, cmd)
+}
+
+func (d DockerRunner) runOnce(ctx context.Context, cmd []string) ([]byte, error) {
+	name := "rr-close-" + randHex()
+	args, err := d.argv(d.Root, name, "none", false, cmd)
+	if err != nil {
+		return nil, err
+	}
+	bin := d.Bin
+	if bin == "" {
+		bin = "docker"
+	}
+	c := exec.CommandContext(ctx, bin, args...)
+	c.Cancel = func() error {
+		_ = exec.Command(bin, "kill", name).Run()
+		return c.Process.Kill()
+	}
+	var out, errb bytes.Buffer
+	c.Stdout, c.Stderr = &out, &errb
+	if err := c.Run(); err != nil {
+		_ = exec.Command(bin, "rm", "-f", name).Run()
+		return out.Bytes(), fmt.Errorf("%s: %w: %s", strings.Join(cmd, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return out.Bytes(), nil
+}
+
 // CommandArgv is the argv (after the docker binary) that runs cmd in the same
 // sandbox, for the close run (errata #26): W4-A hands it to verify as its runner.
 func (d DockerRunner) CommandArgv(cmd ...string) ([]string, error) {
-	return d.argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
+	return d.offline().argv(d.Root, "rr-close-"+randHex(), "none", false, cmd)
+}
+
+// CloseSandbox is the verify.Sandbox of the host-side close: every adapter command
+// runs in its own named, offline container. cleanup force-removes them all; call it
+// when the close returns or is cancelled (docker run's client dying does not stop
+// the container).
+func (d DockerRunner) CloseSandbox() (sandbox func([]string) ([]string, error), cleanup func(context.Context)) {
+	var mu sync.Mutex
+	var names []string
+	sandbox = func(argv []string) ([]string, error) {
+		name := "rr-close-" + randHex()
+		a, err := d.offline().argv(d.Root, name, "none", false, argv)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		names = append(names, name)
+		mu.Unlock()
+		return append([]string{"docker"}, a...), nil
+	}
+	cleanup = func(ctx context.Context) {
+		bin := d.Bin
+		if bin == "" {
+			bin = "docker"
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, n := range names {
+			_ = exec.CommandContext(context.WithoutCancel(ctx), bin, "rm", "-f", n).Run() // absent (--rm) is fine
+		}
+	}
+	return sandbox, cleanup
 }
 
 func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {
@@ -106,7 +265,7 @@ func (d DockerRunner) agentCmd(model string, maxTurns int) ([]string, error) {
 		return c, nil
 	case "codex":
 		// never --dangerously-bypass-hook-trust: an untrusted hook would silently not run
-		return []string{"codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never", "--ephemeral", "-m", model, "-"}, nil
+		return []string{"codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never", "--ephemeral", "--json", "-m", model, "-"}, nil
 	}
 	return nil, fmt.Errorf("docker runner: unsupported runtime %q", d.Runtime)
 }
@@ -126,8 +285,8 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if !modelRe.MatchString(model) {
 		return core.WorkerReport{}, fmt.Errorf("docker runner: model %q from the tiers lock is not a plain model id", model)
 	}
-	if d.Network == "" || d.Network == "none" {
-		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network for the runtime API; provide an egress-restricted docker network (rr run --network)"}, nil
+	if d.Network == "" || d.Network == "none" || d.ProxyURL == "" {
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "no egress proxy for the runtime API (rr run --proxy-image)"}, nil
 	}
 	inner, err := d.agentCmd(model, spec.MaxTurns)
 	if err != nil {
@@ -176,11 +335,8 @@ func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport
 	blocked := func(why string) core.WorkerReport {
 		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
 	}
-	if runtime == "codex" { // final message on stdout, no token count
-		if runErr != nil {
-			return blocked("codex: " + runErr.Error())
-		}
-		return core.WorkerReport{Status: statusOf(stdout), Body: stdout}
+	if runtime == "codex" {
+		return parseCodex(stdout, stderr, runErr)
 	}
 	var res struct {
 		Result   string         `json:"result"`
@@ -199,6 +355,65 @@ func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport
 	}
 	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: tokens, Calls: res.NumTurns}
 	if res.IsError || runErr != nil {
+		rep.Status = core.StatusBlocked
+	}
+	return rep
+}
+
+// parseCodex reads `codex exec --json` (docs/research/verified/runner.md): the
+// last agent_message is the report, token usage is the sum of every
+// turn.completed (input_tokens includes cached ones). A stream that does not
+// parse, a turn without both numbers, or no turn.completed at all leaves Tokens
+// at 0 = unknown, which the runner counts as over budget.
+func parseCodex(stdout, stderr string, runErr error) core.WorkerReport {
+	blocked := func(why string) core.WorkerReport {
+		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
+	}
+	var msg string
+	var tokens int64
+	var turns int
+	known, failed := true, false
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	for {
+		var ev struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Usage struct {
+				Input  *int64 `json:"input_tokens"`
+				Output *int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err := dec.Decode(&ev); err != nil {
+			known = known && errors.Is(err, io.EOF)
+			break
+		}
+		switch ev.Type {
+		case "item.completed":
+			if ev.Item.Type == "agent_message" {
+				msg = ev.Item.Text
+			}
+		case "turn.completed":
+			turns++
+			if ev.Usage.Input == nil || ev.Usage.Output == nil || *ev.Usage.Input < 0 || *ev.Usage.Output < 0 {
+				known = false
+				continue
+			}
+			tokens += *ev.Usage.Input + *ev.Usage.Output
+		case "turn.failed":
+			failed = true
+		}
+	}
+	if !known || turns == 0 {
+		tokens = 0
+	}
+	if runErr != nil {
+		return blocked("codex: " + runErr.Error())
+	}
+	rep := core.WorkerReport{Status: statusOf(msg), Body: msg, Tokens: tokens, Calls: turns}
+	if failed {
 		rep.Status = core.StatusBlocked
 	}
 	return rep

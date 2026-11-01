@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,4 +75,44 @@ func TestDefaultStateDirIsUnderXDGState(t *testing.T) {
 	b, _ := defaultStateDir("/repo/b")
 	assert.Equal(t, filepath.Join(x, "riskrails"), filepath.Dir(a))
 	assert.NotEqual(t, a, b, "one state dir per checkout")
+}
+
+func TestRunEnforcementProbePrintsALevel(t *testing.T) {
+	out, err := runRR("run", "enforcement", "--runtime", "claude")
+	require.NoError(t, err)
+	assert.Contains(t, []string{"sandbox", "hook_only", "ci_only"}, strings.TrimSpace(out))
+	_, err = runRR("run", "enforcement", "--runtime", "nope")
+	assert.Error(t, err)
+}
+
+func TestEnforcementProbeIsFunctionalNotLookPath(t *testing.T) {
+	restore := policy.SetCeilingPaths(filepath.Join(t.TempDir(), "none"), filepath.Join(t.TempDir(), "none"))
+	defer restore()
+	repo := testutil.CopyFixture(t, "php-symfony")
+	good := filepath.Join(t.TempDir(), "p.yaml")
+	raw, err := os.ReadFile(filepath.Join(repo, "riskrails.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(good, raw, 0o600))
+	scope := filepath.Join(t.TempDir(), "scope.json")
+	require.NoError(t, os.WriteFile(scope, []byte(`["riskrails.yaml"]`), 0o600))
+	t.Setenv("RR_SCOPE_FILE", scope)
+	t.Setenv("RR_POLICY_IN_FORCE", good)
+	out, err := runRR("run", "enforcement", "--runtime", "claude", "--root", repo)
+	require.NoError(t, err)
+	assert.Equal(t, "sandbox", strings.TrimSpace(out), "the real guard denies both known-bad calls inside the runner container")
+
+	// a guard that fails closed (broken or missing policy in force) proves nothing
+	garbage := filepath.Join(t.TempDir(), "garbage.yaml")
+	require.NoError(t, os.WriteFile(garbage, []byte("{{{ not yaml"), 0o600))
+	for _, bad := range []string{garbage, filepath.Join(t.TempDir(), "nonexistent.yaml")} {
+		t.Setenv("RR_POLICY_IN_FORCE", bad)
+		out, err = runRR("run", "enforcement", "--runtime", "claude", "--root", repo)
+		require.NoError(t, err)
+		assert.Equal(t, "hook_only", strings.TrimSpace(out), bad)
+	}
+
+	t.Setenv("RR_POLICY_IN_FORCE", "")
+	out, err = runRR("run", "enforcement", "--runtime", "claude", "--root", repo)
+	require.NoError(t, err)
+	assert.Equal(t, "hook_only", strings.TrimSpace(out), "not the runner's container")
 }

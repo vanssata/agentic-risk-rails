@@ -31,6 +31,7 @@ type Task struct {
 	Irreversible bool      `yaml:"irreversible"`
 	Tier         core.Tier `yaml:"tier"` // default BALANCED
 	MaxTurns     int       `yaml:"max_turns"`
+	Files        []string  `yaml:"files"` // declared scope; handed to the agent's hook read-only
 }
 
 // Outcome is what happened to one queue item.
@@ -63,13 +64,27 @@ type Runner struct {
 	Home     string
 	Clock    Clock
 	HaltSock string // unix socket for the hooks; "" = none
-	Push     func(ctx context.Context, root, branch string) error
+	// Probe runs a command in the agent's container image the way the agent runs
+	// (halt socket, scope file, policy in force; no network, no API keys): the
+	// enforcement probe happens there, never on the host. nil = host Runtime.Enforcement (tests).
+	Probe    func(ctx context.Context, cmd ...string) ([]byte, error)
 	WallUnit time.Duration // unit of max_wall_minutes; 0 = time.Minute (tests shrink it)
+	// Start opens the task's journal (flow.Env.Start, Actor autonomy, state outside the
+	// checkout); Close is the host-side close (flow.Env.Close with verify.WithSandbox).
+	// nil = not wired (tests).
+	Start func(ctx context.Context, t Task) error
+	Close func(ctx context.Context, id string) error
 
-	eff    core.EffectivePolicy
-	halter Halter
-	cancel context.CancelFunc
+	eff     core.EffectivePolicy
+	inForce []byte // riskrails.yaml read from the default branch at the tip the run started from
+	base    string // the commit every task starts from == tip of the default branch at start
+	halter  Halter
+	cancel  context.CancelFunc
 }
+
+// PolicyFileName is the policy in force the runner writes into StateDir (outside
+// the checkout) and mounts read-only into the container.
+const PolicyFileName = "policy-in-force.yaml"
 
 var taskIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,60}$`)
 
@@ -98,9 +113,14 @@ func (r *Runner) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// snapshot reads the policy in force from the remote and resolves it.
+// snapshot reads the policy in force from the remote, at the tip of the default
+// branch, and resolves it.
 func (r *Runner) snapshot(ctx context.Context) (inForceSHA string, err error) {
-	b, err := r.Hosting.ReadFile(ctx, r.DefaultBranch, "riskrails.yaml")
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return "", fmt.Errorf("tip of %s unreadable: %w", r.DefaultBranch, err)
+	}
+	b, err := r.Hosting.ReadFile(ctx, tip, "riskrails.yaml")
 	if err != nil {
 		return "", fmt.Errorf("policy in force unreadable: %w", err)
 	}
@@ -110,55 +130,106 @@ func (r *Runner) snapshot(ctx context.Context) (inForceSHA string, err error) {
 	if r.eff.Policy.Project.DefaultBranch != r.DefaultBranch {
 		return "", fmt.Errorf("default branch %q differs from policy %q", r.DefaultBranch, r.eff.Policy.Project.DefaultBranch)
 	}
+	r.inForce = b
 	return sha(b), nil
 }
 
+// checkBase fails closed unless the commit the run started from is still the
+// tip of the default branch on the remote. moved = false with a non-nil error is
+// an API failure (halt); moved = true means the branch advanced (block the task).
+func (r *Runner) checkBase(ctx context.Context) (moved bool, err error) {
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return false, fmt.Errorf("tip of %s unreadable: %w", r.DefaultBranch, err)
+	}
+	return tip != r.base, nil
+}
+
 // preflight checks everything that must hold before the first wave and returns
-// the enforcement level and the commit every task branches from.
-func (r *Runner) preflight(ctx context.Context, queue []Task) (enf core.Enforcement, base string, err error) {
+// the commit every task branches from.
+// enforcement is measured in the image the agent runs in (Probe), not on the host.
+// It needs the policy in force file mounted and the halt socket served, so it runs
+// after the first snapshot and Serve. The probe's scope is riskrails.yaml only.
+func (r *Runner) enforcement(ctx context.Context) (core.Enforcement, error) {
+	var enf core.Enforcement
+	var err error
+	if r.Probe != nil { // measured in the image the agent runs in, not on the host
+		if err := os.WriteFile(filepath.Join(r.StateDir, ScopeFileName), []byte(`["riskrails.yaml"]`), 0o600); err != nil {
+			return "", err
+		}
+		out, xerr := r.Probe(ctx, "rr", "run", "enforcement", "--runtime", r.Runtime.Name())
+		if xerr != nil {
+			return "", fmt.Errorf("enforcement in the image: %w", xerr)
+		}
+		enf = core.Enforcement(strings.TrimSpace(string(out)))
+	} else if enf, err = r.Runtime.Enforcement(ctx, r.Root); err != nil {
+		return "", fmt.Errorf("enforcement: %w", err)
+	}
+	if enf != core.EnforcementSandbox {
+		return "", &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
+	}
+	return enf, nil
+}
+
+func (r *Runner) preflight(ctx context.Context, queue []Task) (base string, err error) {
 	if r.Level < core.L2 {
-		return "", "", fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
+		return "", fmt.Errorf("rr run is for L2 and above, got %s", r.Level)
 	}
 	if r.Clock == nil {
 		r.Clock = realClock{}
 	}
 	for _, t := range queue {
 		if !taskIDRe.MatchString(t.ID) {
-			return "", "", fmt.Errorf("invalid task id %q", t.ID)
+			return "", fmt.Errorf("invalid task id %q", t.ID)
 		}
 	}
 	if err := requireRealGitDir(r.Root); err != nil {
-		return "", "", err
+		return "", err
 	}
 	if inside, werr := within(r.Root, r.StateDir); werr != nil || inside {
-		return "", "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
-	}
-	enf, err = r.Runtime.Enforcement(ctx, r.Root)
-	if err != nil {
-		return "", "", fmt.Errorf("enforcement: %w", err)
-	}
-	if enf != core.EnforcementSandbox {
-		return "", "", &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
+		return "", fmt.Errorf("state dir %q must be outside the checkout %q (err: %v)", r.StateDir, r.Root, werr) //nolint:errorlint // werr may be nil
 	}
 	if st, gerr := r.git(ctx, "status", "--porcelain"); gerr != nil || st != "" {
-		return "", "", fmt.Errorf("checkout must be clean (status: %q, err: %v)", st, gerr) //nolint:errorlint // gerr may be nil
+		return "", fmt.Errorf("checkout must be clean (status: %q, err: %v)", st, gerr) //nolint:errorlint // gerr may be nil
 	}
 	if base, err = r.git(ctx, "rev-parse", "HEAD"); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return enf, base, nil
+	tip, err := r.Hosting.BranchSHA(ctx, r.DefaultBranch)
+	if err != nil {
+		return "", r.refuse(ctx, "BASE_UNKNOWN", err.Error())
+	}
+	if tip != base {
+		return "", r.refuse(ctx, "BASE_NOT_TIP", "HEAD "+base+" is not the tip "+tip+" of "+r.DefaultBranch+" on the remote")
+	}
+	r.base = base
+	return base, nil
 }
 
 // Run processes the queue. It returns a *core.Refusal when it stops (HALT,
 // BUDGET, CEILING_CHANGED, ENFORCEMENT, JOURNAL_TAMPERED); outcomes so far are returned too.
 func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
-	enf, base, err := r.preflight(ctx, queue)
+	base, err := r.preflight(ctx, queue)
 	if err != nil {
 		return nil, err
 	}
 	inForce, err := r.snapshot(ctx)
 	if err != nil {
 		return nil, &core.Refusal{Code: "POLICY_UNREADABLE", Detail: err.Error()}
+	}
+	if err := os.WriteFile(filepath.Join(r.StateDir, PolicyFileName), r.inForce, 0o600); err != nil {
+		return nil, fmt.Errorf("write policy in force: %w", err)
+	}
+	if r.HaltSock != "" {
+		stop, err := r.halter.Serve(r.HaltSock)
+		if err != nil {
+			return nil, err
+		}
+		defer stop()
+	}
+	enf, err := r.enforcement(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := r.Journal.Append(ctx, core.Event{Type: "task_started", Task: r.RunID, Actor: core.ActorAutonomy, Via: "runner", PolicySHA: r.eff.PolicySHA}); err != nil {
 		return nil, fmt.Errorf("journal task_started: %w", err)
@@ -183,13 +254,6 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 		}, cancelAgents)
 	}()
 	defer func() { stopPoll(); wg.Wait() }()
-	if r.HaltSock != "" {
-		stop, err := r.halter.Serve(r.HaltSock)
-		if err != nil {
-			return nil, err
-		}
-		defer stop()
-	}
 
 	var out []Outcome
 	for _, t := range queue {
@@ -389,6 +453,9 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, err
 	}
 
+	if o, stop, err := r.gateTask(ctx, o, t); stop {
+		return o, err
+	}
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
@@ -409,16 +476,8 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, r.refuse(ctx, "RENDER", err.Error())
 	}
 
-	waveCtx := agentCtx
-	if m := pol.Autonomy.Unattended.MaxWallMinutes; m != nil {
-		var c context.CancelFunc
-		unit := r.WallUnit
-		if unit == 0 {
-			unit = time.Minute
-		}
-		waveCtx, c = context.WithTimeout(agentCtx, time.Duration(*m)*unit)
-		defer c()
-	}
+	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
+	defer endWave()
 	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
 		Brief: "Task id: " + t.ID + "\n\n" + t.Brief, Budget: pol.Models.Budgets[t.Mode]})
 
@@ -448,6 +507,78 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown"}
 	}
 	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
+}
+
+// waveContext applies max_wall_minutes to one wave.
+func (r *Runner) waveContext(agentCtx context.Context, minutes *int) (context.Context, context.CancelFunc) {
+	if minutes == nil {
+		return agentCtx, func() {}
+	}
+	unit := r.WallUnit
+	if unit == 0 {
+		unit = time.Minute
+	}
+	return context.WithTimeout(agentCtx, time.Duration(*minutes)*unit)
+}
+
+// gateTask runs before the agent: the base must still be the remote tip, then the
+// task journal and scope file. stop = the task does not run (err may be nil: blocked).
+func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, bool, error) {
+	moved, err := r.checkBase(ctx)
+	if err != nil {
+		return o, true, r.halted(ctx, err.Error())
+	}
+	if moved {
+		o.Status = "blocked"
+		return o, true, r.log(ctx, "task_blocked", map[string]any{"task": t.ID, "reason": "default branch moved since the run started"})
+	}
+	if err := r.startTask(ctx, t); err != nil {
+		return o, true, r.refuse(ctx, "TASK_START", err.Error())
+	}
+	return o, false, nil
+}
+
+// ScopeFileName is the task's file list the runner writes into StateDir.
+const ScopeFileName = "scope.json"
+
+// startTask writes the scope file the container mounts read-only (errata #41),
+// then opens the task journal outside the checkout.
+func (r *Runner) startTask(ctx context.Context, t Task) error {
+	files := t.Files
+	if files == nil {
+		files = []string{}
+	}
+	b, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(r.StateDir, ScopeFileName), b, 0o600); err != nil {
+		return err
+	}
+	if r.Start == nil {
+		return nil
+	}
+	return r.Start(ctx, t)
+}
+
+// closeRun is the host-side close of the task (adapters run in a fresh sandbox
+// container, errata #41); "" = passed or not wired.
+func (r *Runner) closeRun(ctx context.Context, id string) string {
+	if r.Close == nil {
+		return ""
+	}
+	if err := r.Close(ctx, id); err != nil {
+		return "close failed: " + firstLine(err.Error())
+	}
+	return ""
+}
+
+// beforePush re-checks the kill switch and that the default branch has not moved.
+func (r *Runner) beforePush(ctx context.Context, killFile string) (moved bool, err error) {
+	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, killFile); err != nil {
+		return false, err
+	}
+	return r.checkBase(ctx)
 }
 
 // deliver turns a finished worker into a draft PR, or blocks the task.
@@ -490,21 +621,23 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		}
 		return block(why)
 	}
+	if why := r.closeRun(ctx, t.ID); why != "" {
+		return block(why)
+	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
 	if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
 		return block(err.Error())
 	}
-	if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
+	if moved, err := r.beforePush(ctx, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
 		return o, r.halted(ctx, err.Error())
+	} else if moved {
+		return block("default branch moved before push")
 	}
-	push := r.Push
-	if push == nil {
-		push = gitPush
-	}
-	if err := push(ctx, r.Root, branch); err != nil {
+	if err := r.Hosting.Push(ctx, r.Root, branch); err != nil {
 		return block("push: " + err.Error())
 	}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), nil)
+	labels := []string{"rr", "rr:" + o.Level.String(), "rr:mode:" + string(t.Mode)}
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep), labels)
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}
@@ -653,17 +786,6 @@ func (r *Runner) rescore(ctx context.Context, t Task, base string, changed []str
 		return fmt.Sprintf("rescored to %s (irreversible=%v) from declared %s", w.Mode, w.Irreversible, t.Mode), nil
 	}
 	return "", nil
-}
-
-// gitPush pushes only rr/* branches, never a default branch. Credentials are not
-// available to the hardened git (CORE_CHANGE_REQUESTS: Hosting.Push).
-func gitPush(ctx context.Context, root, branch string) error {
-	if !strings.HasPrefix(branch, "rr/") {
-		return fmt.Errorf("refusing to push %q", branch)
-	}
-	_, err := gitx.Run(ctx, "", "-C", root, "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always",
-		"push", "origin", "refs/heads/"+branch+":refs/heads/"+branch)
-	return err
 }
 
 // treeAt lists the files of a commit, NUL-separated so unusual names stay intact.
