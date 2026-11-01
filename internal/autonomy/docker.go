@@ -163,6 +163,9 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	runErr := cmd.Run()
+	if runErr != nil { // a failed or killed client may leave the container behind
+		_ = exec.Command(bin, "rm", "-f", name).Run()
+	}
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}

@@ -323,7 +323,14 @@ func (r *Runner) tasksToday() (int, error) {
 
 func (r *Runner) reset(ctx context.Context, base string) {
 	_, _ = r.git(ctx, "checkout", "-f", "-q", base)
-	_, _ = r.git(ctx, "clean", "-ffdq")
+	r.clean(ctx)
+}
+
+// clean removes untracked AND ignored files (node_modules, vendor, .env the agent
+// planted) so the next task, verify and Rescore never see them; only the runner's
+// own .rr stays. Dependencies are reinstalled per task: accepted price.
+func (r *Runner) clean(ctx context.Context) {
+	_, _ = r.git(ctx, "clean", "-ffdqx", "-e", "/.rr")
 }
 
 // dailyLimit counts this task against max_tasks_per_day (persisted in the state dir).
@@ -487,6 +494,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	if _, err := r.git(ctx, "switch", "-q", "--detach", base); err != nil {
 		return o, err
 	}
+	r.clean(ctx)
 	return o, r.log(ctx, "draft_pr_opened", map[string]any{"task": t.ID, "branch": branch, "number": pr.Number, "url": pr.URL})
 }
 
@@ -576,7 +584,7 @@ func (r *Runner) stage(ctx context.Context) (changed []string, deleted map[strin
 	if _, err := r.git(ctx, "add", "-A"); err != nil {
 		return nil, nil, err
 	}
-	out, err := gitx.Run(ctx, "", "-C", r.Root, "diff", "--cached", "--name-status", "--no-renames", "-z")
+	out, err := gitx.Run(ctx, "", "-C", r.Root, "diff", "--cached", "--raw", "--no-renames", "-z")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -586,11 +594,19 @@ func (r *Runner) stage(ctx context.Context) (changed []string, deleted map[strin
 	}
 	f := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 	if len(f)%2 != 0 {
-		return nil, nil, fmt.Errorf("unparsable diff --name-status output")
+		return nil, nil, fmt.Errorf("unparsable diff --raw output")
 	}
 	for i := 0; i+1 < len(f); i += 2 {
+		// ":<oldmode> <newmode> <oldsha> <newsha> <status>"
+		m := strings.Fields(strings.TrimPrefix(f[i], ":"))
+		if len(m) != 5 {
+			return nil, nil, fmt.Errorf("unparsable diff --raw entry %q", f[i])
+		}
+		if m[1] == "120000" || m[1] == "160000" || strings.HasPrefix(m[4], "T") {
+			return nil, nil, fmt.Errorf("symlink/gitlink in diff: %s", f[i+1])
+		}
 		changed = append(changed, f[i+1])
-		if strings.HasPrefix(f[i], "D") {
+		if strings.HasPrefix(m[4], "D") {
 			deleted[f[i+1]] = true
 		}
 	}
@@ -601,11 +617,10 @@ func (r *Runner) stage(ctx context.Context) (changed []string, deleted map[strin
 // irreversible change means the level no longer covers the task.
 func (r *Runner) rescore(ctx context.Context, t Task, base string, changed []string, deleted map[string]bool) (string, error) {
 	pol := r.eff.Policy
-	treeOut, err := r.git(ctx, "ls-tree", "-r", "--name-only", base)
+	tree, err := r.treeAt(ctx, base)
 	if err != nil {
 		return "", err
 	}
-	tree := strings.Split(treeOut, "\n")
 	var live []string
 	for _, c := range changed {
 		if !deleted[c] {
@@ -633,10 +648,25 @@ func gitPush(ctx context.Context, root, branch string) error {
 	return err
 }
 
+// treeAt lists the files of a commit, NUL-separated so unusual names stay intact.
+func (r *Runner) treeAt(ctx context.Context, rev string) ([]string, error) {
+	out, err := gitx.Run(ctx, "", "-C", r.Root, "ls-tree", "-r", "-z", "--name-only", rev)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, n := range strings.Split(string(out), "\x00") {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}
+
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	if len(l) > 72 {
-		l = l[:72]
+		l = strings.ToValidUTF8(l[:72], "")
 	}
 	return l
 }
@@ -659,6 +689,6 @@ func prBody(t Task, lvl core.Level, rep core.WorkerReport) string {
 		run = 0
 	}
 	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: declared only, irreversible=%v\n"+
-		"- worker: %s, %d calls\n- cost: %d tokens\n- review verdict: none yet; required human review on the server\n\n"+
+		"- worker: %s, %d calls\n- cost: %d tokens (worker status, calls and cost are reported by the agent: advisory)\n- review verdict: none yet; required human review on the server\n\n"+
 		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, t.Mode, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
 }

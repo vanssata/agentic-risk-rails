@@ -31,6 +31,9 @@ permission-modes and headless pages (code.claude.com, first 100k chars of permis
 - Codex: `codex exec --sandbox workspace-write -c approval_policy=never`, no hook-trust bypass.
 - Container: `--network none` by default (egress allowlist is the proxy's job, GAP).
 
+## Between tasks
+`reset` and the end of a successful task run `git clean -ffdqx -e /.rr`: ignored files (node_modules, vendor, .env) planted by one task never reach the next task, verify or Rescore. Cost: dependencies are reinstalled for every task (accepted).
+
 ## GAPS
 - Network: `--network none` (the default of `rr run --network`) cannot reach the runtime API, so a real run is BLOCKED with "no network for the runtime API; provide an egress-restricted docker network". The operator supplies a docker network. An egress proxy with allow = runtime API hosts + `enforcement.egress.allow` is wave 4 / owner; not implemented. [U]
 - Token usage: `codex exec` output is not parsed (the ledger parser reads rollout files, a different format; the `exec --json` event shape is not verified). Unknown usage with a policy token budget stops the run (fail-closed), so Codex runs stop after the first task until usage parsing exists.
