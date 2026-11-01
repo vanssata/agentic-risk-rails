@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/vanssata/agentic-risk-rails/internal/hostexec"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,46 +57,14 @@ func ValidVersion(v string) error {
 // passEnv is the environment a release command gets besides PATH and a fresh HOME: no tokens.
 var passEnv = []string{"TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TZ"}
 
-// same rule as verify.safePath; dedup in wave 4
-func within(root, p string) bool {
-	rel, err := filepath.Rel(root, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func evalOr(p string) string {
-	if e, err := filepath.EvalSymlinks(p); err == nil {
-		return e
-	}
-	return p
-}
-
-// safePath is PATH reduced to absolute directories outside root.
-// same rule as verify.safePath; dedup in wave 4
-func safePath(root string) []string {
-	evalRoot := evalOr(root)
-	var dirs []string
-	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
-		if filepath.IsAbs(d) && !within(evalRoot, evalOr(d)) {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
 // run executes argv in root. The binary is found only in safePath; the environment
 // is allowlisted with a throwaway HOME. A missing binary or a non-zero exit gives
 // OK:false, never a panic.
 func run(ctx context.Context, root string, argv []string) core.Check {
 	name := strings.Join(argv, " ")
-	dirs := safePath(root)
-	bin := ""
-	for _, d := range dirs {
-		if fi, err := os.Stat(filepath.Join(d, argv[0])); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
-			bin = filepath.Join(d, argv[0])
-			break
-		}
-	}
-	if bin == "" {
+	dirs := hostexec.SafePath(root)
+	bin, ok := hostexec.Lookup(dirs, argv[0])
+	if !ok {
 		return core.Check{Name: name, Detail: argv[0] + " not found in the sanitized PATH"}
 	}
 	home, err := os.MkdirTemp("", "rr-release-home-")
