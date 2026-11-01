@@ -35,7 +35,9 @@
       "Bash(rm -rf /)"
     ],
     "ask": [],
-    "allow": []
+    "allow": [
+      "mcp__rr__*"
+    ]
   },
   "hooks": {
     "PreToolUse": [
@@ -92,5 +94,8 @@
         "/home/test/.cache/riskrails/**"
       ]
     }
-  }
+  },
+  "enabledMcpjsonServers": [
+    "rr"
+  ]
 }

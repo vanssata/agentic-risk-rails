@@ -56,7 +56,7 @@ var directions = func() map[string]rule {
 		"project.name":           opq,
 		"project.stack":          opq,
 		"project.default_branch": opq,
-		"project.runtimes":       opq, // TODO(W4-D): nil = all; subset = LOOSEN
+		"project.runtimes":       runtimesRule(),
 
 		"risk.axes.*.measured":                    opq,
 		"risk.axes.*.declared":                    raise,
@@ -292,6 +292,31 @@ func setRule(moreStricter bool) rule {
 				return fromStrs(b.Type(), union(strs(b), strs(a)))
 			}
 			return fromStrs(b.Type(), intersect(strs(a), strs(b)))
+		},
+	}
+}
+
+// runtimesRule: a runtime list is a set where more entries are stricter (more
+// generated enforcement), and nil means every runtime, the strictest value.
+func runtimesRule() rule {
+	set := setRule(true)
+	return rule{
+		cmp: func(x *cmpCtx, b, c reflect.Value) (core.Direction, string, error) {
+			switch {
+			case b.IsNil() && c.IsNil():
+				return core.Equal, "", nil
+			case b.IsNil():
+				return core.Loosen, "all runtimes -> " + show(c), nil
+			case c.IsNil():
+				return core.Tighten, show(b) + " -> all runtimes", nil
+			}
+			return set.cmp(x, b, c)
+		},
+		merge: func(a, b reflect.Value) reflect.Value {
+			if a.IsNil() || b.IsNil() {
+				return reflect.Zero(b.Type())
+			}
+			return set.merge(a, b)
 		},
 	}
 }

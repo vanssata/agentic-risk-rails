@@ -34,6 +34,16 @@ type configFile struct {
 	SandboxWorkspaceWrite sandboxWorkspaceWrite     `toml:"sandbox_workspace_write"`
 	Agents                agentsSection             `toml:"agents"`
 	Permissions           map[string]permissionsDef `toml:"permissions"`
+	MCPServers            map[string]mcpServer      `toml:"mcp_servers"`
+}
+
+// mcpServer registers `rr mcp`. Its tools (triage, research, status) are
+// read-only, so approval is automatic; at L2 "prompt" would have nobody to answer.
+type mcpServer struct {
+	Command                  string   `toml:"command"`
+	Args                     []string `toml:"args"`
+	EnabledTools             []string `toml:"enabled_tools"`
+	DefaultToolsApprovalMode string   `toml:"default_tools_approval_mode"`
 }
 
 type sandboxWorkspaceWrite struct {
@@ -61,6 +71,7 @@ func (configGen) Render(_ context.Context, in core.SyncInput) ([]core.File, erro
 		ApprovalPolicy:     "on-request",
 		Agents:             agentsSection{MaxConcurrentThreads: maxSubagents},
 		Permissions:        map[string]permissionsDef{profileName: {Filesystem: filesystem(in)}},
+		MCPServers:         map[string]mcpServer{"rr": {Command: "rr", Args: []string{"mcp"}, EnabledTools: []string{"triage", "research", "status"}, DefaultToolsApprovalMode: "approve"}},
 	}
 	if in.Level >= core.L2 {
 		cfg.ApprovalPolicy = "never" // ask is compiled to deny; nobody is there to answer

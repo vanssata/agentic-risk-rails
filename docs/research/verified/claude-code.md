@@ -69,3 +69,13 @@ Docs base: https://code.claude.com/docs/en/ (llms.txt index at /docs/llms.txt).
 
 ## COST
 Phase R: 8 doc fetches. Contract runs on `--model haiku`, `--max-turns 2`: about 0.005 USD per run, ~4 runs total.
+
+## MCP (W4-D, verified 2026-11-01)
+
+| Fact | Source | |
+|---|---|---|
+| Project-scoped servers live in `.mcp.json` at the project root: `{"mcpServers": {"<name>": {...}}}`; an entry without `type` is stdio (`command`, `args`, `env`); `url` entries need `type` | https://code.claude.com/docs/en/mcp | [V] |
+| Interactive sessions prompt before using `.mcp.json` servers; `claude -p` / Agent SDK load them without asking | same | [V] |
+| Approval keys `enableAllProjectMcpServers`, `enabledMcpjsonServers`, `disabledMcpjsonServers` exist, scope "Any file"; `enableAllProjectMcpServers`/`enabledMcpjsonServers` in `.claude/settings.json` are ignored in an untrusted folder | https://code.claude.com/docs/en/mcp , /settings-reference | [V] |
+| Value shape of `enabledMcpjsonServers` (array of server names) not shown in the fetched text; an invalid entry is only skipped with a Settings Warning | https://code.claude.com/docs/en/settings | [U] |
+| Allow rule `mcp__<server>__*` is valid (literal `mcp__<server>__` prefix, glob-free server); `mcp__` rules with parentheses are skipped | https://code.claude.com/docs/en/permissions | [V] |

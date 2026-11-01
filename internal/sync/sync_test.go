@@ -46,3 +46,44 @@ func TestRenderRejectsDuplicatesAndEscapes(t *testing.T) {
 		assert.ErrorContains(t, err, "escapes", p)
 	}
 }
+
+func TestRenderFiltersByRuntime(t *testing.T) {
+	gen := func(id, path string) core.Generator {
+		return fakes.Generator{ID: id, Files: []core.File{{Path: path}}}
+	}
+	ga, gb, gn := gen("rt-a-gen", "a"), gen("rt-b-gen", "b"), gen("neutral-gen", "n")
+	rrsync.RegisterRuntime("rt-a", ga)
+	rrsync.RegisterRuntime("rt-b", gb)
+	rrsync.Register(gn)
+	all := []core.Generator{ga, gb, gn}
+	for _, c := range []struct {
+		name string
+		rts  []string
+		want []string
+		err  string
+	}{
+		{"nil renders all", nil, []string{"a", "b", "n"}, ""},
+		{"subset", []string{"rt-b"}, []string{"b", "n"}, ""},
+		{"empty list keeps only neutral", []string{}, []string{"n"}, ""},
+		{"unknown name fails closed", []string{"rt-a", "nope"}, nil, `unknown runtime "nope"`},
+		{"names are case-sensitive", []string{"RT-A"}, nil, `unknown runtime "RT-A"`},
+		{"name with a space", []string{"rt a"}, nil, `unknown runtime "rt a"`},
+		{"unknown name fails even with no generators", []string{"nope"}, nil, `unknown runtime "nope"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var in core.SyncInput
+			in.Policy.Policy.Project.Runtimes = c.rts
+			files, err := rrsync.Render(context.Background(), in, all)
+			if c.err != "" {
+				assert.ErrorContains(t, err, c.err)
+				return
+			}
+			require.NoError(t, err)
+			var got []string
+			for _, f := range files {
+				got = append(got, f.Path)
+			}
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
