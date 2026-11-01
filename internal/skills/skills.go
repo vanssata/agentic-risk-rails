@@ -40,6 +40,6 @@ func (g gen) Render(_ context.Context, _ core.SyncInput) ([]core.File, error) {
 
 func init() {
 	for rt, dir := range Dirs {
-		rrsync.Register(gen{rt, dir})
+		rrsync.RegisterRuntime(rt, gen{rt, dir})
 	}
 }

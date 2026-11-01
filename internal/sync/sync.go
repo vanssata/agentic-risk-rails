@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	gosync "sync"
 
@@ -17,7 +18,25 @@ import (
 var (
 	mu   gosync.Mutex
 	gens []core.Generator
+	// runtimeOf maps a generator name to the runtime it belongs to; generators
+	// registered with Register are runtime-neutral and are not listed.
+	runtimeOf = map[string]string{}
+	known     = map[string]bool{}
 )
+
+// RegisterRuntime declares a runtime name (valid in project.runtimes) and
+// registers its generators, which rr sync renders only while the runtime is enabled.
+func RegisterRuntime(name string, gs ...core.Generator) {
+	mu.Lock()
+	known[name] = true
+	for _, g := range gs {
+		runtimeOf[g.Name()] = name
+	}
+	mu.Unlock()
+	for _, g := range gs {
+		Register(g)
+	}
+}
 
 // Register adds a generator; adapters call it from init().
 func Register(g core.Generator) {
@@ -35,11 +54,31 @@ func Generators() []core.Generator {
 	return out
 }
 
-// Render collects files from gens. Two generators writing the same path is an error.
+// enabled reports whether g renders under project.runtimes (nil = all). A name
+// that is not a registered runtime is an error (fail-closed).
+func enabled(g core.Generator, rts []string) (bool, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	for _, rt := range rts {
+		if !known[rt] {
+			return false, fmt.Errorf("project.runtimes: unknown runtime %q", rt)
+		}
+	}
+	rt, ok := runtimeOf[g.Name()]
+	return rts == nil || !ok || slices.Contains(rts, rt), nil
+}
+
+// Render collects files from gens, skipping generators of runtimes not listed
+// in project.runtimes. Two generators writing the same path is an error.
 func Render(ctx context.Context, in core.SyncInput, gens []core.Generator) ([]core.File, error) {
 	owner := map[string]string{}
 	var files []core.File
 	for _, g := range gens {
+		if on, err := enabled(g, in.Policy.Policy.Project.Runtimes); err != nil {
+			return nil, err
+		} else if !on {
+			continue
+		}
 		fs, err := g.Render(ctx, in)
 		if err != nil {
 			return nil, fmt.Errorf("generator %s: %w", g.Name(), err)
