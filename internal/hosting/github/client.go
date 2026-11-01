@@ -81,8 +81,9 @@ func (c *Client) ReadFile(ctx context.Context, ref, path string) ([]byte, error)
 
 // OpenDraftPR opens a draft pull request from head into base.
 func (c *Client) OpenDraftPR(ctx context.Context, head, base, title, body string) (core.PullRequest, error) {
+	draft := true
 	pr, _, err := c.gh.PullRequests.Create(ctx, c.owner, c.repo, gh.CreatePullRequest{
-		Title: &title, Head: head, Base: base, Body: &body, Draft: gh.Ptr(true),
+		Title: &title, Head: head, Base: base, Body: &body, Draft: &draft,
 	})
 	if err != nil {
 		return core.PullRequest{}, fmt.Errorf("github: open draft PR: %w", err)
