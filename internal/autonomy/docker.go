@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/globs"
 )
 
 // DockerRunner runs one worker (claude -p or codex exec) in a throw-away Docker
@@ -42,10 +45,21 @@ type DockerRunner struct {
 	// ScopeFile is the task's file list (JSON array), outside the checkout, mounted
 	// read-only for the agent container (RR_SCOPE_FILE). "" = none.
 	ScopeFile string
-	noKeys    bool // Exec/CommandArgv: no API keys, no halt socket, no scope file
-	Level     core.Level
-	Models    map[core.Tier]string
-	Timeout   time.Duration // 0 = 90 minutes
+	// CodexConfig is the user config (StateDir, outside the checkout) that marks /work
+	// trusted: mounted read-only at $HOME/.codex/config.toml (codex only).
+	CodexConfig string
+	// CeilingEnt / CeilingUser are the ceiling files the host resolved with (StateDir
+	// copies, "" or absent = none): mounted read-only where the guard in the container
+	// looks for them (HOME=/tmp).
+	CeilingEnt, CeilingUser string
+	// NoRead are the repo-relative patterns of enforcement.secret_reads and
+	// sandbox.no_read (already expanded): every match in the checkout, git-ignored or
+	// not, is masked in the container.
+	NoRead  []string
+	noKeys  bool // Exec/CommandArgv: no API keys, no halt socket, no scope file
+	Level   core.Level
+	Models  map[core.Tier]string
+	Timeout time.Duration // 0 = 90 minutes
 }
 
 var (
@@ -59,6 +73,10 @@ const (
 	// PolicyPath is where PolicyFile appears in the container.
 	policyPath = "/run/rr/policy.yaml"
 	scopePath  = "/run/rr/scope.json"
+	// the container's HOME is /tmp
+	codexHome       = "/tmp/.codex"
+	ceilingEntPath  = "/etc/riskrails/ceiling.yaml"
+	ceilingUserPath = "/tmp/.config/riskrails/ceiling.yaml"
 )
 
 // argv builds the docker command; cmd runs inside the container.
@@ -120,6 +138,11 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		}
 		args = append(args, "--mount", "type=bind,src="+scope+",dst="+scopePath+",readonly", "-e", "RR_SCOPE_FILE="+scopePath)
 	}
+	extra, err := d.configMounts(abs)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, extra...)
 	if d.Sock != "" {
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
 	}
@@ -431,4 +454,73 @@ func statusOf(body string) core.WorkerStatus {
 		return s
 	}
 	return core.StatusBlocked
+}
+
+// secretMasks walks the checkout (git-ignored files included, .git excluded) and
+// returns the --mount args that hide every path matching a no-read pattern: an empty
+// read-only tmpfs over a directory, /dev/null over a file. Home and absolute
+// patterns are outside the checkout. A tree that cannot be walked is an error.
+func secretMasks(root string, patterns []string) (args []string, err error) {
+	var pats []string
+	for _, p := range patterns {
+		if !strings.HasPrefix(p, "~") && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "$") {
+			pats = append(pats, p)
+		}
+	}
+	if len(pats) == 0 {
+		return nil, nil
+	}
+	err = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk %s for secrets: %w", p, err)
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil || rel == "." {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == ".git" {
+			return fs.SkipDir
+		}
+		if !slices.ContainsFunc(pats, func(pat string) bool { return globs.Match(pat, rel) }) {
+			return nil
+		}
+		if strings.Contains(rel, ",") {
+			return fmt.Errorf("secret path %q contains a comma", rel)
+		}
+		if e.IsDir() {
+			args = append(args, "--mount", "type=tmpfs,dst="+workDir+"/"+rel+",tmpfs-size=4096,readonly")
+			return fs.SkipDir
+		}
+		args = append(args, "--mount", "type=bind,src=/dev/null,dst="+workDir+"/"+rel+",readonly")
+		return nil
+	})
+	return args, err
+}
+
+// configMounts are the read-only runner-owned config files and the secret masks.
+func (d DockerRunner) configMounts(abs string) (args []string, err error) {
+	for _, f := range []struct{ src, dst string }{{d.CeilingEnt, ceilingEntPath}, {d.CeilingUser, ceilingUserPath}} {
+		if _, err := os.Stat(f.src); f.src == "" || err != nil {
+			continue
+		}
+		if strings.Contains(f.src, ",") {
+			return nil, fmt.Errorf("docker runner: path %q contains a comma", f.src)
+		}
+		args = append(args, "--mount", "type=bind,src="+f.src+",dst="+f.dst+",readonly")
+	}
+	if d.Runtime == "codex" && d.CodexConfig != "" {
+		if strings.Contains(d.CodexConfig, ",") {
+			return nil, fmt.Errorf("docker runner: path %q contains a comma", d.CodexConfig)
+		}
+		// a tmpfs owned by the agent user, so codex can write its state; the config is read-only on top
+		args = append(args, "--tmpfs", codexHome+":rw,mode=0700,uid="+strconv.Itoa(os.Getuid())+",gid="+strconv.Itoa(os.Getgid()),
+			"--mount", "type=bind,src="+d.CodexConfig+",dst="+codexHome+"/config.toml,readonly")
+	}
+	masks, err := secretMasks(abs, d.NoRead)
+	if err != nil {
+		return nil, fmt.Errorf("docker runner: %w", err)
+	}
+	args = append(args, masks...)
+	return args, nil
 }

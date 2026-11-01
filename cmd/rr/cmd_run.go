@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -119,7 +121,7 @@ func enforcementCmd() *cobra.Command {
 				return fmt.Errorf("unknown runtime %q", runtime)
 			}
 			enf := core.EnforcementSandbox
-			if os.Getenv("RR_POLICY_IN_FORCE") == "" {
+			if os.Getenv("RR_POLICY_IN_FORCE") == "" || !runtimeConfigLoads(runtime, root) {
 				enf = core.EnforcementHookOnly
 			}
 			for i, call := range probeCalls(runtime, root) {
@@ -135,6 +137,41 @@ func enforcementCmd() *cobra.Command {
 	c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
 	c.Flags().StringVar(&root, "root", wd, "checkout")
 	return c
+}
+
+// runtimeConfigLoads: Codex reads the project .codex/ layer (profile, hooks) only for a
+// trusted project, so the user config in the container's HOME must trust the checkout.
+// Claude needs no user config. The rendered project files are checked by the runner.
+func runtimeConfigLoads(runtime, root string) bool {
+	if runtime != "codex" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Projects map[string]struct {
+			Trust string `toml:"trust_level"`
+		} `toml:"projects"`
+	}
+	return toml.Unmarshal(b, &cfg) == nil && cfg.Projects[root].Trust == "trusted"
+}
+
+// noReadPatterns are the checkout patterns to mask in the container: secret_reads
+// and sandbox.no_read, "$secret_reads" expanded, other refs dropped.
+func noReadPatterns(e core.EnforcementSpec) []string {
+	out := slices.Clone(e.SecretReads)
+	for _, p := range e.Sandbox.NoRead {
+		if !strings.HasPrefix(p, "$") {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch, proxyImage string) error {
@@ -195,9 +232,11 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 	return autonomy.Egress{Image: proxyImage, Dir: state, Warn: func(m string) { fmt.Fprintln(cmd.ErrOrStderr(), "warning:", m) },
 		Hosts: append(autonomy.RuntimeHosts(runtime), probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
+			CodexConfig: filepath.Join(state, autonomy.CodexConfigName), CeilingEnt: filepath.Join(state, autonomy.CeilingEntName),
+			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement),
 			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
 		start, closeTask := runFlow(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]})
-		r := &autonomy.Runner{Start: start,
+		r := &autonomy.Runner{Start: start, Ceilings: policy.LoadCeilings,
 			Close: func(ctx context.Context, id string) error {
 				sandbox, cleanup := worker.CloseSandbox()
 				defer cleanup(ctx)

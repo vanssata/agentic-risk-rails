@@ -30,8 +30,11 @@ func TestRunFlowStartCloseThroughRealFlow(t *testing.T) {
 	tiers := core.EffectiveTiers{Runtime: "claude", Models: map[core.Tier]string{core.TierBalanced: "m"}}
 	start, closeTask := runFlow(runFlowIn{Root: repo, StateRoot: state, Home: t.TempDir(), Policy: r.eff, Tiers: tiers})
 
-	require.Error(t, start(t.Context(), autonomy.Task{ID: "t1", Brief: "x"}), "no files, no scope for the hook")
-	require.NoError(t, start(t.Context(), autonomy.Task{ID: "t1", Brief: "fix a typo in the notes", Files: []string{"docs/notes.md"}}))
+	_, err = start(t.Context(), autonomy.Task{ID: "t1", Brief: "x"})
+	require.Error(t, err, "no files, no scope for the hook")
+	w, err := start(t.Context(), autonomy.Task{ID: "t1", Brief: "fix a typo in the notes", Files: []string{"docs/notes.md"}})
+	require.NoError(t, err)
+	assert.Equal(t, core.ModeLight, w.Mode)
 
 	var calls [][]string
 	sb := func(argv []string) ([]string, error) {
