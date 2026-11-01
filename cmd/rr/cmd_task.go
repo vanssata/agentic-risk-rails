@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -57,11 +58,11 @@ func parseDeclared(declare []string) (map[core.Axis]int, error) {
 
 // taskFlags are the flags shared by the `rr task` subcommands.
 type taskFlags struct {
-	root, task, goal, runtime, verdict, transcript string
-	files, declare                                 []string
-	spec, amend                                    bool
-	sessions                                       int
-	ses                                            ledger.SessionData
+	root, task, goal, runtime, verdict, transcript, severity string
+	files, declare                                           []string
+	spec, amend                                              bool
+	sessions                                                 int
+	ses                                                      ledger.SessionData
 }
 
 // open resolves the policy and the task the subcommand acts on.
@@ -207,6 +208,14 @@ func init() {
 		}
 		review.Flags().StringVar(&f.verdict, "verdict", "", "PASS or FAIL")
 
+		risk := &cobra.Command{
+			Use: "risk <text>", Short: "Record a known open risk (risk_recorded)", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return f.note(cmd, "risk_recorded", map[string]any{"id": fmt.Sprintf("r%d", time.Now().UnixNano()), "text": args[0], "severity": f.severity})
+			},
+		}
+		risk.Flags().StringVar(&f.severity, "severity", "medium", "low | medium | high")
+
 		closeCmd := &cobra.Command{
 			Use:   "close",
 			Short: "Close the task: rescore, host-side full verify, the two facts, cost, archive (run after the agent has stopped)",
@@ -218,7 +227,7 @@ func init() {
 		closeCmd.Flags().StringVar(&f.ses.Session, "session", "", "session id of --transcript")
 		closeCmd.Flags().StringVar(&f.ses.Phase, "phase", "implement", "phase of --transcript for rr cost")
 
-		c.AddCommand(start, amend, accept, review, closeCmd)
+		c.AddCommand(start, amend, accept, review, risk, closeCmd)
 		return c
 	})
 }

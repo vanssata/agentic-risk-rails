@@ -57,8 +57,9 @@ func TaskHook(ctx context.Context, root string, tree []string) (h Hook, ok bool,
 	if len(d.Scope) == 0 || d.Level == nil {
 		return Hook{}, false, fmt.Errorf("task %s: task_started carries no scope or level", open[0])
 	}
+	level, _ := lastLevel(events) // amend and rescore can only lower the level of task_started
 	// Armed even if nothing expands: Expand never returns nil for a non-empty scope.
-	return Hook{Task: open[0], Level: *d.Level, StepFiles: Expand(d.Scope, tree)}, true, nil
+	return Hook{Task: open[0], Level: level, StepFiles: Expand(d.Scope, tree)}, true, nil
 }
 
 // orphanBaselines fails when a baseline manifest in .rr/run has no journal, open
