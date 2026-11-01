@@ -227,7 +227,9 @@ func TestTaskGuardedNeedsPlanAndReview(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(events[0].Data, &d))
 	require.Greater(t, d.Mode.Rank(), core.ModeLight.Rank())
-	assert.Len(t, events, 1, "no inline plan above light")
+	for _, e := range events {
+		assert.NotEqual(t, "plan_accepted", e.Type, "no inline plan above light")
+	}
 
 	_, err = runPolicyRR(t, "task", "close", "--root", root)
 	var ref *core.Refusal

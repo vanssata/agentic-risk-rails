@@ -22,6 +22,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/globs"
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/ledger"
+	"github.com/vanssata/agentic-risk-rails/internal/models"
 	"github.com/vanssata/agentic-risk-rails/internal/triage"
 	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
@@ -38,6 +39,11 @@ type Env struct {
 	Tree      []string // git ls-files ∪ default branch tree
 	Journal   core.Journal
 	Home      string // for transcript roots and cost
+	// Via is the journal "via" of every event; empty = StartIn.Via for task_started, else "cli".
+	Via string
+	// Enforcement and InContainer feed the task level; empty/false = hook_only, no container.
+	Enforcement core.Enforcement
+	InContainer bool
 }
 
 // StartIn is the input of Start.
@@ -50,7 +56,7 @@ type StartIn struct {
 	Tiers    core.EffectiveTiers // from the committed lock; no BALANCED ⇒ NO_TIER
 	Actor    core.Actor
 	ID       string // empty = generated
-	Via      string // empty = "cli"
+	Via      string // fallback when Env.Via is empty; empty = "cli"
 }
 
 // state is where the journal and the baseline live.
@@ -142,12 +148,38 @@ func (e Env) triageInput(s scoreIn) triage.Input {
 		Tree: tree, Content: content, Spec: s.spec, Sessions: s.sessions}
 }
 
+func (e Env) via(fallback string) string {
+	if e.Via != "" {
+		return e.Via
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "cli"
+}
+
+// level is TaskLevel for this host, one level lower (not below L0) when the
+// tiers lack STRONG (DES §4.4). clamped says whether that clamp applied.
+func (e Env) level(mode core.Mode, irreversible bool, tiers map[core.Tier]string) (lvl core.Level, why string, clamped bool) {
+	enf := e.Enforcement
+	if enf == "" {
+		enf = core.EnforcementHookOnly
+	}
+	lvl, why = autonomy.TaskLevel(autonomy.LevelInput{Policy: e.Policy.Policy, Mode: mode, Irreversible: irreversible, Enforcement: enf, InContainer: e.InContainer})
+	for _, d := range models.Degradations(core.EffectiveTiers{Models: tiers}) {
+		if d.ClampAutonomy && lvl > core.L0 {
+			return lvl - 1, why, true
+		}
+	}
+	return lvl, why, false
+}
+
 func (e Env) append(ctx context.Context, task, typ string, actor core.Actor, data any) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	_, err = e.Journal.Append(ctx, core.Event{Schema: 1, Type: typ, Task: task, Actor: actor, Via: "cli", PolicySHA: e.Policy.PolicySHA, Data: raw})
+	_, err = e.Journal.Append(ctx, core.Event{Schema: 1, Type: typ, Task: task, Actor: actor, Via: e.via(""), PolicySHA: e.Policy.PolicySHA, Data: raw})
 	return err
 }
 
@@ -173,7 +205,7 @@ func (e Env) Start(ctx context.Context, in StartIn) (Started, error) {
 		return Started{}, &core.Refusal{Code: "TASK_IN_FLIGHT", Detail: open[0]}
 	}
 	w := triage.Score(e.Policy.Policy, e.triageInput(scoreIn{in.Goal, Expand(scope, e.Tree), in.Declared, in.Spec, in.Sessions}))
-	level, why := autonomy.TaskLevel(autonomy.LevelInput{Policy: e.Policy.Policy, Mode: w.Mode, Irreversible: w.Irreversible, Enforcement: core.EnforcementHookOnly})
+	level, why, clamped := e.level(w.Mode, w.Irreversible, in.Tiers.Models)
 	manifest, sum, err := verify.Baseline(ctx, e.Root)
 	if err != nil {
 		return Started{}, err
@@ -182,12 +214,9 @@ func (e Env) Start(ctx context.Context, in StartIn) (Started, error) {
 	if err != nil {
 		return Started{}, err
 	}
-	task, via := in.ID, in.Via
+	task, via := in.ID, e.via(in.Via)
 	if task == "" {
 		task = taskID(time.Now(), in.Goal)
-	}
-	if via == "" {
-		via = "cli"
 	}
 	if err := os.MkdirAll(journal.RunDir(e.state()), 0o755); err != nil {
 		return Started{}, err
@@ -206,7 +235,45 @@ func (e Env) Start(ctx context.Context, in StartIn) (Started, error) {
 		_ = os.Remove(bpath)
 		return Started{}, err
 	}
+	if err := e.startNotes(ctx, task, in, level, clamped); err != nil {
+		return Started{}, err
+	}
 	return Started{Task: task, Weight: w, Level: level}, nil
+}
+
+// startNotes journals what Start learned besides the task itself: policy fields
+// cut or ignored (DES §3.3) and the §4.4 consequences of missing tiers.
+func (e Env) startNotes(ctx context.Context, task string, in StartIn, level core.Level, clamped bool) error {
+	if f := e.Policy.Clamped; len(f) > 0 {
+		if err := e.append(ctx, task, "policy_clamped", in.Actor, map[string]any{"fields": f}); err != nil {
+			return err
+		}
+	}
+	if f := e.Policy.Ignored; len(f) > 0 {
+		if err := e.append(ctx, task, "policy_loosening_ignored", in.Actor, map[string]any{"fields": f}); err != nil {
+			return err
+		}
+	}
+	degs := models.Degradations(in.Tiers)
+	if len(degs) == 0 {
+		return nil
+	}
+	if err := e.append(ctx, task, "tiers_resolved", in.Actor, map[string]any{"runtime": in.Tiers.Runtime, "effective": in.Tiers.Models,
+		"ladder": in.Tiers.Ladder, "catalogue_sha": in.Tiers.CatalogueSHA, "probed_at": in.Tiers.ProbedAt}); err != nil {
+		return err
+	}
+	for _, d := range degs {
+		data := map[string]any{"runtime": in.Tiers.Runtime, "tier": d.Tier, "to": d.To}
+		if d.Event == "autonomy_clamped" {
+			data["applied"] = clamped
+			data["level"] = level
+			data["reason"] = "STRONG missing: autonomy one level down"
+		}
+		if err := e.append(ctx, task, d.Event, in.Actor, data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeNew(path string, b []byte) error {
@@ -273,6 +340,22 @@ func lastWeight(events []core.Event) (core.Weight, error) {
 	return w, nil
 }
 
+// lastLevel is the newest level recorded by task_started, weight_amended or weight_rescored.
+func lastLevel(events []core.Event) (lvl core.Level, found bool) {
+	for _, e := range events {
+		if e.Type != "task_started" && e.Type != "weight_amended" && e.Type != "weight_rescored" {
+			continue
+		}
+		var d struct {
+			Level *core.Level `json:"level"`
+		}
+		if json.Unmarshal(e.Data, &d) == nil && d.Level != nil {
+			lvl, found = *d.Level, true
+		}
+	}
+	return lvl, found
+}
+
 // reweigh re-measures the task against the real diff (rescore: the policy's
 // axes, amend: all six) and journals the result. Mode and axes only go up.
 func (e Env) reweigh(ctx context.Context, task, typ string, actor core.Actor, events []core.Event, tr verify.Trust, d startedData, declared map[core.Axis]int) (core.Weight, error) {
@@ -301,7 +384,12 @@ func (e Env) reweigh(ctx context.Context, task, typ string, actor core.Actor, ev
 	if w.Mode == prev.Mode && w.Total() == prev.Total() {
 		return w, nil // nothing grew: nothing to record
 	}
-	return w, e.append(ctx, task, typ, actor, map[string]any{"from": prev.Mode, "to": w.Mode, "mode": w.Mode, "weight": w})
+	data := map[string]any{"from": prev.Mode, "to": w.Mode, "mode": w.Mode, "weight": w}
+	if before, ok := lastLevel(events); ok { // the level only falls
+		lvl, _, _ := e.level(w.Mode, w.Irreversible, events[0].TiersEffective)
+		data["level"] = min(before, lvl)
+	}
+	return w, e.append(ctx, task, typ, actor, data)
 }
 
 // Amend (`rr task start --amend`) re-measures all six axes against the real
@@ -322,9 +410,9 @@ func (e Env) Amend(ctx context.Context, task string, declared map[core.Axis]int,
 	return e.reweigh(ctx, task, "weight_amended", actor, events, tr, d, declared)
 }
 
-// Note records a human gate: plan_accepted, or a review_verdict.
+// Note records a human gate: plan_accepted, a review_verdict, or a risk_recorded.
 func (e Env) Note(ctx context.Context, task, typ string, actor core.Actor, data map[string]any) error {
-	if typ != "plan_accepted" && typ != "review_verdict" {
+	if typ != "plan_accepted" && typ != "review_verdict" && typ != "risk_recorded" {
 		return fmt.Errorf("flow: cannot note %q", typ)
 	}
 	data["by"] = actor

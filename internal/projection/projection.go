@@ -35,7 +35,7 @@ func Summarize(events []core.Event) Summary {
 		s.Last = e.Time
 		s.Counts[e.Type]++
 		switch e.Type {
-		case "task_started":
+		case "task_started", "weight_amended", "weight_rescored": // the newest mode wins
 			var d struct {
 				Mode string `json:"mode"`
 			}
