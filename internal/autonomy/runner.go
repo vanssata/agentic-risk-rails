@@ -133,7 +133,7 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 		return nil, &core.Refusal{Code: "ENFORCEMENT", Detail: string(enf) + " cannot run " + r.Level.String() + "; autonomy is capped at L1"}
 	}
 	if st, err := r.git(ctx, "status", "--porcelain"); err != nil || st != "" {
-		return nil, fmt.Errorf("checkout must be clean (status err %v)", err)
+		return nil, fmt.Errorf("checkout must be clean (status: %q, err: %w)", st, err)
 	}
 	base, err := r.git(ctx, "rev-parse", "HEAD")
 	if err != nil {
@@ -177,7 +177,7 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 
 	var out []Outcome
 	for _, t := range queue {
-		if err := r.gate(ctx, inForce); err != nil {
+		if err := r.gate(ctx); err != nil {
 			return out, err
 		}
 		o, err := r.task(ctx, agentCtx, t, base)
@@ -193,7 +193,7 @@ func (r *Runner) Run(ctx context.Context, queue []Task) ([]Outcome, error) {
 
 // gate runs before every wave: HALT, ceiling and policy-in-force hashes, journal
 // copies, then the daily budget.
-func (r *Runner) gate(ctx context.Context, inForce string) error {
+func (r *Runner) gate(ctx context.Context) error {
 	halt := r.halter.Halted()
 	if halt == "" {
 		if err := CheckHalt(ctx, r.Hosting, r.DefaultBranch, r.eff.Policy.Autonomy.KillSwitch.RemoteFile); err != nil {
@@ -353,6 +353,12 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens})
 		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded"}
 	}
+	return r.deliver(ctx, t, o, rep, werr, files, tracked, base)
+}
+
+// deliver turns a finished worker into a draft PR, or blocks the task.
+func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.WorkerReport, werr error, files []core.File, tracked map[string]bool, base string) (Outcome, error) {
+	pol, branch := r.eff.Policy, "rr/"+t.ID
 	block := func(reason string) (Outcome, error) {
 		o.Status = "blocked"
 		r.reset(ctx, base)
@@ -395,7 +401,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if err := push(ctx, r.Root, branch); err != nil {
 		return block("push: " + err.Error())
 	}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, lvl, rep))
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep))
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}

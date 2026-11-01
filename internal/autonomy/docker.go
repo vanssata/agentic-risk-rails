@@ -36,7 +36,7 @@ type DockerRunner struct {
 
 const (
 	workDir  = "/work"
-	sockPath  = "/run/rr/halt.sock"
+	sockPath = "/run/rr/halt.sock"
 	readOnly = "riskrails.yaml .git .github"
 )
 

@@ -1,0 +1,122 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+
+	"github.com/vanssata/agentic-risk-rails/internal/autonomy"
+	"github.com/vanssata/agentic-risk-rails/internal/cli"
+	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/journal"
+	"github.com/vanssata/agentic-risk-rails/internal/models"
+	"github.com/vanssata/agentic-risk-rails/internal/policy"
+	"github.com/vanssata/agentic-risk-rails/internal/runtimes"
+	rrsync "github.com/vanssata/agentic-risk-rails/internal/sync"
+)
+
+// runHosting builds the hosting client for the repo (reads the pinned `remote`
+// of the ceiling). The GitHub client (W3-B) replaces this; until then `rr run`
+// fails closed because the kill switch cannot be read.
+var runHosting = func(context.Context, string) (core.Hosting, error) {
+	return nil, fmt.Errorf("no hosting client linked: the kill switch and the policy in force cannot be read, refusing to run")
+}
+
+func init() {
+	cli.Register(func() *cobra.Command {
+		var level, queue, runtime, root, image, state, branch string
+		c := &cobra.Command{
+			Use:   "run",
+			Short: "Unattended runner: queue of light tasks in a container, draft PRs only (L2+)",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				var lvl core.Level
+				if err := lvl.UnmarshalText([]byte(level)); err != nil {
+					return err
+				}
+				raw, err := os.ReadFile(queue)
+				if err != nil {
+					return err
+				}
+				var tasks []autonomy.Task
+				dec := yaml.NewDecoder(bytes.NewReader(raw))
+				dec.KnownFields(true)
+				if err := dec.Decode(&tasks); err != nil {
+					return fmt.Errorf("queue %s: %w", queue, err)
+				}
+				return runQueue(cmd.Context(), cmd, lvl, tasks, runtime, root, image, state, branch)
+			},
+		}
+		wd, _ := os.Getwd()
+		c.Flags().StringVar(&level, "level", "L2", "autonomy level to run at (L2 or above)")
+		c.Flags().StringVar(&queue, "queue", "", "YAML list of tasks: id, brief, mode, irreversible, tier, max_turns")
+		c.Flags().StringVar(&runtime, "runtime", "claude", "claude | codex")
+		c.Flags().StringVar(&root, "root", wd, "clean checkout mounted into the container")
+		c.Flags().StringVar(&image, "image", "", "container image with the runtime CLI and rr")
+		c.Flags().StringVar(&state, "state-dir", "", "runner state outside the sandbox (default: a new temp dir)")
+		c.Flags().StringVar(&branch, "default-branch", "main", "default branch on the remote")
+		_ = c.MarkFlagRequired("queue")
+		_ = c.MarkFlagRequired("image")
+		return c
+	})
+}
+
+func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []autonomy.Task, runtime, root, image, state, branch string) error {
+	rt, ok := runtimes.Lookup(runtime)
+	if !ok {
+		return fmt.Errorf("unknown runtime %q", runtime)
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	host, err := runHosting(ctx, root)
+	if err != nil {
+		return err
+	}
+	if state == "" {
+		if state, err = os.MkdirTemp("", "rr-run-"); err != nil {
+			return err
+		}
+	}
+	home, _ := os.UserHomeDir()
+	svc := policy.New()
+	resolve := func(ctx context.Context, inForce []byte) (core.EffectivePolicy, error) {
+		p, err := policy.Load(inForce)
+		if err != nil {
+			return core.EffectivePolicy{}, err
+		}
+		ent, user, err := policy.LoadCeilings()
+		if err != nil {
+			return core.EffectivePolicy{}, err
+		}
+		return svc.Resolve(ctx, core.PolicyLayers{Enterprise: ent, User: user,
+			DefaultBranch: &core.Layer{Policy: p, Raw: inForce, Source: "api:" + branch + ":riskrails.yaml"}})
+	}
+	// Models come from the committed .rr/tiers.lock; the policy is only needed for its candidates.
+	inForce, err := host.ReadFile(ctx, branch, "riskrails.yaml")
+	if err != nil {
+		return fmt.Errorf("policy in force: %w", err)
+	}
+	probe, err := resolve(ctx, inForce)
+	if err != nil {
+		return err
+	}
+	tiers := models.ForSync(ctx, probe.Policy.Models, root)
+	sock := filepath.Join(state, "halt.sock")
+	worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Level: lvl, Models: tiers[runtime].Models}
+	r := &autonomy.Runner{Root: root, StateDir: state, RunID: "run-" + time.Now().UTC().Format("20060102T150405"),
+		DefaultBranch: branch, Level: lvl, Container: true, Runtime: rt, Hosting: host, Journal: journal.New(state),
+		Worker: worker, Resolve: resolve, Gens: rrsync.Generators(), Tiers: tiers, Home: home, HaltSock: sock}
+	out, err := r.Run(ctx, tasks)
+	for _, o := range out {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Task, o.Level, o.Status, o.PR.URL)
+	}
+	return err
+}

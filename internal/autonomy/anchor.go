@@ -50,7 +50,7 @@ func (a anchor) snapshot(task string) (head string, size int, ok bool, err error
 	if err := os.MkdirAll(a.dir, 0o700); err != nil {
 		return "", 0, false, err
 	}
-	if err := os.WriteFile(a.copyPath(task), b, 0o600); err != nil {
+	if err := os.WriteFile(a.copyPath(task), b, 0o600); err != nil { //nolint:gosec // task ids are validated by taskIDRe
 		return "", 0, false, err
 	}
 	head, err = journal.HeadHash(a.copyPath(task))
