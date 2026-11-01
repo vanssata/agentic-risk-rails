@@ -44,6 +44,11 @@ func TokenFor(ctx context.Context, remote, baseURL string) (string, error) {
 	return appToken(ctx, &http.Client{Timeout: 30 * time.Second}, baseURL, id, key, remote)
 }
 
+// runnerPermissions narrow the installation token to what rr uses, whatever else
+// the App holds: push rr/* branches, open draft PRs, read the ruleset with its
+// bypass actors (GitHub returns them only with administration write).
+var runnerPermissions = map[string]string{"contents": "write", "pull_requests": "write", "administration": "write", "metadata": "read"}
+
 // appToken signs an App JWT, finds the App's installation on remote and mints an
 // installation token for that repository only (valid 1 hour).
 func appToken(ctx context.Context, hc *http.Client, base, id, keyPath, remote string) (string, error) {
@@ -61,7 +66,7 @@ func appToken(ctx context.Context, hc *http.Client, base, id, keyPath, remote st
 	if err := appCall(ctx, hc, http.MethodGet, base+"/repos/"+owner+"/"+repo+"/installation", jwt, nil, &inst); err != nil {
 		return "", fmt.Errorf("github: App installation on %s: %w", remote, err)
 	}
-	body, _ := json.Marshal(map[string][]string{"repositories": {repo}})
+	body, _ := json.Marshal(map[string]any{"repositories": []string{repo}, "permissions": runnerPermissions})
 	var tok struct {
 		Token string `json:"token"`
 	}

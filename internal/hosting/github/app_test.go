@@ -86,7 +86,8 @@ func TestAppInstallationTokenForOneRepo(t *testing.T) {
 	tok, err := appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/shop")
 	require.NoError(t, err)
 	assert.Equal(t, "ghs_test", tok)
-	assert.JSONEq(t, `{"repositories":["shop"]}`, body, "the token reaches only the pinned repo")
+	assert.JSONEq(t, `{"repositories":["shop"],"permissions":{"contents":"write","pull_requests":"write","administration":"write","metadata":"read"}}`,
+		body, "the token reaches only the pinned repo, with only what the runner uses, whatever else the App was granted")
 
 	_, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/other")
 	assert.Error(t, err, "no installation on that repo")

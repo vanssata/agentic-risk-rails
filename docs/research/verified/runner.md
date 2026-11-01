@@ -70,3 +70,6 @@ GAPS (wave 4.2): see errata #47–#54; a second Codex run with the PATH fix was 
 
 ### Re-run after errata #51–#54 (2026-11-01)
 Claude L2, a code task (`Farewell` in `greet/greet.go` + test) with `declared: {behaviour: 0, domain: 0, novelty: 0}` in the queue ⇒ triage `W=0 -> light` (coverage measured, not lowered) ⇒ **draft PR #3**, body `mode: light (triage of the real files)`, `W=0, declared by the queue: …`; worker `STATUS: DONE` (no `rr verify` concern: the skill's runner branch was followed); CI green; ≈ 94k tokens. The GitHub App path (#54) is covered by httptest only: no App exists for the sandbox yet.
+
+### Run as a GitHub App (errata #54, 2026-11-01)
+`RR_GITHUB_APP_ID` + `RR_GITHUB_APP_KEY`, no PAT in the environment: Claude L2, code task `greet-shout` ⇒ **draft PR #4 authored by `rr-sandbox-app[bot]`** (the owner is no longer the pusher, so the code-owner review can count), CI green. The first attempt refused L≥2 before any agent ran: with Administration read the ruleset came back without `bypass_actors` (fail-closed as designed); the App got Administration write (owner decision) and the token is narrowed to contents/pull_requests/administration write + metadata read.

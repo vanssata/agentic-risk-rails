@@ -414,4 +414,6 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 
 **Поправени след run-а (errata #51–#54):** опашката декларира оси (`declared`); PR body/labels от triage; `rr-build`/`rr-ship` в runner режим; GitHub App токен (`RR_GITHUB_APP_ID`/`RR_GITHUB_APP_KEY`).
 
-**Отворено:** App-ът за sandbox-а не е създаден (действие на собственика) ⇒ App пътят е тестван само с httptest; refresh на App токена при run > 1 час; Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.
+**GitHub App:** `rr-sandbox-app` (Contents/Pull requests/Administration RW; токенът се стеснява до тези права) ⇒ draft PR #4 от `rr-sandbox-app[bot]`, CI зелен; собственикът вече може да одобри.
+
+**Отворено:** refresh на App токена при run > 1 час; Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.
