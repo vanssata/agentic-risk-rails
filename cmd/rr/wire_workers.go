@@ -5,7 +5,9 @@ package main
 // (nil = all) and have a locked BALANCED model.
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"slices"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -25,6 +27,16 @@ var runnerFor = func(runtime string, m map[core.Tier]string) (core.WorkerRunner,
 		return r, r, nil
 	}
 	return nil, nil, fmt.Errorf("no worker runner for runtime %q (claude | codex)", runtime)
+}
+
+// preflightFor checks that the host workers of `rr task build` can work here
+// (trusted repo, working sandbox, writable caches; errata #65). Tests replace it.
+var preflightFor = func(ctx context.Context, r resolved, runtime string) error {
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if runtime == "codex" {
+		dir = os.Getenv("CODEX_HOME")
+	}
+	return factory.Preflight(ctx, factory.PreflightIn{Runtime: runtime, Root: r.root, ConfigDir: dir, Home: r.home})
 }
 
 // workers resolves the runtime's tiers from the lock and builds its runners.

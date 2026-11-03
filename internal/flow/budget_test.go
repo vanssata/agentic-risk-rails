@@ -77,12 +77,6 @@ func TestBudgetFailsClosed(t *testing.T) {
 	_ = task
 }
 
-type failingRunner struct{ err error }
-
-func (f failingRunner) Run(context.Context, core.WorkerSpec) (core.WorkerReport, error) {
-	return core.WorkerReport{}, f.err
-}
-
 func TestWorkerUsageJournaledWhenCtxCancelled(t *testing.T) {
 	e, task := planEnv(t, core.ModeGuarded, core.L3, 0)
 	ctx, cancel := context.WithCancel(context.Background())

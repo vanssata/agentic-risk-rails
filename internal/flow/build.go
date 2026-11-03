@@ -189,6 +189,9 @@ type BuildIn struct {
 	Runtime  string               // claude | codex: the runtime of both workers, for worker_usage
 	Tiers    map[core.Tier]string // effective tiers of that runtime
 	Actor    core.Actor           // who started the build (human)
+	// Preflight, if set, runs after the plan and tier checks and before the first
+	// worker; an error ends the build with nothing run (errata #65).
+	Preflight func(context.Context) error
 }
 
 // Build runs the factory over the accepted plan (DES §2.3 step 4 and 6) at the
@@ -215,6 +218,11 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 	}
 	if in.Tiers[core.TierBalanced] == "" {
 		return nil, &core.Refusal{Code: "NO_TIER", Detail: "no BALANCED model for runtime " + in.Runtime}
+	}
+	if in.Preflight != nil {
+		if err := in.Preflight(ctx); err != nil {
+			return nil, err
+		}
 	}
 	eff := map[core.Tier]bool{}
 	for t, m := range in.Tiers {
@@ -259,13 +267,19 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 		return results, errors.Join(runErr, err)
 	}
 	if verdict != "PASS" {
-		var ref *core.Refusal
-		if errors.As(runErr, &ref) && ref.Code == "BUDGET" {
-			return results, ref // the human must raise the budget, not retry
-		}
-		return results, &core.Refusal{Code: "FACTORY_FAILED", Detail: reason}
+		return results, failedBuild(runErr, reason)
 	}
 	return results, nil
+}
+
+// failedBuild is FACTORY_FAILED, or the BUDGET refusal itself: the human must
+// raise the budget, a retry is pointless.
+func failedBuild(runErr error, reason string) error {
+	var ref *core.Refusal
+	if errors.As(runErr, &ref) && ref.Code == "BUDGET" {
+		return ref
+	}
+	return &core.Refusal{Code: "FACTORY_FAILED", Detail: reason}
 }
 
 // autonomyCovers is the plan gate of the unattended runner: the task's level must
