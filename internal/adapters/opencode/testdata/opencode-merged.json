@@ -15,6 +15,7 @@
       "riskrails.yaml": "deny",
       ".rr/**": "deny",
       ".claude/**": "deny",
+      "**/.claude/skills/**": "deny",
       ".codex/**": "deny",
       ".gemini/**": "deny",
       ".cursor/**": "deny",
