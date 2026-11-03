@@ -29,7 +29,7 @@ func protectedRepo(t *testing.T) string {
 func TestPolicyProtectedPathsAreReadOnlyInTheContainer(t *testing.T) {
 	root := protectedRepo(t)
 	d := DockerRunner{Image: testImage, Root: root, PolicyFile: policyFile(t),
-		ReadOnly: []string{"go.mod", "**/go.mod", ".env*", ".github/workflows/**", "~/.ssh/**"}, NoRead: []string{".env*"}}
+		ROPaths: []string{"go.mod", "**/go.mod", ".env*", ".github/workflows/**", "~/.ssh/**"}, NoRead: []string{".env*"}}
 	for _, argv := range []func() ([]string, error){
 		func() ([]string, error) { return d.argv(root, "n", "none", true, nil) },
 		func() ([]string, error) { return d.CommandArgv("true") },
@@ -67,7 +67,7 @@ func TestProtectedPathsContract(t *testing.T) {
 	img := os.Getenv("RR_AGENT_IMAGE")
 	require.NotEmpty(t, img)
 	root := protectedRepo(t)
-	d := DockerRunner{Image: img, Root: root, PolicyFile: policyFile(t), ReadOnly: []string{"go.mod", "**/go.mod"}}
+	d := DockerRunner{Image: img, Root: root, PolicyFile: policyFile(t), ROPaths: []string{"go.mod", "**/go.mod"}}
 	run := func(script string) error {
 		args, err := d.CommandArgv("sh", "-c", script)
 		require.NoError(t, err)

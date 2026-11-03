@@ -17,6 +17,9 @@ description: Start or continue a RiskRails task. Use when about to implement a c
    - Tell the human to run, on the host: `rr task accept --plan <file>`, then `rr task build`
      (workers implement each step in their own worktree, a spec and a quality reviewer check it),
      then `rr task close`. These are human commands: they are refused in an agent shell.
+   - Workers share one token budget per task (`models.budgets[mode]`, research + plan + build). When it is
+     spent, or a run reported no usage, `rr task build` refuses with `BUDGET` before the next worker.
+     Do not work around it: the human raises `models.budgets` in `riskrails.yaml` (a loosening) or narrows the task.
 5. Before finishing run `rr verify --task <task>` and fix what it reports.
    Under the unattended runner (`$RR_LEVEL` is L2 or higher) the task journal is outside your
    container, so `rr verify` cannot see the task: run the project's tests directly instead

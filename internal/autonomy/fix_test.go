@@ -200,7 +200,7 @@ func TestAnchorRefusesSymlinkOversizeAndChecksAfterTheLastTask(t *testing.T) {
 
 func TestPRBodyFencesAgentText(t *testing.T) {
 	evil := "done ``````\n@org/team @bob ping\n## injected\n" + strings.Repeat("é", 3000)
-	b := prBody(Task{ID: "t1", Mode: core.ModeLight}, core.L2, core.WorkerReport{Status: core.StatusDone, Body: evil}, core.Weight{})
+	b := prBody(Task{ID: "t1", Mode: core.ModeLight}, core.L2, core.WorkerReport{Status: core.StatusDone, Body: evil}, core.Weight{}, nil)
 	assert.NotContains(t, b, "@bob", "mentions are neutralised")
 	assert.Contains(t, b, "@\u200bbob")
 	assert.Contains(t, b, "\n```````\n", "fence is longer than the longest backtick run (6)")

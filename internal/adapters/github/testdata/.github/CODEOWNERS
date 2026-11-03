@@ -5,6 +5,8 @@ riskrails.yaml @acme/code-owners
 /.github/ @acme/code-owners
 .rr/** @acme/code-owners
 .claude/** @acme/code-owners
+**/.claude/** @acme/code-owners
+**/.codex/** @acme/code-owners
 .codex/** @acme/code-owners
 .gemini/** @acme/code-owners
 .cursor/** @acme/code-owners

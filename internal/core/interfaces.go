@@ -292,6 +292,9 @@ type WorkerSpec struct {
 	// Env is extra KEY=VALUE environment for the worker process on top of the
 	// runner's own (e.g. RR_SCOPE_FILE arming the step's scope guard).
 	Env []string `json:"env,omitempty"`
+	// Step is the plan step a factory worker runs for ("" = research, planner);
+	// worker_usage carries it so `rr cost` attributes per step (wave 6).
+	Step string `json:"step,omitempty"`
 }
 
 type WorkerReport struct {

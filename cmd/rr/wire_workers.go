@@ -5,9 +5,12 @@ package main
 // (nil = all) and have a locked BALANCED model.
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"slices"
 
+	"github.com/vanssata/agentic-risk-rails/internal/adapters/claude"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/factory"
 	"github.com/vanssata/agentic-risk-rails/internal/models"
@@ -25,6 +28,16 @@ var runnerFor = func(runtime string, m map[core.Tier]string) (core.WorkerRunner,
 		return r, r, nil
 	}
 	return nil, nil, fmt.Errorf("no worker runner for runtime %q (claude | codex)", runtime)
+}
+
+// preflightFor checks that the host workers of `rr task build` can work here
+// (trusted repo, working sandbox, writable caches; errata #65). Tests replace it.
+var preflightFor = func(ctx context.Context, r resolved, runtime string) error {
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if runtime == "codex" {
+		dir = os.Getenv("CODEX_HOME")
+	}
+	return factory.Preflight(ctx, factory.PreflightIn{Runtime: runtime, Root: r.root, ConfigDir: dir, Home: r.home})
 }
 
 // workers resolves the runtime's tiers from the lock and builds its runners.
@@ -45,5 +58,9 @@ func workers(r resolved, runtime string) (impl core.WorkerRunner, ro factory.Rea
 		}
 	}
 	impl, ro, err = runnerFor(runtime, m)
+	if c, ok := impl.(factory.ClaudeRunner); ok { // read-only workers load user settings only
+		c.DenyRead = claude.ReadDenyRules(r.eff.Policy)
+		impl, ro = c, c
+	}
 	return impl, ro, et, err
 }

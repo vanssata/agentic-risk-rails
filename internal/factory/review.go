@@ -94,7 +94,7 @@ func (f *Factory) reviewRound(ctx context.Context, st plan.Step, w worktree, bri
 		if indep {
 			b += "You are a second, independent reviewer: ignore earlier verdicts.\n"
 		}
-		rep, err := f.Reviewer.ReadOnly().Run(ctx, core.WorkerSpec{Role: role, Tier: tier, Brief: b + "\nDIFF:\n" + patch, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget, Env: []string{EnvWorker + "=1"}})
+		rep, err := f.Reviewer.ReadOnly().Run(ctx, core.WorkerSpec{Role: role, Step: st.ID, Tier: tier, Brief: b + "\nDIFF:\n" + patch, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget, Env: []string{EnvWorker + "=1"}})
 		if err != nil {
 			return "", "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 		}

@@ -109,9 +109,9 @@ echo '{"result":"done\\nSTATUS: DONE","is_error":false,"num_turns":3,"usage":{"i
 }
 
 func TestParseReportFailsClosed(t *testing.T) {
-	assert.Equal(t, core.StatusBlocked, parseReport("claude", "garbage", "boom", nil).Status)
-	assert.Equal(t, core.StatusBlocked, parseReport("claude", `{"result":"x\nSTATUS: DONE","is_error":true}`, "", nil).Status)
-	assert.Equal(t, core.StatusBlocked, parseReport("claude", `{"result":"STATUS: DONE\nbut then more"}`, "", nil).Status)
+	assert.Equal(t, core.StatusBlocked, parseReport("claude", "m", "garbage", "boom", nil).Status)
+	assert.Equal(t, core.StatusBlocked, parseReport("claude", "m", `{"result":"x\nSTATUS: DONE","is_error":true}`, "", nil).Status)
+	assert.Equal(t, core.StatusBlocked, parseReport("claude", "m", `{"result":"STATUS: DONE\nbut then more"}`, "", nil).Status)
 }
 
 func TestAgentNeverOnBridgeOrHost(t *testing.T) {
@@ -175,7 +175,7 @@ func TestParseCodexJSON(t *testing.T) {
 ` + msg + `{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50,"reasoning_output_tokens":0}}
 {"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
 `
-	rep := parseReport("codex", ok, "", nil)
+	rep := parseReport("codex", "m", ok, "", nil)
 	assert.Equal(t, core.StatusDone, rep.Status)
 	assert.EqualValues(t, 1065, rep.Tokens, "input (incl. cached) + output, summed over turns")
 	assert.Equal(t, 2, rep.Calls)
@@ -187,10 +187,10 @@ func TestParseCodexJSON(t *testing.T) {
 		"garbage mid-way":   ok + "not json\n" + ok,
 		"plain text":        "ok\nSTATUS: DONE\n",
 	} {
-		assert.LessOrEqual(t, parseReport("codex", out, "", nil).Tokens, int64(0), name+": unknown usage is 0")
+		assert.LessOrEqual(t, parseReport("codex", "m", out, "", nil).Tokens, int64(0), name+": unknown usage is 0")
 	}
-	assert.Equal(t, core.StatusBlocked, parseReport("codex", ok+`{"type":"turn.failed","error":{"message":"x"}}`, "", nil).Status)
-	assert.Equal(t, core.StatusBlocked, parseReport("codex", ok, "boom", assert.AnError).Status)
+	assert.Equal(t, core.StatusBlocked, parseReport("codex", "m", ok+`{"type":"turn.failed","error":{"message":"x"}}`, "", nil).Status)
+	assert.Equal(t, core.StatusBlocked, parseReport("codex", "m", ok, "boom", assert.AnError).Status)
 }
 
 func TestExecAndCommandArgvCarryNoSocketKeysOrScope(t *testing.T) {
@@ -272,4 +272,33 @@ func TestCloseSandboxNamesContainersAndRemovesThemOnCleanup(t *testing.T) {
 	cleanup(ctx)
 	b, _ := os.ReadFile(log)
 	assert.Equal(t, 2, strings.Count(string(b), "rm -f rr-close-"), string(b))
+}
+
+// A container worker's usage carries its model, so the task budget and the ledger
+// count it as known (adversarial review, wave 6: every docker run was "unknown").
+func TestParseReportCarriesUsageModel(t *testing.T) {
+	claude := `{"result":"ok\nSTATUS: DONE","num_turns":2,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3},` +
+		`"modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":1},"claude-sonnet-5-5":{"inputTokens":9,"outputTokens":4}}}`
+	rep := parseReport("claude", "haiku", claude, "", nil)
+	assert.Equal(t, int64(18), rep.Tokens)
+	assert.Equal(t, core.Usage{Runtime: "claude", Model: "claude-sonnet-5-5", Time: rep.Usage.Time, Input: 10, Output: 5, CacheRead: 3}, rep.Usage)
+	assert.Empty(t, parseReport("claude", "haiku", `{"result":"STATUS: DONE"}`, "", nil).Usage.Model, "no usage stays unknown")
+
+	codex := `{"type":"item.completed","item":{"type":"agent_message","text":"STATUS: DONE"}}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":7}}` + "\n"
+	rep = parseReport("codex", "gpt-6.1-sol", codex, "", nil)
+	assert.Equal(t, int64(107), rep.Tokens)
+	assert.Equal(t, core.Usage{Runtime: "codex", Model: "gpt-6.1-sol", Time: rep.Usage.Time, Input: 60, Output: 7, CacheRead: 40}, rep.Usage)
+}
+
+// Review round 2: a usage object without token counts, or with negative ones, is
+// unknown (penalised by the budget), never known and free.
+func TestParseReportBrokenUsageIsUnknown(t *testing.T) {
+	for name, out := range map[string]string{
+		"no token keys": `{"result":"STATUS: DONE","usage":{"x":1}}`,
+		"negative":      `{"result":"STATUS: DONE","usage":{"input_tokens":-9000000,"output_tokens":5}}`,
+		"overflow":      `{"result":"STATUS: DONE","usage":{"input_tokens":1e30,"output_tokens":5}}`,
+	} {
+		assert.Empty(t, parseReport("claude", "opus", out, "", nil).Usage.Model, name)
+	}
 }

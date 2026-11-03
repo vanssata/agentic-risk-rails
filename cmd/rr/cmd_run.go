@@ -41,7 +41,7 @@ func init() {
 		var level, queue, runtime, root, image, state, branch, proxyImage, authFrom string
 		c := &cobra.Command{
 			Use:   "run",
-			Short: "Unattended runner: queue of light tasks in a container, draft PRs only (L2+)",
+			Short: "Unattended runner: queue of tasks in containers (light at L2, guarded at L3, full at L4), draft PRs only",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				var lvl core.Level
@@ -257,10 +257,10 @@ func runQueue(ctx context.Context, cmd *cobra.Command, lvl core.Level, tasks []a
 		Hosts: append(hosts, probe.Policy.Enforcement.Egress.Allow...)}.With(ctx, func(eg *autonomy.EgressNet) error {
 		worker := autonomy.DockerRunner{Image: image, Runtime: runtime, Root: root, Sock: sock, Network: eg.Network, ProxyURL: eg.ProxyURL,
 			AuthFrom: authFrom, StateDir: state, CodexConfig: filepath.Join(state, autonomy.CodexConfigName), CeilingEnt: filepath.Join(state, autonomy.CeilingEntName),
-			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement), ReadOnly: readOnlyPatterns(probe.Policy.Enforcement),
-			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: tiers[runtime].Models}
+			CeilingUser: filepath.Join(state, autonomy.CeilingUserName), NoRead: noReadPatterns(probe.Policy.Enforcement), ROPaths: readOnlyPatterns(probe.Policy.Enforcement),
+			PolicyFile: filepath.Join(state, autonomy.PolicyFileName), ScopeFile: filepath.Join(state, autonomy.ScopeFileName), Level: lvl, Models: workerTiers(tiers[runtime])}
 		start, closeTask := runFlow(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]})
-		r := &autonomy.Runner{Start: start, Ceilings: policy.LoadCeilings,
+		r := &autonomy.Runner{Start: start, Pipeline: runPipeline(runFlowIn{Root: root, StateRoot: state, Home: home, Policy: probe, Tiers: tiers[runtime]}, worker, worker, runtime), Ceilings: policy.LoadCeilings,
 			Close: func(ctx context.Context, id string) error {
 				sandbox, cleanup := worker.CloseSandbox()
 				defer cleanup(ctx)

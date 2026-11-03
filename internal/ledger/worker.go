@@ -9,7 +9,7 @@ import (
 // implementer or reviewer started by rr (research, build), so that `rr cost`
 // attributes it without a transcript. Usage.Model == "" means unknown usage.
 type WorkerData struct {
-	Phase   string            `json:"phase"` // research, implement, review
+	Phase   string            `json:"phase"` // research, plan, implement, review
 	Role    string            `json:"role"`  // code-scout, implementer, reviewer-spec, ...
 	Step    string            `json:"step,omitempty"`
 	Tier    core.Tier         `json:"tier"`

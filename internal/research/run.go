@@ -127,7 +127,7 @@ func scout(ctx context.Context, runner core.WorkerRunner, dir string, tier core.
 		return r, false, nil
 	}
 	// a cache write failure only costs a later miss
-	_ = Put(dir, Entry{SHA: req.SHA, Role: role, QHash: qh, Body: rep.Body, Read: r.Read, LockHash: req.Inv.LockHash, At: now})
+	_ = Put(dir, Entry{SHA: req.SHA, Role: role, QHash: qh, Body: rep.Body, Read: r.Read, LockHash: req.Inv.LockHash, Files: HashRead(req.Inv.Root, r.Read), At: now})
 	return r, false, nil
 }
 

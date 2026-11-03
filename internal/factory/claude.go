@@ -20,7 +20,11 @@ import (
 type ClaudeRunner struct {
 	Bin      string // default "claude"
 	Models   map[core.Tier]string
-	readOnly bool          // set by ReadOnly(): reviewers get a read-only tool allowlist
+	readOnly bool // set by ReadOnly(): reviewers get a read-only tool allowlist
+	// DenyRead: permission rules (e.g. "Read(.env)") added to a read-only worker's
+	// --disallowedTools; it loads user settings only, so the project's Read denies
+	// (secret_reads, no_read) do not reach it otherwise. Empty = none.
+	DenyRead []string
 	Timeout  time.Duration // per worker; 0 = DefaultTimeout, never unlimited
 }
 
@@ -69,8 +73,9 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	if c.readOnly {
 		// allowlist of read tools; project/local settings and MCP servers are
 		// worker-writable (even when git-ignored), so only user settings load.
-		args = append(args, "--tools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
-			"--setting-sources", "user", "--strict-mcp-config")
+		args = append(args, "--tools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash")
+		args = append(args, c.DenyRead...)
+		args = append(args, "--setting-sources", "user", "--strict-mcp-config")
 	}
 	stdout, stderr, runErr := runProc(ctx, bin, args, spec, c.Timeout)
 
@@ -82,7 +87,7 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	num := func(k string) int64 { v, _ := res.RawUsage[k].(float64); return int64(v) }
 	in, out, cr, cw := num("input_tokens"), num("output_tokens"), num("cache_read_input_tokens"), num("cache_creation_input_tokens")
 	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: in + out + cr + cw, Calls: res.NumTurns}
-	if len(res.RawUsage) > 0 { // absent usage stays zero = unknown, never free
+	if _, ok := res.RawUsage["input_tokens"]; ok && min(in, out, cr, cw) >= 0 { // absent or broken usage stays zero = unknown, never free
 		rep.Usage = core.Usage{Runtime: "claude", Model: res.mainModel(model), Time: time.Now().UTC(), Input: in, Output: out, CacheRead: cr, CacheWrite: cw}
 	}
 	if res.IsError || runErr != nil { // e.g. --max-turns reached

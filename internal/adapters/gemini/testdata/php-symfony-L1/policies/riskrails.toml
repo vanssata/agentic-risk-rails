@@ -12,7 +12,7 @@ denyMessage = 'denied by riskrails.yaml enforcement.commands.deny'
 
 [[rule]]
 toolName = ['write_file', 'replace']
-argsPattern = '"file_path":"(?:(?:.*/)?riskrails\.yaml|(?:.*/)?\.rr/.*|(?:.*/)?\.claude/.*|(?:.*/)?\.codex/.*|(?:.*/)?\.gemini/.*|(?:.*/)?\.cursor/.*|(?:.*/)?\.kiro/.*|(?:.*/)?\.opencode/.*|(?:.*/)?opencode\.json|(?:.*/)?\.agents/.*|(?:.*/)?\.githooks/.*|(?:.*/)?\.mcp\.json|(?:.*/)?\.git/.*|(?:.*/)?\.github/.*|(?:.*/)?\.env[^/]*|(?:.*/)?config/secrets/.*|(?:.*/)?\.github/workflows/.*|(?:.*/)?\.git/config|(?:.*/)?\.git/refs/remotes/.*|(?:.*/)?\.config/riskrails/.*|(?:.*/)?\.cache/riskrails/.*)"'
+argsPattern = '"file_path":"(?:(?:.*/)?riskrails\.yaml|(?:.*/)?\.rr/.*|(?:.*/)?\.claude/.*|(?:.*/)?.*/\.claude/.*|(?:.*/)?.*/\.codex/.*|(?:.*/)?\.codex/.*|(?:.*/)?\.gemini/.*|(?:.*/)?\.cursor/.*|(?:.*/)?\.kiro/.*|(?:.*/)?\.opencode/.*|(?:.*/)?opencode\.json|(?:.*/)?\.agents/.*|(?:.*/)?\.githooks/.*|(?:.*/)?\.mcp\.json|(?:.*/)?\.git/.*|(?:.*/)?\.github/.*|(?:.*/)?\.env[^/]*|(?:.*/)?config/secrets/.*|(?:.*/)?\.github/workflows/.*|(?:.*/)?\.git/config|(?:.*/)?\.git/refs/remotes/.*|(?:.*/)?\.config/riskrails/.*|(?:.*/)?\.cache/riskrails/.*)"'
 decision = 'deny'
 priority = 900
 denyMessage = 'protected path (riskrails.yaml)'

@@ -99,6 +99,22 @@
   "strict": "deny"
  },
  {
+  "name": "nested Claude skill (errata #66)",
+  "level": "L1",
+  "tool": "Write",
+  "paths": [
+   "{root}/src/Mod/.claude/agents/x.md"
+  ],
+  "edits": [
+   {
+    "path": "{root}/src/Mod/.claude/agents/x.md",
+    "content": "x"
+   }
+  ],
+  "fixture": "deny",
+  "strict": "deny"
+ },
+ {
   "name": "riskrails.yaml loosen inside",
   "level": "L1",
   "tool": "Edit",

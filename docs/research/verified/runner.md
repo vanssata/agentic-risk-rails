@@ -73,3 +73,17 @@ Claude L2, a code task (`Farewell` in `greet/greet.go` + test) with `declared: {
 
 ### Run as a GitHub App (errata #54, 2026-11-01)
 `RR_GITHUB_APP_ID` + `RR_GITHUB_APP_KEY`, no PAT in the environment: Claude L2, code task `greet-shout` ⇒ **draft PR #4 authored by `rr-sandbox-app[bot]`** (the owner is no longer the pusher, so the code-owner review can count), CI green. The first attempt refused L≥2 before any agent ran: with Administration read the ruleset came back without `bypass_actors` (fail-closed as designed); the App got Administration write (owner decision) and the token is narrowed to contents/pull_requests/administration write + metadata read.
+
+## WAVE 6 — workers in containers, L3/L4 pipeline (2026-11-03)
+
+Design facts of this wave (code, not web facts; no [V] row needs a network source):
+
+| claim | evidence | mark |
+|---|---|---|
+| A step worktree has a `.git` FILE (`gitdir: <abs path>` into the integration checkout's `.git/worktrees/<step>`); the container mounts only the worktree, that file read-only, and not the gitdir, so `git` fails inside and the agent cannot commit | `TestStepWorktreeMountsOnlyTheWorktreeWithGitFileReadOnly` (fake docker argv) | [V] unit; real docker run not made |
+| Hooks/permission files rendered at L>=2 live untracked in the integration checkout only; a step worktree is created from HEAD and has none, so step workers in containers rely on the container (ro protected paths, masks, egress proxy) and the host-side scope check, not on the in-container guard hook | factory `addWorktree` (HEAD checkout) | [V] by reading; GAP |
+| `RR_SCOPE_FILE` from `WorkerSpec.Env` is mounted read-only at `/run/rr/scope.json` and the env points at that path; a scope file inside the worktree, a comma in a mount path, or a key the runner sets itself (`HOME`, `RR_*` except `RR_WORKER`, credentials, `*_PROXY`) is refused | `TestWorktreeRunRefusals` | [V] unit |
+| `ReadOnly()` mounts `/work` read-only; masks (`no_read`) and ro paths are resolved relative to the mounted worktree | `TestReadOnlyRunnerMountsWorkReadOnly` | [V] unit |
+| The factory's step branches are `rr/<task>/<step>`; a branch `rr/<task>` cannot exist next to them, so a pipeline task stays detached at base until the build is done and only then creates `rr/<task>` (the PR branch) | `TestPipelineGuardedAtL3OpensDraftPR` | [V] unit + e2e with the real flow |
+
+Not run: real docker, real `claude`/`codex`, `RR_CONTRACT=1` (owner's subscription).

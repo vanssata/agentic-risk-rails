@@ -44,3 +44,31 @@ Contract run: a few cents (one claude haiku call, three small gpt-5.6-sol calls)
 - FIX applied by the owner (sudo): in `/etc/apparmor.d/bwrap-userns-restrict` the `audit deny capability,` line of `unpriv_bwrap` commented out AND `/etc/apparmor.d/local/unpriv_bwrap` = `capability sys_admin, capability setuid, capability setgid,` (an AppArmor profile allows only what it lists, so removing the deny alone kept CapEff 0); `apparmor_parser -r`. Then, without allowAllUnixSockets: Bash works, `denyWrite` holds (Read-only file system), `/var/run/docker.sock` unreachable (curl exit 7) | reproduced 2026-11-03 | [V]
 - then `rr task research|accept|build|close --runtime claude` on rr-sandbox (guarded): 2 Haiku scouts, Sonnet implementer + two Sonnet review stages PASS, close green | real run | [V]
 - the commented deny line is in a package conffile and may come back on an apparmor upgrade; the local/ file survives | [U]
+
+# WAVE 6 — preflight, read-only workers, nested config (2026-11-03, claude 2.1.317, codex-cli 0.166.0)
+
+## FACTS
+| Fact | Source | |
+|---|---|---|
+| Trust is stored in `projects["<abs repo path>"].hasTrustDialogAccepted` of `$CLAUDE_CONFIG_DIR/.claude.json` (`~/.claude.json` when the variable is unset); the file also holds MCP configs and per-project state | this host's file (key names only) + https://code.claude.com/docs/en/settings ("~/.claude.json … per-project state such as trust decisions") | [V] |
+| `permissions.allow`, `additionalDirectories` and most `env` of the project file wait for trust; `deny` and `ask` rules apply right away, so a project `Read(...)` deny works even in an untrusted repo | https://code.claude.com/docs/en/settings ("The key waits for trust") | [V] |
+| `claude -p` skips the workspace trust dialog; settings files failing validation are silently ignored in -p | `claude --help` 2.1.317 | [V] |
+| `--setting-sources user,project,local` selects sources; rr's read-only worker passes `user` only, so the project's `permissions.deny Read(...)` does NOT reach it (by construction, not a model run) | `claude --help`; internal/factory/claude.go | [V] |
+| `--disallowedTools` takes permission rules; ClaudeRunner.DenyRead appends rules there for read-only workers | `claude --help`; unit test with a fake binary. That `Read(<pattern>)` matches as in settings.json was not run against a model | [V] flag, [U] matching |
+| `.claude/settings.json` is read from the session's primary working directory only; a nested `sub/.claude/settings.json` is not a settings source | https://code.claude.com/docs/en/settings ("reads the shared .claude/settings.json from the session's primary working directory") | [V] |
+| Nested skills `<subdir>/.claude/skills/*/SKILL.md` DO load, the first time Claude reads or edits a file in that subdirectory, in sessions started above it | https://code.claude.com/docs/en/skills ("Skills in a .claude/skills/ directory below where you started don't load at startup. They load the first time Claude reads or edits a file in that subdirectory") | [V] |
+| Codex loads every `.codex/config.toml` from the project root down to the cwd (closest wins), only for a trusted project; so a `.codex/` in a subdirectory below the cwd does not load | https://learn.chatgpt.com/docs/config-file/config-advanced | [V] |
+| Codex hooks/rules/skills from nested subdirectories: not documented | same page | [U] |
+| `codex sandbox [-c sandbox_mode=workspace-write] [-C dir] -- cmd` runs a command under the Linux sandbox with no model call. Default (read-only): writes to cwd, /etc, HOME, /tmp all fail "Read-only file system". `sandbox_mode=workspace-write`: write in cwd ok, /tmp ok, /etc and HOME and `$HOME/.cache/...` fail; `TMPDIR` unset | run on this host | [V] |
+| Claude's sandbox needs, inside bwrap, a nested user namespace (apply-seccomp). Probe without a model: `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid --die-with-parent -- unshare -U -r true` (rc 0 on this fixed host); negative control: `… -- touch <tmp>/x` under `--ro-bind / /` must fail. It approximates apply-seccomp, not the exact binary; the failing case (AppArmor) could not be reproduced on this fixed host | run on this host | [V] positive, [U] it fails on an unfixed host |
+| Codex read-only: denying READ of chosen paths is not documented (permission profiles are "beta", page not read) | https://learn.chatgpt.com/docs/config-file/config-advanced | [U] |
+| Codex `exclude_tmpdir_env_var` / `exclude_slash_tmp` / `writable_roots` exist under `[sandbox_workspace_write]`; defaults not stated; observed: /tmp writable, TMPDIR unset | same page + run | [V] observed, [U] defaults |
+
+## READ
+https://code.claude.com/docs/en/settings, https://code.claude.com/docs/en/skills, https://learn.chatgpt.com/docs/config-file/config-advanced, `claude --help`, `codex sandbox --help`.
+
+## GAPS
+- Codex read-only workers cannot be denied specific reads by rr today [U]; they can read secret_reads/no_read.
+- Whether Claude checks ancestors of the repo path for trust: Preflight accepts only the exact repo root (strict) [U].
+- macOS (seatbelt) has no probe; Preflight skips the Claude sandbox probe off Linux.
+- Research cache: a READ *directory* that is git-ignored is not content-hashed (only regular files).
