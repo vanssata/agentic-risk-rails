@@ -40,6 +40,10 @@ func TestParse(t *testing.T) {
 	withStatus, err := Parse("FACTS:\n- a | f.go:1 | [V]\nCOST: tokens=1 calls=1\nSTATUS: DONE\n")
 	require.NoError(t, err)
 	assert.Len(t, withStatus.Facts, 1)
+	mixed, err := Parse("FACTS:\n- a | f.go:1 | [V] for a, [U] for b\n- c | g.go:2 | [X]\n")
+	require.NoError(t, err)
+	assert.Equal(t, "[U]", mixed.Facts[0].Tag, "a mixed tag is unverified")
+	assert.Equal(t, "[U]", mixed.Facts[1].Tag)
 	// a self-reported COST that is not a number is ignored (the runner measures usage)
 	loose, err := Parse("FACTS:\n- a | f.go:1 | [V]\nCOST: tokens=~3k calls=unknown\nSTATUS: DONE\n")
 	require.NoError(t, err)
@@ -48,7 +52,6 @@ func TestParse(t *testing.T) {
 	for name, bad := range map[string]string{
 		"unknown section": "WAT:\n- x",
 		"bad fact":        "FACTS:\n- only claim",
-		"bad tag":         "FACTS:\n- a | b | [X]",
 		"bullet outside":  "- x",
 	} {
 		_, err := Parse(bad)

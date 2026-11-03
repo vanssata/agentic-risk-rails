@@ -102,7 +102,9 @@ func parseFact(item string) (Fact, string) {
 	}
 	tag := strings.TrimSpace(parts[n-1])
 	if tag != "[V]" && tag != "[U]" {
-		return Fact{}, "FACTS tag must be [V] or [U]"
+		// e.g. "[V] for Hello, [U] for Farewell" (real run, wave 5): whatever is
+		// not plainly verified counts as unverified, it never fails the report
+		tag = "[U]"
 	}
 	return Fact{strings.TrimSpace(strings.Join(parts[:n-2], " | ")), []string{strings.TrimSpace(parts[n-2])}, tag}, ""
 }
