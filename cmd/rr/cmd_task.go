@@ -13,6 +13,7 @@ import (
 
 	"github.com/vanssata/agentic-risk-rails/internal/cli"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/factory"
 	"github.com/vanssata/agentic-risk-rails/internal/flow"
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/ledger"
@@ -35,7 +36,7 @@ func flowEnv(ctx context.Context, root string) (flow.Env, resolved, error) {
 // the runner's container. This is a second layer: the boundary is core.AlwaysDeniedCommands
 // ("rr task*" is denied to the agent by the guard) plus the sandbox.
 func notAgent() error {
-	for _, k := range []string{"CLAUDECODE", flow.EnvLevel} {
+	for _, k := range []string{"CLAUDECODE", flow.EnvLevel, factory.EnvWorker} {
 		if os.Getenv(k) != "" {
 			return fmt.Errorf("refusing: %s is set; close, accept and review are host-side steps after the agent has stopped", k)
 		}

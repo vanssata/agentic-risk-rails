@@ -203,7 +203,7 @@ func TestTaskHumanGatesRefuseAnAgentShell(t *testing.T) {
 	root := taskRepo(t)
 	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "tweak", "--files", light, "--declare", lightDecl)
 	require.NoError(t, err)
-	for _, env := range []string{"CLAUDECODE", "RR_LEVEL"} {
+	for _, env := range []string{"CLAUDECODE", "RR_LEVEL", "RR_WORKER"} {
 		t.Run(env, func(t *testing.T) {
 			t.Setenv(env, "1")
 			for _, args := range [][]string{{"close"}, {"accept"}, {"review", "--verdict", "PASS"}} {

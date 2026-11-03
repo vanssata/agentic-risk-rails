@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
@@ -16,6 +17,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/globs"
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/plan"
+	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
 
 // maxPlanBytes bounds a plan file; a plan is a short YAML list of steps.
@@ -40,7 +42,7 @@ func sum(b []byte) string {
 // checkPlan parses and validates a plan (ids, cycles, file ownership) and requires
 // every file and test of every step to lie inside the task scope: an exact scope
 // path or a path matched by a scope glob.
-func checkPlan(raw []byte, scope []string) (plan.Plan, error) {
+func checkPlan(raw []byte, scope, protected []string) (plan.Plan, error) {
 	p, err := plan.Parse(raw)
 	if err != nil {
 		return p, err
@@ -51,6 +53,11 @@ func checkPlan(raw []byte, scope []string) (plan.Plan, error) {
 	for _, s := range p.Steps {
 		for _, f := range append(append([]string{}, s.Files...), s.Tests...) {
 			f = filepath.ToSlash(filepath.Clean(f))
+			for _, pr := range protected {
+				if globs.Match(pr, f) {
+					return p, fmt.Errorf("step %q: %q is a protected path (%s)", s.ID, f, pr)
+				}
+			}
 			ok := false
 			for _, sc := range scope {
 				if sc == f || (isGlob(sc) && globs.Match(sc, f)) {
@@ -64,6 +71,11 @@ func checkPlan(raw []byte, scope []string) (plan.Plan, error) {
 		}
 	}
 	return p, nil
+}
+
+// protected is what no plan may own: core.AlwaysProtected and the policy's protected_paths.
+func (e Env) protected() []string {
+	return append(slices.Clone(core.AlwaysProtected), e.Policy.Policy.Enforcement.ProtectedPaths...)
 }
 
 // Accept is the human plan gate for guarded and heavier tasks (DES §2.3 step 3):
@@ -90,10 +102,10 @@ func (e Env) Accept(ctx context.Context, task, planFile string, actor core.Actor
 	if err != nil {
 		return err
 	}
-	p, err := checkPlan(raw, d.Scope)
+	p, err := checkPlan(raw, d.Scope, e.protected())
 	if err != nil {
 		code := "PLAN_INVALID"
-		if strings.Contains(err.Error(), "outside the task scope") {
+		if strings.Contains(err.Error(), "outside the task scope") || strings.Contains(err.Error(), "protected path") {
 			code = "PLAN_OUT_OF_SCOPE"
 		}
 		return e.refuse(ctx, task, actor, code, err.Error())
@@ -144,11 +156,20 @@ func (e Env) acceptedPlan(ctx context.Context, task string, actor core.Actor, ev
 	if sum(raw) != want {
 		return plan.Plan{}, e.refuse(ctx, task, actor, "PLAN_TAMPERED", "the plan changed after plan_accepted")
 	}
-	p, err := checkPlan(raw, scope)
+	p, err := checkPlan(raw, scope, e.protected())
 	if err != nil {
 		return p, e.refuse(ctx, task, actor, "PLAN_INVALID", err.Error())
 	}
 	return p, nil
+}
+
+// reviewTier is DES §7.1: BALANCED reviewers for guarded, STRONG from full up.
+// STRONG stays the review tier when it is not effective; the factory falls back.
+func reviewTier(m core.Mode) core.Tier {
+	if m == core.ModeGuarded || m == core.ModeLight {
+		return core.TierBalanced
+	}
+	return core.TierStrong
 }
 
 // BuildIn is the input of Build.
@@ -174,6 +195,10 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 	if err != nil {
 		return nil, err
 	}
+	mode, err := verify.TaskMode(events)
+	if err != nil {
+		return nil, err
+	}
 	p, err := e.acceptedPlan(ctx, task, in.Actor, events, d.Scope)
 	if err != nil {
 		return nil, err
@@ -191,7 +216,7 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 	}
 	meter := e.meter(task, in.Runtime)
 	f := &factory.Factory{
-		Config: factory.Config{Task: task, Root: e.Root, WorkDir: work, Tier: core.TierBalanced, Effective: eff,
+		Config: factory.Config{Task: task, Root: e.Root, WorkDir: work, Tier: core.TierBalanced, ReviewTier: reviewTier(mode), Effective: eff,
 			Parallel: factoryParallel, MaxTurns: factoryMaxTurns},
 		Implementer: meter.Wrap(in.Impl),
 		Reviewer:    meter.WrapRO(in.Reviewer),
