@@ -119,3 +119,40 @@ func TestBuildReturnsBudgetRefusal(t *testing.T) {
 	require.ErrorAs(t, err, &ref)
 	assert.Equal(t, "PLAN_MISSING", ref.Code)
 }
+
+// Owner decision (wave 6): a run with unknown usage is charged a pessimistic
+// penalty — budget_per_scout for a scout, else a tenth of the mode's budget —
+// so one failed worker does not lock the task for good.
+func TestBudgetChargesUnknownUsage(t *testing.T) {
+	per := core.TokenCount(300)
+	for name, tc := range map[string]struct {
+		phase  string
+		scout  *core.TokenCount
+		prior  int64 // known tokens before the unknown run
+		refuse bool
+	}{
+		"scout charged budget_per_scout, room left": {"research", &per, 0, false},
+		"scout charged budget_per_scout, spent":     {"research", &per, 700, true},
+		"implementer charged a tenth":               {"implement", &per, 0, false},
+		"a tenth on top of 900 reaches the budget":  {"implement", &per, 900, true},
+		"no budget_per_scout: a tenth":              {"research", nil, 899, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, task := planEnv(t, core.ModeGuarded, core.L3, 1000)
+			e.Policy.Policy.Research.BudgetPerScout = tc.scout
+			if tc.prior > 0 {
+				usage(t, e, task, tc.prior, "m")
+			}
+			require.NoError(t, e.append(context.Background(), task, ledger.EventWorker, core.ActorAutonomy,
+				ledger.WorkerData{Phase: tc.phase, Role: "x", Tier: core.TierBalanced, Runtime: "claude", Status: core.StatusBlocked}))
+			err := e.budgetCheck(task)(context.Background())
+			if !tc.refuse {
+				require.NoError(t, err)
+				return
+			}
+			var ref *core.Refusal
+			require.ErrorAs(t, err, &ref)
+			assert.Equal(t, "BUDGET", ref.Code)
+		})
+	}
+}

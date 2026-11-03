@@ -31,8 +31,9 @@ func (e Env) budgetFor(mode core.Mode) core.TokenCount {
 
 // budgetCheck is run before every worker (DES §3.2: over budget = REFUSE). It sums
 // the tokens of every worker_usage of the task, across research, plan and build.
-// A run with unknown usage (empty Model) counts as unbounded, and so does any
-// error: a budget that cannot be proven kept refuses.
+// A run with unknown usage (empty Model) is charged unknownCharge (owner decision,
+// wave 6: a pessimistic penalty, so one failed worker does not lock the task);
+// any error refuses: a budget that cannot be proven kept is not kept.
 func (e Env) budgetCheck(task string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		events, err := e.Journal.Events(ctx, task)
@@ -57,19 +58,30 @@ func (e Env) budgetCheck(task string) func(context.Context) error {
 			if err := json.Unmarshal(ev.Data, &d); err != nil {
 				return &core.Refusal{Code: "BUDGET", Detail: "unreadable worker_usage: " + err.Error()}
 			}
-			used += d.Tokens
 			if d.Usage.Model == "" {
 				unknown++
+				used += max(d.Tokens, e.unknownCharge(d.Phase, budget))
+				continue
 			}
+			used += d.Tokens
 		}
-		if used < int64(budget) && unknown == 0 {
+		if used < int64(budget) {
 			return nil
 		}
-		detail := fmt.Sprintf("%d of %d tokens used in mode %s, %d runs with unknown usage; raise models.budgets (a human, LOOSEN) to continue", used, budget, mode, unknown)
+		detail := fmt.Sprintf("%d of %d tokens used in mode %s, %d runs with unknown usage charged as spent; raise models.budgets (a human, LOOSEN) to continue", used, budget, mode, unknown)
 		if err := e.append(context.WithoutCancel(ctx), task, "budget_exceeded", core.ActorAutonomy,
 			map[string]any{"mode": mode, "budget": budget, "used": used, "unknown_runs": unknown}); err != nil {
 			return fmt.Errorf("%w (and budget_exceeded could not be journaled: %w)", &core.Refusal{Code: "BUDGET", Detail: detail}, err)
 		}
 		return &core.Refusal{Code: "BUDGET", Detail: detail}
 	}
+}
+
+// unknownCharge is what a worker run with unknown usage costs: research.budget_per_scout
+// for a scout, otherwise a tenth of the mode's budget.
+func (e Env) unknownCharge(phase string, budget core.TokenCount) int64 {
+	if p := e.Policy.Policy.Research.BudgetPerScout; phase == "research" && p != nil && *p > 0 {
+		return int64(*p)
+	}
+	return max(int64(budget)/10, 1)
 }
