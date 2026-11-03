@@ -39,6 +39,24 @@ type Task struct {
 	Declared map[core.Axis]int `yaml:"declared"`
 }
 
+// Evidence is what the PR of a pipeline task carries besides the diff, read from
+// the task journal and state after the build: the accepted plan, the research brief,
+// the review verdict and the cost.
+type Evidence struct{ Plan, Brief, Verdict, Cost string }
+
+// Pipeline is the L3/L4 flow of one task (guarded at L3, full at L4): scouts,
+// planner and the factory run as separate read-only/implementer workers (each in its
+// own container), the plan is accepted by the runner (flow.Env.Accept with
+// ActorAutonomy), and Build leaves its commits on the checkout's HEAD. The runner,
+// not a worker, closes, pushes and opens the draft PR.
+type Pipeline struct {
+	Research func(ctx context.Context, id string) error
+	Plan     func(ctx context.Context, id string) (planFile string, err error)
+	Accept   func(ctx context.Context, id, planFile string) error
+	Build    func(ctx context.Context, id string) error
+	Evidence func(ctx context.Context, id string) (Evidence, error)
+}
+
 // Outcome is what happened to one queue item.
 type Outcome struct {
 	Task   string
@@ -84,6 +102,8 @@ type Runner struct {
 	// light, or irreversible work, skips the task before the agent runs.
 	Start func(ctx context.Context, t Task) (core.Weight, error)
 	Close func(ctx context.Context, id string) error
+	// Pipeline runs guarded and full tasks; nil = such a task is blocked.
+	Pipeline *Pipeline
 	// Ceilings loads the ceiling layers (policy.LoadCeilings); their raw bytes are
 	// copied into StateDir for the container's guard. nil = none.
 	Ceilings func() (enterprise, user *core.Layer, err error)
@@ -312,6 +332,17 @@ func requireRealGitDir(root string) error {
 	return nil
 }
 
+// requireGitEntry: a step worktree has a `.git` FILE (the gitdir pointer); it is
+// mounted read-only and the gitdir itself is not mounted at all, so git does not
+// work in the container and the agent cannot commit. A symlink is refused.
+func requireGitEntry(root string) error {
+	fi, err := os.Lstat(filepath.Join(root, ".git"))
+	if err != nil || (!fi.IsDir() && !fi.Mode().IsRegular()) {
+		return fmt.Errorf("%s/.git must be a directory or a regular file (err: %w)", root, err)
+	}
+	return nil
+}
+
 // within reports whether path (after resolving symlinks) is inside root.
 func within(root, path string) (bool, error) {
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -484,11 +515,16 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if stop {
 		return gated, err
 	}
-	t = triaged(t, w)
+	o, t = gated, triaged(t, w)
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
-	if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
-		return o, err
+	// A pipeline task stays detached at base until its build is done: the factory's
+	// step branches are rr/<id>/<step>, which cannot coexist with a branch rr/<id>.
+	pipe := t.Mode != core.ModeLight
+	if !pipe {
+		if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
+			return o, err
+		}
 	}
 	files, err := r.render(ctx, lvl)
 	if err != nil {
@@ -507,8 +543,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 
 	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
 	defer endWave()
-	rep, werr := r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
-		Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: pol.Models.Budgets[t.Mode]})
+	rep, werr := r.work(waveCtx, o.Level, t)
 
 	if reason := r.halter.Halted(); reason != "" {
 		return o, r.haltTask(ctx, reason, files, tracked)
@@ -529,14 +564,66 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if err := r.log(ctx, "journal_anchor", map[string]any{"task": t.ID, "head": head, "bytes": size, "missing": !ok}); err != nil {
 		return o, err
 	}
-	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
-	if b := pol.Models.Budgets[t.Mode]; b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
+	if ref := r.overBudget(ctx, t, rep, werr); ref != nil {
 		r.discard(ctx, files, tracked, base)
-		worker := string(rep.Status) + ": " + firstLine(rep.Body)
-		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
-		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
+		return o, ref
 	}
 	return r.deliver(ctx, t, o, rep, w, werr, files, tracked, base)
+}
+
+// work runs the task's worker: one implementer for light, the pipeline for guarded/full.
+func (r *Runner) work(ctx context.Context, lvl core.Level, t Task) (core.WorkerReport, error) {
+	if t.Mode != core.ModeLight {
+		return r.runPipeline(ctx, lvl, t)
+	}
+	return r.Worker.Run(ctx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
+		Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: r.eff.Policy.Models.Budgets[t.Mode]})
+}
+
+// overBudget: the flow meter's BUDGET refusal (research, plan, build of a pipeline
+// task), or the light worker's token budget. Usage unknown (codex prints none; a
+// failed worker may print none) counts as exceeded.
+func (r *Runner) overBudget(ctx context.Context, t Task, rep core.WorkerReport, werr error) *core.Refusal {
+	var ref *core.Refusal
+	if errors.As(werr, &ref) && ref.Code == "BUDGET" {
+		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "worker": ref.Detail})
+		return ref
+	}
+	b := r.eff.Policy.Models.Budgets[t.Mode]
+	if t.Mode != core.ModeLight || b <= 0 || (rep.Tokens > 0 && rep.Tokens <= int64(b)) {
+		return nil
+	}
+	worker := string(rep.Status) + ": " + firstLine(rep.Body)
+	_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
+	return &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
+}
+
+// runPipeline: research -> plan -> accept -> build, all under the wave's context
+// (halt, wall budget). It returns a synthetic DONE report; any failure is the error
+// that blocks the task.
+func (r *Runner) runPipeline(ctx context.Context, lvl core.Level, t Task) (core.WorkerReport, error) {
+	p := r.Pipeline
+	if p == nil || p.Research == nil || p.Plan == nil || p.Accept == nil || p.Build == nil || p.Evidence == nil {
+		return core.WorkerReport{}, errors.New("no pipeline wired for guarded/full tasks")
+	}
+	need := map[core.Mode]core.Level{core.ModeGuarded: core.L3, core.ModeFull: core.L4}[t.Mode]
+	if need == 0 || lvl < need {
+		return core.WorkerReport{}, fmt.Errorf("mode %s is not run unattended at %s", t.Mode, lvl)
+	}
+	if err := p.Research(ctx, t.ID); err != nil {
+		return core.WorkerReport{}, fmt.Errorf("research: %w", err)
+	}
+	file, err := p.Plan(ctx, t.ID)
+	if err != nil {
+		return core.WorkerReport{}, fmt.Errorf("plan: %w", err)
+	}
+	if err := p.Accept(ctx, t.ID, file); err != nil {
+		return core.WorkerReport{}, fmt.Errorf("accept: %w", err)
+	}
+	if err := p.Build(ctx, t.ID); err != nil {
+		return core.WorkerReport{}, fmt.Errorf("build: %w", err)
+	}
+	return core.WorkerReport{Status: core.StatusDone, Body: "research, plan, accept (autonomy) and factory passed"}, nil
 }
 
 // briefTail is the worker protocol: the report is parsed by its last line only
@@ -583,6 +670,7 @@ func (r *Runner) gateTask(ctx context.Context, o Outcome, t Task) (Outcome, core
 		}
 		return o, core.Weight{}, true, r.Tasks.Close(ctx, t.ID) // the task was opened by Start
 	}
+	o.Level = lvl
 	return o, w, false, nil
 }
 
@@ -653,10 +741,11 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return block("worker status " + string(rep.Status))
 	}
 
+	pipe := t.Mode != core.ModeLight
 	if err := r.restore(ctx, files, tracked); err != nil {
 		return block("restore manifests: " + err.Error())
 	}
-	changed, deleted, err := r.stage(ctx)
+	changed, deleted, err := r.collect(ctx, pipe, base)
 	if err != nil {
 		return block(err.Error())
 	}
@@ -682,7 +771,8 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return block(why)
 	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
-	if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
+	ev, err := r.seal(ctx, t, title, branch)
+	if err != nil {
 		return block(err.Error())
 	}
 	if moved, err := r.beforePush(ctx, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
@@ -694,7 +784,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return block("push: " + err.Error())
 	}
 	labels := []string{"rr", "rr:" + o.Level.String(), "rr:mode:" + string(t.Mode)}
-	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep, w), labels)
+	pr, err := r.Hosting.OpenDraftPR(ctx, branch, r.DefaultBranch, title, prBody(t, o.Level, rep, w, ev), labels)
 	if err != nil {
 		return block("open draft PR: " + err.Error())
 	}
@@ -704,6 +794,33 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	}
 	r.clean(ctx)
 	return o, r.log(ctx, "draft_pr_opened", map[string]any{"task": t.ID, "branch": branch, "number": pr.Number, "url": pr.URL})
+}
+
+// collect lists what the task changed: the staged work of a light task, or the
+// factory's commits of a pipeline task (anything left uncommitted is not part of the plan).
+func (r *Runner) collect(ctx context.Context, pipe bool, base string) ([]string, map[string]bool, error) {
+	if !pipe {
+		return r.stage(ctx)
+	}
+	if st, err := r.git(ctx, "status", "--porcelain"); err != nil || st != "" {
+		return nil, nil, fmt.Errorf("tree not clean after the build: %q (err: %v)", firstLine(st), err) //nolint:errorlint // err may be nil
+	}
+	return r.rawDiff(ctx, base, "HEAD")
+}
+
+// seal makes the PR head: the runner commits a light task; a pipeline task already
+// has the factory's commits and only gets its branch (and the evidence for the PR body).
+func (r *Runner) seal(ctx context.Context, t Task, title, branch string) (*Evidence, error) {
+	if t.Mode == core.ModeLight {
+		_, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title)
+		return nil, err
+	}
+	ev, err := r.Pipeline.Evidence(ctx, t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: %w", err)
+	}
+	_, err = r.git(ctx, "switch", "-q", "-c", branch)
+	return &ev, err
 }
 
 // trackedAmong lists which rendered files are tracked, so they can be restored.
@@ -792,7 +909,12 @@ func (r *Runner) stage(ctx context.Context) (changed []string, deleted map[strin
 	if _, err := r.git(ctx, "add", "-A"); err != nil {
 		return nil, nil, err
 	}
-	out, err := gitx.Run(ctx, "", "-C", r.Root, "diff", "--cached", "--raw", "--no-renames", "-z")
+	return r.rawDiff(ctx, "--cached")
+}
+
+// rawDiff lists what `git diff <args>` changes; the args are --cached or two revisions.
+func (r *Runner) rawDiff(ctx context.Context, revs ...string) (changed []string, deleted map[string]bool, err error) {
+	out, err := gitx.Run(ctx, "", append([]string{"-C", r.Root, "diff"}, append(revs, "--raw", "--no-renames", "-z")...)...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -868,12 +990,13 @@ func firstLine(s string) string {
 	return l
 }
 
-func prBody(t Task, lvl core.Level, rep core.WorkerReport, w core.Weight) string {
-	body := rep.Body
-	if len(body) > 4000 {
-		body = strings.ToValidUTF8(body[:4000], "") + "\n…"
+// fenced quotes untrusted text: cut to limit bytes, no mentions (also outside the
+// fence), in a fence longer than any backtick run inside.
+func fenced(body string, limit int) string {
+	if len(body) > limit {
+		body = strings.ToValidUTF8(body[:limit], "") + "\n…"
 	}
-	body = strings.ReplaceAll(body, "@", "@\u200b") // no mentions, also outside the fence
+	body = strings.ReplaceAll(body, "@", "@\u200b")
 	fence, run := "```", 0
 	for _, c := range body + "\x00" { // longest backtick run
 		if c == '`' {
@@ -885,13 +1008,23 @@ func prBody(t Task, lvl core.Level, rep core.WorkerReport, w core.Weight) string
 		}
 		run = 0
 	}
+	return fence + "\n" + body + "\n" + fence
+}
+
+func prBody(t Task, lvl core.Level, rep core.WorkerReport, w core.Weight, ev *Evidence) string {
 	mode, weight := string(t.Mode)+" (from the queue: not triaged)", "not measured"
 	if w.Mode != "" {
 		mode, weight = string(w.Mode)+" (triage of the real files)", fmt.Sprintf("W=%d, declared by the queue: %s", w.Total(), declaredText(t.Declared))
 	}
-	return fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: %s, irreversible=%v\n"+
-		"- worker: %s, %d calls\n- cost: %d tokens (worker status, calls and cost are reported by the agent: advisory)\n- review verdict: none yet; required human review on the server\n\n"+
-		"### Worker report (agent text, untrusted)\n\n%s\n%s\n%s\n", t.ID, lvl, lvl, mode, weight, t.Irreversible, rep.Status, rep.Calls, rep.Tokens, fence, body, fence)
+	head := fmt.Sprintf("## rr task %s\n\n- level: %s (label `rr:%s`)\n- mode: %s\n- weight: %s, irreversible=%v\n", t.ID, lvl, lvl, mode, weight, t.Irreversible)
+	if ev != nil {
+		return head + "- plan accepted by the runner (autonomy), built by the factory with two review stages; required human review on the server\n\n" +
+			"### Task brief (queue)\n\n" + fenced(t.Brief, 4000) + "\n\n### Plan (agent text, untrusted)\n\n" + fenced(ev.Plan, 12000) +
+			"\n\n### Research brief (agent text, untrusted)\n\n" + fenced(ev.Brief, 6000) +
+			"\n\n### Review verdict (task journal)\n\n" + fenced(ev.Verdict, 4000) + "\n\n### Cost (task journal)\n\n" + fenced(ev.Cost, 4000) + "\n"
+	}
+	return head + fmt.Sprintf("- worker: %s, %d calls\n- cost: %d tokens (worker status, calls and cost are reported by the agent: advisory)\n- review verdict: none yet; required human review on the server\n\n"+
+		"### Worker report (agent text, untrusted)\n\n%s\n", rep.Status, rep.Calls, rep.Tokens, fenced(rep.Body, 4000))
 }
 
 func declaredText(d map[core.Axis]int) string {

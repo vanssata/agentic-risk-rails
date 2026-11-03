@@ -56,12 +56,12 @@ type DockerRunner struct {
 	// sandbox.no_read (already expanded): every match in the checkout, git-ignored or
 	// not, is masked in the container.
 	NoRead []string
-	// ReadOnly are the repo-relative patterns of enforcement.protected_paths,
+	// ROPaths are the repo-relative patterns of enforcement.protected_paths,
 	// sandbox.readonly and sandbox.no_write: every existing match is bind-mounted
 	// read-only over itself. The runtimes' own sandboxes cannot start in the
 	// container (bwrap needs user namespaces), so the container enforces them
 	// (errata #42); a new file matching one is caught by the host-side close scope.
-	ReadOnly []string
+	ROPaths []string
 	// AuthFrom is an isolated subscription login dir (e.g. ~/.claude-rr, ~/.codex-rr):
 	// its credentials file is copied per agent container into a fresh dir under
 	// StateDir, mounted as the runtime's config dir (stageAuth). "" = API key only.
@@ -69,6 +69,9 @@ type DockerRunner struct {
 	StateDir string // runner-owned, outside the checkout
 	authDir  string // the staged login of this container
 	noKeys   bool   // Exec/CommandArgv: no API keys, no login, no halt socket, no scope file
+	ro       bool   // ReadOnly(): /work is mounted read-only
+	wt       bool   // the mounted root is a step worktree: its .git is a file (stays read-only)
+	env      []string
 	Level    core.Level
 	Models   map[core.Tier]string
 	Timeout  time.Duration // 0 = 90 minutes
@@ -111,7 +114,7 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireRealGitDir(abs); err != nil {
+	if err := d.checkGit(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
 	args := []string{"run", "--rm", "--init", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
@@ -134,22 +137,26 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		if strings.Contains(m[0], ",") {
 			return nil, fmt.Errorf("docker runner: path %q contains a comma", m[0])
 		}
-		opt := "type=bind,src=" + m[0] + ",dst=" + m[1]
-		if i > 0 {
-			opt += ",readonly"
-		}
-		args = append(args, "--mount", opt)
+		args = append(args, "--mount", bindOpt(m[0], m[1], i > 0 || d.ro))
 	}
-	if strings.Contains(pol, ",") {
-		return nil, fmt.Errorf("docker runner: path %q contains a comma", pol)
-	}
-	args = append(args, "--mount", "type=bind,src="+pol+",dst="+policyPath+",readonly", "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	args = append(args, "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	files := [][2]string{{pol, policyPath}}
 	if d.ScopeFile != "" {
 		scope, err := outsideRoot(abs, d.ScopeFile)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--mount", "type=bind,src="+scope+",dst="+scopePath+",readonly", "-e", "RR_SCOPE_FILE="+scopePath)
+		files = append(files, [2]string{scope, scopePath})
+		args = append(args, "-e", "RR_SCOPE_FILE="+scopePath)
+	}
+	for _, f := range files {
+		if strings.Contains(f[0], ",") {
+			return nil, fmt.Errorf("docker runner: path %q contains a comma", f[0])
+		}
+		args = append(args, "--mount", bindOpt(f[0], f[1], true))
+	}
+	for _, e := range d.env {
+		args = append(args, "-e", e)
 	}
 	extra, err := d.configMounts(abs)
 	if err != nil {
@@ -160,6 +167,22 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
 	}
 	return append(append(args, d.Image), cmd...), nil
+}
+
+// checkGit: the checkout needs a real .git directory, a step worktree a .git file.
+func (d DockerRunner) checkGit(root string) error {
+	if d.wt {
+		return requireGitEntry(root)
+	}
+	return requireRealGitDir(root)
+}
+
+func bindOpt(src, dst string, ro bool) string {
+	opt := "type=bind,src=" + src + ",dst=" + dst
+	if ro {
+		opt += ",readonly"
+	}
+	return opt
 }
 
 // outsideRoot returns the absolute path of a runner-owned file that must not be
@@ -214,6 +237,43 @@ func readOnlyPaths() []string {
 		}
 	}
 	return out
+}
+
+// ReadOnly implements factory.ReadOnlyRunner: the same container with /work mounted
+// read-only (reviewers, scouts, planner).
+func (d DockerRunner) ReadOnly() core.WorkerRunner {
+	d.ro = true
+	return d
+}
+
+var envKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// withEnv applies WorkerSpec.Env: RR_SCOPE_FILE becomes the read-only scope mount
+// (its path in the container is scopePath); the rest is passed as given. A key that
+// argv sets itself (HOME, RR_*, credentials, proxies) is refused, not overridden.
+func (d DockerRunner) withEnv(env []string) (DockerRunner, error) {
+	d.env = nil
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || !envKeyRe.MatchString(k) {
+			return d, fmt.Errorf("docker runner: env %q is not KEY=VALUE", k)
+		}
+		switch {
+		case k == "RR_SCOPE_FILE":
+			if v == "" {
+				return d, fmt.Errorf("docker runner: RR_SCOPE_FILE is empty")
+			}
+			d.ScopeFile = v
+		case k == "RR_WORKER":
+			d.env = append(d.env, kv)
+		case strings.HasPrefix(k, "RR_"), k == "HOME", k == "PATH", strings.HasSuffix(k, "_PROXY"), strings.HasPrefix(k, "CLAUDE_"),
+			strings.HasPrefix(k, "ANTHROPIC_"), strings.HasPrefix(k, "OPENAI_"), strings.HasPrefix(k, "CODEX_"):
+			return d, fmt.Errorf("docker runner: env %s is set by the runner and cannot be overridden", k)
+		default:
+			d.env = append(d.env, kv)
+		}
+	}
+	return d, nil
 }
 
 // Probe runs cmd as the agent would see it (halt socket, scope file) but without
@@ -349,6 +409,10 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (rep core.W
 	root := d.Root
 	if spec.Worktree != "" {
 		root = spec.Worktree
+		d.wt = filepath.Clean(root) != filepath.Clean(d.Root)
+	}
+	if d, err = d.withEnv(spec.Env); err != nil {
+		return core.WorkerReport{}, err
 	}
 	name := "rr-" + randHex()
 	args, err := d.argv(root, name, d.Network, true, inner)
@@ -583,7 +647,7 @@ func (d DockerRunner) configMounts(abs string) (args []string, err error) {
 		// the trust config is read-only on top
 		args = append(args, "--mount", "type=bind,src="+d.CodexConfig+",dst="+codexHome+"/config.toml,readonly")
 	}
-	ro, err := protectedMounts(abs, d.ReadOnly)
+	ro, err := protectedMounts(abs, d.ROPaths)
 	if err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
