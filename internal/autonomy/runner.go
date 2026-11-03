@@ -312,6 +312,17 @@ func requireRealGitDir(root string) error {
 	return nil
 }
 
+// requireGitEntry: a step worktree has a `.git` FILE (the gitdir pointer); it is
+// mounted read-only and the gitdir itself is not mounted at all, so git does not
+// work in the container and the agent cannot commit. A symlink is refused.
+func requireGitEntry(root string) error {
+	fi, err := os.Lstat(filepath.Join(root, ".git"))
+	if err != nil || !(fi.IsDir() || fi.Mode().IsRegular()) {
+		return fmt.Errorf("%s/.git must be a directory or a regular file (err: %w)", root, err)
+	}
+	return nil
+}
+
 // within reports whether path (after resolving symlinks) is inside root.
 func within(root, path string) (bool, error) {
 	if err := os.MkdirAll(path, 0o700); err != nil {
