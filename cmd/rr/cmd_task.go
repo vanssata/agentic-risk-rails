@@ -17,6 +17,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/ledger"
 	"github.com/vanssata/agentic-risk-rails/internal/models"
+	"github.com/vanssata/agentic-risk-rails/internal/verify"
 )
 
 // flowEnv resolves the policy of root and builds the flow environment. A resolve
@@ -58,24 +59,29 @@ func parseDeclared(declare []string) (map[core.Axis]int, error) {
 
 // taskFlags are the flags shared by the `rr task` subcommands.
 type taskFlags struct {
-	root, task, goal, runtime, verdict, transcript, severity string
-	files, declare                                           []string
-	spec, amend                                              bool
-	sessions                                                 int
-	ses                                                      ledger.SessionData
+	root, task, goal, runtime, verdict, transcript, severity, plan string
+	files, declare                                                 []string
+	spec, amend                                                    bool
+	sessions                                                       int
+	ses                                                            ledger.SessionData
 }
 
 // open resolves the policy and the task the subcommand acts on.
 func (f *taskFlags) open(cmd *cobra.Command) (flow.Env, string, error) {
-	e, _, err := flowEnv(cmd.Context(), f.root)
+	e, _, t, err := f.openR(cmd)
+	return e, t, err
+}
+
+func (f *taskFlags) openR(cmd *cobra.Command) (flow.Env, resolved, string, error) {
+	e, r, err := flowEnv(cmd.Context(), f.root)
 	if err != nil {
-		return e, "", err
+		return e, r, "", err
 	}
 	t := f.task
 	if t == "" {
 		t, err = flow.OpenTask(cmd.Context(), e.Journal)
 	}
-	return e, t, err
+	return e, r, t, err
 }
 
 func printWeight(cmd *cobra.Command, w core.Weight, task string, level *core.Level) {
@@ -143,6 +149,84 @@ func (f *taskFlags) note(cmd *cobra.Command, typ string, data map[string]any) er
 	return e.Note(cmd.Context(), t, typ, core.ActorHuman, data)
 }
 
+// doAccept is the human plan gate. Guarded and heavier tasks need a written plan
+// file (--plan); only a light task may be accepted without one.
+func (f *taskFlags) doAccept(cmd *cobra.Command) error {
+	if err := notAgent(); err != nil {
+		return err
+	}
+	e, t, err := f.open(cmd)
+	if err != nil {
+		return err
+	}
+	if f.plan != "" {
+		if err := e.Accept(cmd.Context(), t, f.plan, core.ActorHuman); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "plan accepted for task %s\n", t)
+		return nil
+	}
+	events, err := e.Journal.Events(cmd.Context(), t)
+	if err != nil {
+		return err
+	}
+	mode, err := verify.TaskMode(events)
+	if err != nil {
+		return err
+	}
+	if mode != core.ModeLight {
+		return fmt.Errorf("refusing: a %s task needs a written plan: rr task accept --plan <file>", mode)
+	}
+	return e.Note(cmd.Context(), t, "plan_accepted", core.ActorHuman, map[string]any{"plan": "written"})
+}
+
+func (f *taskFlags) doResearch(cmd *cobra.Command) error {
+	if err := notAgent(); err != nil {
+		return err
+	}
+	e, r, t, err := f.openR(cmd)
+	if err != nil {
+		return err
+	}
+	_, ro, _, err := workers(r, f.runtime)
+	if err != nil {
+		return err
+	}
+	res, err := e.Research(cmd.Context(), t, ro.ReadOnly(), f.runtime)
+	if err != nil {
+		return err
+	}
+	if res.Brief == "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "task %s: no research for this mode\n", t)
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "task %s: %d scouts (%d cached), brief %s (~%d tokens)\n", t, len(res.Roles), res.CacheHits, res.Brief, res.BriefToken)
+	return nil
+}
+
+func (f *taskFlags) doBuild(cmd *cobra.Command) error {
+	if err := notAgent(); err != nil {
+		return err
+	}
+	e, r, t, err := f.openR(cmd)
+	if err != nil {
+		return err
+	}
+	impl, ro, et, err := workers(r, f.runtime)
+	if err != nil {
+		return err
+	}
+	res, err := e.Build(cmd.Context(), t, flow.BuildIn{Impl: impl, Reviewer: ro, Runtime: f.runtime, Tiers: et.Models, Actor: core.ActorHuman})
+	for _, s := range res {
+		fmt.Fprintf(cmd.OutOrStdout(), "step %s: %s\n", s.Step, strings.TrimSpace(s.Commit+" "+s.Blocked))
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "task %s: factory PASS\n", t)
+	return nil
+}
+
 func (f *taskFlags) doClose(cmd *cobra.Command) error {
 	if err := notAgent(); err != nil {
 		return err
@@ -167,7 +251,7 @@ func init() {
 	cli.Register(func() *cobra.Command {
 		wd, _ := os.Getwd()
 		var f taskFlags
-		c := &cobra.Command{Use: "task", Short: "Task flow: start, amend, accept, review, close"}
+		c := &cobra.Command{Use: "task", Short: "Task flow: start, research, accept, build, review, close"}
 		c.PersistentFlags().StringVar(&f.root, "root", wd, "repository root")
 		c.PersistentFlags().StringVar(&f.task, "task", "", "task id (default: the task in flight)")
 
@@ -192,11 +276,20 @@ func init() {
 		amend.Flags().StringSliceVar(&f.declare, "declare", nil, "raise an axis: axis=0..2")
 
 		accept := &cobra.Command{
-			Use: "accept", Short: "Record the human's acceptance of the plan (plan_accepted)", Args: cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return f.note(cmd, "plan_accepted", map[string]any{"plan": "written"})
-			},
+			Use: "accept", Short: "Accept the written plan (--plan; required above light): plan.Check, inside the scope, hash, plan_accepted", Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error { return f.doAccept(cmd) },
 		}
+		accept.Flags().StringVar(&f.plan, "plan", "", "plan file (DES §6 steps with files); copied into the task's state")
+		research := &cobra.Command{
+			Use: "research", Short: "Run the read-only scouts of the task's mode and write the merge brief into the task's state", Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error { return f.doResearch(cmd) },
+		}
+		research.Flags().StringVar(&f.runtime, "runtime", "claude", "worker runtime: claude | codex (must be in project.runtimes)")
+		build := &cobra.Command{
+			Use: "build", Short: "Run the factory over the accepted plan: workers per step, two-stage review, review_verdict factory", Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error { return f.doBuild(cmd) },
+		}
+		build.Flags().StringVar(&f.runtime, "runtime", "claude", "worker runtime: claude | codex (must be in project.runtimes)")
 		review := &cobra.Command{
 			Use: "review", Short: "Record the human's review verdict (review_verdict)", Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
@@ -227,7 +320,7 @@ func init() {
 		closeCmd.Flags().StringVar(&f.ses.Session, "session", "", "session id of --transcript")
 		closeCmd.Flags().StringVar(&f.ses.Phase, "phase", "implement", "phase of --transcript for rr cost")
 
-		c.AddCommand(start, amend, accept, review, risk, closeCmd)
+		c.AddCommand(start, amend, research, accept, build, review, risk, closeCmd)
 		return c
 	})
 }
