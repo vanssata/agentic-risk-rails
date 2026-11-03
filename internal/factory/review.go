@@ -12,18 +12,22 @@ import (
 // stages: spec compliance first, then quality (DES §6).
 var stages = []string{"reviewer-spec", "reviewer-quality"}
 
-// roundTier: rounds 1-2 at the mode's tier; round 3 one tier up when that tier
-// is effective, else the same tier with a second independent reviewer.
+// roundTier: rounds 1-2 at ReviewTier (empty = Tier); round 3 one tier up when
+// that tier is effective, else the same tier with a second independent reviewer.
 func (f *Factory) roundTier(round int) (tier core.Tier, independent bool) {
-	if round < MaxReviewRounds {
-		return f.Tier, false
+	base := f.Tier
+	if f.ReviewTier != "" {
+		base = f.ReviewTier
 	}
-	if r := f.Tier.Rank(); r >= 0 && r+1 < len(core.Tiers) {
+	if round < MaxReviewRounds {
+		return base, false
+	}
+	if r := base.Rank(); r >= 0 && r+1 < len(core.Tiers) {
 		if up := core.Tiers[r+1]; f.Effective[up] {
 			return up, false
 		}
 	}
-	return f.Tier, true
+	return base, true
 }
 
 // pass: the report is DONE or DONE_WITH_CONCERNS, no `VERDICT:` line says
@@ -77,7 +81,7 @@ func (f *Factory) review(ctx context.Context, st plan.Step, w worktree, brief st
 
 // reviewRound returns the findings of the first failing stage, "" if both pass.
 func (f *Factory) reviewRound(ctx context.Context, st plan.Step, w worktree, brief string, round int, tier core.Tier, indep bool) (findings, tree string, err error) {
-	tree, err = stage(ctx, w, st.Files)
+	tree, err = stage(ctx, w, owned(st))
 	if err != nil {
 		return "", "", err
 	}
@@ -90,7 +94,7 @@ func (f *Factory) reviewRound(ctx context.Context, st plan.Step, w worktree, bri
 		if indep {
 			b += "You are a second, independent reviewer: ignore earlier verdicts.\n"
 		}
-		rep, err := f.Reviewer.ReadOnly().Run(ctx, core.WorkerSpec{Role: role, Tier: tier, Brief: b + "\nDIFF:\n" + patch, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
+		rep, err := f.Reviewer.ReadOnly().Run(ctx, core.WorkerSpec{Role: role, Tier: tier, Brief: b + "\nDIFF:\n" + patch, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget, Env: []string{EnvWorker + "=1"}})
 		if err != nil {
 			return "", "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 		}

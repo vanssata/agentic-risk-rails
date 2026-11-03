@@ -114,6 +114,10 @@ func scout(ctx context.Context, runner core.WorkerRunner, dir string, tier core.
 	if now.IsZero() {
 		now = time.Now()
 	}
+	if len(req.Inv.Changed) > 0 {
+		// the scout read a tree that differs from SHA: caching it under SHA would poison later runs
+		return r, false, nil
+	}
 	// a cache write failure only costs a later miss
 	_ = Put(dir, Entry{SHA: req.SHA, Role: role, QHash: qh, Body: rep.Body, Read: r.Read, LockHash: req.Inv.LockHash, At: now})
 	return r, false, nil

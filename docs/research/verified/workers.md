@@ -15,6 +15,8 @@ Pinned: codex-cli 0.166.0, claude 2.1.317. Date 2026-11-03. [V] verified by comm
 | `claude -p --output-format json` result has `usage` and `modelUsage` keyed by actual model ID (`{"claude-haiku-5-5":{"inputTokens","outputTokens","cacheReadInputTokens","cacheCreationInputTokens",...}}`) | `claude -p --output-format json --model haiku` on 2.1.317 | [V] |
 | Codex read-only sandbox: a worker told to create a file via shell did not create it | `TestCodexContract` | [V] (one run) |
 
+| Codex reads project `.codex/` (config.toml, hooks.json, rules) for a trusted project and `AGENTS.md` / `AGENTS.override.md` from the cwd; the scope check treats ignored copies of these as steering | runner.md rows 39-43 (`.codex/` layer); `AGENTS.override.md` name from memory | [V] `.codex/`, [U] `AGENTS.override.md` |
+
 ## READ
 `codex exec --help`; docs/research/verified/runner.md, ledger.md.
 
