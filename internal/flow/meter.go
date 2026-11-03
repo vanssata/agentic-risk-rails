@@ -15,10 +15,12 @@ import (
 type Meter struct {
 	Runtime string // claude | codex
 	Emit    func(ctx context.Context, typ string, data any) error
+	// Check runs before every worker; an error stops it (the budget, DES §3.2).
+	Check func(ctx context.Context) error
 }
 
 func (e Env) meter(task, runtime string) Meter {
-	return Meter{Runtime: runtime, Emit: func(ctx context.Context, typ string, data any) error {
+	return Meter{Runtime: runtime, Check: e.budgetCheck(task), Emit: func(ctx context.Context, typ string, data any) error {
 		return e.append(ctx, task, typ, core.ActorAutonomy, data)
 	}}
 }
@@ -30,6 +32,8 @@ func phase(role string) (string, error) {
 		return "research", nil
 	case role == "implementer" || role == "fixer":
 		return "implement", nil
+	case role == "planner":
+		return "plan", nil
 	case strings.HasPrefix(role, "reviewer"):
 		return "review", nil
 	}
@@ -49,11 +53,17 @@ func (w metered) Run(ctx context.Context, spec core.WorkerSpec) (core.WorkerRepo
 	if err != nil {
 		return core.WorkerReport{}, err
 	}
+	if w.m.Check != nil {
+		if err := w.m.Check(ctx); err != nil {
+			return core.WorkerReport{}, err
+		}
+	}
 	rep, runErr := w.inner.Run(ctx, spec)
 	// a failed run is journaled too, with unknown usage (empty Model), never as free
-	data := ledger.WorkerData{Phase: ph, Role: spec.Role, Tier: spec.Tier, Runtime: w.m.Runtime, Status: rep.Status,
+	data := ledger.WorkerData{Phase: ph, Role: spec.Role, Step: spec.Step, Tier: spec.Tier, Runtime: w.m.Runtime, Status: rep.Status,
 		Tokens: rep.Tokens, Calls: rep.Calls, Usage: rep.Usage}
-	if err := w.m.Emit(ctx, ledger.EventWorker, data); err != nil {
+	// the run happened and cost tokens even if ctx was cancelled meanwhile (§14.1)
+	if err := w.m.Emit(context.WithoutCancel(ctx), ledger.EventWorker, data); err != nil {
 		return rep, err
 	}
 	return rep, runErr

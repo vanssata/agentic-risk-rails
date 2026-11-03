@@ -96,6 +96,11 @@ func (e Env) Accept(ctx context.Context, task, planFile string, actor core.Actor
 	if err != nil {
 		return err
 	}
+	if actor == core.ActorAutonomy {
+		if err := e.autonomyCovers(events); err != nil {
+			return e.refuse(ctx, task, actor, "AUTONOMY_LEVEL", err.Error())
+		}
+	}
 	st, err := os.Stat(planFile)
 	if err != nil {
 		return err
@@ -254,7 +259,39 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 		return results, errors.Join(runErr, err)
 	}
 	if verdict != "PASS" {
+		var ref *core.Refusal
+		if errors.As(runErr, &ref) && ref.Code == "BUDGET" {
+			return results, ref // the human must raise the budget, not retry
+		}
 		return results, &core.Refusal{Code: "FACTORY_FAILED", Detail: reason}
 	}
 	return results, nil
+}
+
+// autonomyCovers is the plan gate of the unattended runner: the task's level must
+// cover its mode (guarded needs L3, full needs L4; light and heavier modes never
+// accept by autonomy). The level is the lower of the journaled one and the one
+// this host computes now, so a ceiling lowered since task_started counts.
+func (e Env) autonomyCovers(events []core.Event) error {
+	mode, err := verify.TaskMode(events)
+	if err != nil {
+		return err
+	}
+	need := map[core.Mode]core.Level{core.ModeGuarded: core.L3, core.ModeFull: core.L4}[mode]
+	if need == 0 {
+		return fmt.Errorf("mode %s has no autonomous plan gate", mode)
+	}
+	w, err := lastWeight(events)
+	if err != nil {
+		return err
+	}
+	have, found := lastLevel(events)
+	if !found {
+		return errors.New("no level recorded for the task")
+	}
+	now, _, _ := e.level(mode, w.Irreversible, events[0].TiersEffective)
+	if have = min(have, now); have < need {
+		return fmt.Errorf("level %s does not cover mode %s (needs %s)", have, mode, need)
+	}
+	return nil
 }
