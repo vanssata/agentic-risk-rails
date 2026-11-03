@@ -106,7 +106,13 @@ func claudeSandbox(ctx context.Context, ex execFn) error {
 		return refuse("cannot create a probe dir: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	if err := ex(ctx, nil, "bwrap", append(base, "touch", filepath.Join(dir, "x"))...); err == nil {
+	// positive control: the same write through a writable bind must work, so the
+	// negative one cannot pass just because touch (or the probe) fails
+	rw := append([]string{"--ro-bind", "/", "/", "--bind", dir, dir}, base[3:]...)
+	if err := ex(ctx, nil, "bwrap", append(rw, "touch", filepath.Join(dir, "ok"))...); err != nil {
+		return refuse("the sandbox probe cannot write to a writable bind (%v): %s", err, fix)
+	}
+	if err := ex(ctx, nil, "bwrap", append(base, "touch", filepath.Join(dir, "denied"))...); err == nil {
 		return refuse("the sandbox probe does not confine writes (negative control wrote %s)", dir)
 	}
 	return nil

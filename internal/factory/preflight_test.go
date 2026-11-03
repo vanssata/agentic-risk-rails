@@ -65,7 +65,7 @@ func TestPreflightClaude(t *testing.T) {
 		home := t.TempDir()
 		trustFile(t, home, root, true)
 		p := PreflightIn{Runtime: "claude", Root: root, Home: home}
-		assert.NoError(t, preflight(context.Background(), p, (&fakeExec{fail: []string{"touch"}}).run))
+		assert.NoError(t, preflight(context.Background(), p, (&fakeExec{fail: []string{"/denied"}}).run))
 	})
 	t.Run("sandbox cannot run a command", func(t *testing.T) {
 		cfg := t.TempDir()
@@ -81,10 +81,16 @@ func TestPreflightClaude(t *testing.T) {
 		r := refusal(t, preflight(context.Background(), in(cfg), (&fakeExec{}).run))
 		assert.Contains(t, r.Detail, "confine")
 	})
+	t.Run("positive control fails (every write fails, not only the denied one)", func(t *testing.T) {
+		cfg := t.TempDir()
+		trustFile(t, cfg, root, true)
+		r := refusal(t, preflight(context.Background(), in(cfg), (&fakeExec{fail: []string{"touch"}}).run))
+		assert.Contains(t, r.Detail, "writable bind")
+	})
 	t.Run("works", func(t *testing.T) {
 		cfg := t.TempDir()
 		trustFile(t, cfg, root, true)
-		assert.NoError(t, preflight(context.Background(), in(cfg), (&fakeExec{fail: []string{"touch"}}).run))
+		assert.NoError(t, preflight(context.Background(), in(cfg), (&fakeExec{fail: []string{"/denied"}}).run))
 	})
 }
 
