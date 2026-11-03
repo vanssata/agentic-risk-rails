@@ -41,3 +41,6 @@ Contract run: a few cents (one claude haiku call, three small gpt-5.6-sol calls)
 
 ## GAPS
 - whether Claude can be pointed at a separately profiled bwrap binary [U]; `sandbox.allowNestedUserNamespaces` (≥2.1.305) untested for this error [U]
+- FIX applied by the owner (sudo): in `/etc/apparmor.d/bwrap-userns-restrict` the `audit deny capability,` line of `unpriv_bwrap` commented out AND `/etc/apparmor.d/local/unpriv_bwrap` = `capability sys_admin, capability setuid, capability setgid,` (an AppArmor profile allows only what it lists, so removing the deny alone kept CapEff 0); `apparmor_parser -r`. Then, without allowAllUnixSockets: Bash works, `denyWrite` holds (Read-only file system), `/var/run/docker.sock` unreachable (curl exit 7) | reproduced 2026-11-03 | [V]
+- then `rr task research|accept|build|close --runtime claude` on rr-sandbox (guarded): 2 Haiku scouts, Sonnet implementer + two Sonnet review stages PASS, close green | real run | [V]
+- the commented deny line is in a package conffile and may come back on an apparmor upgrade; the local/ file survives | [U]
