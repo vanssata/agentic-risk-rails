@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -33,6 +34,11 @@ type claudeResult struct {
 	IsError  bool           `json:"is_error"`
 	NumTurns int            `json:"num_turns"`
 	RawUsage map[string]any `json:"usage"`
+	// ModelUsage is keyed by the actual model IDs used.
+	ModelUsage map[string]struct {
+		In  int64 `json:"inputTokens"`
+		Out int64 `json:"outputTokens"`
+	} `json:"modelUsage"`
 }
 
 // ReadOnly returns a copy that can only read: plan mode, a Read/Grep/Glob tool
@@ -64,7 +70,40 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 		args = append(args, "--tools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
 			"--setting-sources", "user", "--strict-mcp-config")
 	}
-	timeout := c.Timeout
+	stdout, stderr, runErr := runProc(ctx, bin, args, spec, c.Timeout)
+
+	var res claudeResult
+	if err := json.Unmarshal(stdout, &res); err != nil {
+		// no parsable result: the worker failed, never a success
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "claude: no JSON result: " + strings.TrimSpace(stderr)}, nil //nolint:nilerr
+	}
+	num := func(k string) int64 { v, _ := res.RawUsage[k].(float64); return int64(v) }
+	in, out, cr, cw := num("input_tokens"), num("output_tokens"), num("cache_read_input_tokens"), num("cache_creation_input_tokens")
+	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: in + out + cr + cw, Calls: res.NumTurns}
+	if len(res.RawUsage) > 0 { // absent usage stays zero = unknown, never free
+		rep.Usage = core.Usage{Runtime: "claude", Model: res.mainModel(model), Time: time.Now().UTC(), Input: in, Output: out, CacheRead: cr, CacheWrite: cw}
+	}
+	if res.IsError || runErr != nil { // e.g. --max-turns reached
+		rep.Status = core.StatusBlocked
+	}
+	return rep, nil
+}
+
+// mainModel is the model that handled most tokens, else the --model value.
+func (r claudeResult) mainModel(fallback string) string {
+	best, bestN := fallback, int64(-1)
+	for m, u := range r.ModelUsage {
+		if n := u.In + u.Out; n > bestN || (n == bestN && m < best) {
+			best, bestN = m, n
+		}
+	}
+	return best
+}
+
+// runProc runs bin in spec.Worktree with the brief on stdin and spec.Env added
+// to the inherited environment. It is bounded by timeout (0 = DefaultTimeout)
+// and kills the whole process group, also leftovers after a normal exit.
+func runProc(ctx context.Context, bin string, args []string, spec core.WorkerSpec, timeout time.Duration) (stdout []byte, stderr string, runErr error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -75,30 +114,15 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) } // the whole group
 	cmd.WaitDelay = time.Second
 	cmd.Dir = spec.Worktree
+	cmd.Env = append(os.Environ(), spec.Env...)
 	cmd.Stdin = strings.NewReader(spec.Brief)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	runErr := cmd.Run()
-	if cmd.Process != nil { // leftover background processes die with the worker, also after a normal exit
+	runErr = cmd.Run()
+	if cmd.Process != nil { // leftover background processes die with the worker
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-
-	var res claudeResult
-	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
-		// no parsable result: the worker failed, never a success
-		return core.WorkerReport{Status: core.StatusBlocked, Body: "claude: no JSON result: " + strings.TrimSpace(errb.String())}, nil //nolint:nilerr
-	}
-	var tokens int64
-	for _, k := range []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
-		if v, ok := res.RawUsage[k].(float64); ok {
-			tokens += int64(v)
-		}
-	}
-	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: tokens, Calls: res.NumTurns}
-	if res.IsError || runErr != nil { // e.g. --max-turns reached
-		rep.Status = core.StatusBlocked
-	}
-	return rep, nil
+	return out.Bytes(), errb.String(), runErr
 }
 
 // statusOf reads only the LAST non-empty line, which must be `STATUS: X`;
