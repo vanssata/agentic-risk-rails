@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/vanssata/agentic-risk-rails/internal/adapters/claude"
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/factory"
 	"github.com/vanssata/agentic-risk-rails/internal/models"
@@ -57,5 +58,9 @@ func workers(r resolved, runtime string) (impl core.WorkerRunner, ro factory.Rea
 		}
 	}
 	impl, ro, err = runnerFor(runtime, m)
+	if c, ok := impl.(factory.ClaudeRunner); ok { // read-only workers load user settings only
+		c.DenyRead = claude.ReadDenyRules(r.eff.Policy)
+		impl, ro = c, c
+	}
 	return impl, ro, et, err
 }

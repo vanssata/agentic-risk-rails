@@ -72,11 +72,7 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 			deny = append(deny, "Edit("+permPath(r)+")")
 		}
 	}
-	for _, p := range readDeny {
-		for _, r := range depthForms(p) {
-			deny = append(deny, "Read("+permPath(r)+")")
-		}
-	}
+	deny = append(deny, ReadDenyRules(in.Policy.Policy)...)
 	deny = append(deny, wrap("Bash", e.Commands.Deny)...)
 	asks := wrap("Bash", e.Commands.Ask)
 	if in.Level >= core.L2 {
@@ -118,6 +114,20 @@ func (settingsGen) Render(_ context.Context, in core.SyncInput) ([]core.File, er
 		return nil, err
 	}
 	return []core.File{{Path: ".claude/settings.json", Content: buf.Bytes()}}, nil
+}
+
+// ReadDenyRules are the Read(...) permission rules of secret_reads and
+// sandbox.no_read, as the project settings render them; host read-only workers
+// load user settings only and get them on the command line (wave 6).
+func ReadDenyRules(p core.Policy) []string {
+	e := p.Enforcement
+	var deny []string
+	for _, p := range dedupe(expandRefs(concat(e.SecretReads, e.Sandbox.NoRead), e.SecretReads)) {
+		for _, r := range depthForms(p) {
+			deny = append(deny, "Read("+permPath(r)+")")
+		}
+	}
+	return deny
 }
 
 // depthForms returns the forms a policy glob needs in Claude's syntax. A
