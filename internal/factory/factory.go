@@ -21,14 +21,17 @@ import (
 const MaxReviewRounds = 3
 
 type Config struct {
-	Task      string
-	Root      string             // integration checkout; step commits are cherry-picked here
-	WorkDir   string             // parent directory of the step worktrees
-	Tier      core.Tier          // tier of the mode: implementers and rounds 1-2
-	Effective map[core.Tier]bool // tiers available; round 3 goes up only if the next tier is here
-	Parallel  int                // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
-	MaxTurns  int                // per worker, DES §6: 30
-	Budget    core.TokenCount
+	Task    string
+	Root    string    // integration checkout; step commits are cherry-picked here
+	WorkDir string    // parent directory of the step worktrees
+	Tier    core.Tier // tier of the mode: implementers and rounds 1-2
+	// ReviewTier is the tier of review rounds 1-2 (DES §7.1: STRONG for full+);
+	// empty = Tier. Wave 5 fix: honoured by the factory after the W5-A fix round.
+	ReviewTier core.Tier
+	Effective  map[core.Tier]bool // tiers available; round 3 goes up only if the next tier is here
+	Parallel   int                // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
+	MaxTurns   int                // per worker, DES §6: 30
+	Budget     core.TokenCount
 }
 
 // ReadOnlyRunner yields a runner that cannot modify the worktree. The factory
@@ -233,3 +236,7 @@ func firstLine(s string) string {
 // EnvScope arms the guard hook of a worker with the step's files; it must
 // equal flow.EnvScope (flow imports factory, so it cannot be imported here).
 const EnvScope = "RR_SCOPE_FILE"
+
+// EnvWorker is set to "1" in the environment of every worker rr starts, so
+// that host-side human gates (`rr task accept|build|close`) refuse inside it.
+const EnvWorker = "RR_WORKER"
