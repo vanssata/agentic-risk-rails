@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -20,6 +21,17 @@ type CodexRunner struct {
 	Models   map[core.Tier]string
 	readOnly bool          // set by ReadOnly(): reviewers and scouts cannot write
 	Timeout  time.Duration // per worker; 0 = DefaultTimeout, never unlimited
+}
+
+// withGoCache puts the Go build cache where workspace-write can write (it cannot under HOME,
+// errata #65) unless env already sets GOCACHE.
+func withGoCache(env []string) []string {
+	for _, e := range env {
+		if strings.HasPrefix(e, "GOCACHE=") {
+			return env
+		}
+	}
+	return append(env[:len(env):len(env)], fmt.Sprintf("GOCACHE=%s/rr-gocache-%d", os.TempDir(), os.Getuid()))
 }
 
 // ReadOnly returns a copy that can only read.
@@ -42,6 +54,7 @@ func (c CodexRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worker
 	}
 	// the trailing "-" reads the prompt from stdin
 	args := []string{"exec", "--json", "--ephemeral", "--sandbox", sandbox, "--model", model, "-"}
+	spec.Env = withGoCache(spec.Env)
 	stdout, stderr, runErr := runProc(ctx, bin, args, spec, c.Timeout)
 	if runErr != nil {
 		return core.WorkerReport{Status: core.StatusBlocked, Body: "codex: " + runErr.Error() + ": " + strings.TrimSpace(stderr)}, nil //nolint:nilerr
