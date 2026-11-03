@@ -164,11 +164,10 @@ func ceilingHosting(ctx context.Context, _ string) (core.Hosting, error) {
 	}
 	for _, l := range []*core.Layer{ent, user} {
 		if l != nil && l.Policy.Remote != "" {
-			tok, err := hostgh.TokenFor(ctx, l.Policy.Remote, "")
-			if err != nil {
+			if _, err := hostgh.TokenFor(ctx, l.Policy.Remote, ""); err != nil { // fail before the run starts
 				return nil, err
 			}
-			return hostgh.New(l.Policy.Remote, tok, "")
+			return hostgh.Refreshing{Remote: l.Policy.Remote}, nil // a run may outlive one App token
 		}
 	}
 	return nil, fmt.Errorf("no remote pinned in ceiling.yaml: the kill switch and the policy in force cannot be read, refusing to run")
