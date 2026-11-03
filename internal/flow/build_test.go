@@ -32,7 +32,7 @@ func TestCheckPlanScope(t *testing.T) {
 		"no steps parse err": {"steps: nope\n", "plan"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := checkPlan([]byte(tc.plan), scope)
+			_, err := checkPlan([]byte(tc.plan), scope, nil)
 			if tc.err == "" {
 				require.NoError(t, err)
 				return

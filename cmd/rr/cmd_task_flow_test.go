@@ -178,9 +178,71 @@ func TestTaskFullFlowResearchAcceptBuildClose(t *testing.T) {
 	require.NotNil(t, verdict)
 	assert.Equal(t, "PASS", verdict["verdict"])
 
+	// implementers carry the scope file; reviewers are STRONG in full mode (DES §7.1)
+	for _, sp := range w.specs {
+		switch {
+		case sp.Role == "implementer":
+			assert.True(t, hasEnvKey(sp.Env, factory.EnvScope), "RR_SCOPE_FILE: %v", sp.Env)
+			// INTEGRATION: RR_WORKER=1 and the reviewer tier come with W5-A fix round 1; flip the const when merged
+			if factoryFix1Merged {
+				assert.Contains(t, sp.Env, factory.EnvWorker+"=1")
+			}
+			assert.Equal(t, core.TierBalanced, sp.Tier)
+		case strings.HasPrefix(sp.Role, "reviewer"):
+			if factoryFix1Merged {
+				assert.Equal(t, core.TierStrong, sp.Tier, sp.Role)
+			}
+		}
+	}
+
+	out, err = runPolicyRR(t, "cost", "--task", task, "--root", root)
+	require.NoError(t, err, out)
+	for _, ph := range []string{"research", "implement", "review"} {
+		assert.Regexp(t, `(?m)^\s+`+ph+`\s`, out)
+	}
+
 	out, err = runPolicyRR(t, "task", "close", "--root", root)
 	require.NoError(t, err, out)
 	assert.Empty(t, mustOpen(t, root))
+}
+
+// factoryFix1Merged: set true once W5-A uses Config.ReviewTier and sets RR_WORKER=1 (assertions are red before).
+const factoryFix1Merged = false
+
+func hasEnvKey(env []string, key string) bool {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, key+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTaskResearchFullIrreversibleHasFiveScouts(t *testing.T) {
+	root := taskRepo(t)
+	w := fakeWorkers(t)
+	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "pay fee", "--files", payFile, "--declare", "reversibility=2,domain=2")
+	require.NoError(t, err)
+	task := openTask(t, root)
+	assert.Contains(t, string(eventTypes(t, root, task)[0].Data), `"mode":"full_irreversible"`)
+	out, err := runPolicyRR(t, "task", "research", "--root", root)
+	require.NoError(t, err, out)
+	assert.Len(t, w.roles(), 5)
+}
+
+func TestTaskAcceptIsNotRelabelledByModeGrowth(t *testing.T) {
+	root := taskRepo(t)
+	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "tweak", "--files", light, "--declare", lightDecl)
+	require.NoError(t, err)
+	_, err = runPolicyRR(t, "task", "accept", "--root", root) // light: no plan file
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, payFile), []byte("<?php // DROP TABLE x\n"), 0o644))
+	out, err := runPolicyRR(t, "task", "amend", "--root", root)
+	require.NoError(t, err, out)
+	_, err = runPolicyRR(t, "task", "review", "--root", root, "--verdict", "PASS")
+	require.NoError(t, err)
+	_, err = runPolicyRR(t, "task", "close", "--root", root)
+	assert.Equal(t, "PLAN_MISSING", refusal(t, err).Code)
 }
 
 func TestTaskFlowStepsRefuseAnAgentShell(t *testing.T) {

@@ -501,18 +501,22 @@ func (e Env) process(ctx context.Context, task string, actor core.Actor, mode co
 		if ev.Type == "plan_accepted" {
 			var d struct {
 				Plan string `json:"plan"`
+				SHA  string `json:"sha"`
 			}
 			_ = json.Unmarshal(ev.Data, &d)
-			if d.Plan != "inline" { // an inline plan never satisfies a heavier mode
+			if d.Plan == "written" && d.SHA != "" { // an inline or light accept never satisfies a heavier mode
 				has["plan_written"] = true
 			}
 		}
 		if ev.Type == "review_verdict" {
 			var d struct {
 				Verdict string `json:"verdict"`
+				Stage   string `json:"stage"`
 			}
 			_ = json.Unmarshal(ev.Data, &d)
-			last = d.Verdict
+			if d.Stage == "factory" || d.Stage == "human" { // the factory's per-step verdicts do not count
+				last = d.Verdict
+			}
 		}
 	}
 	if mode == core.ModeLight { // light: the goal is the plan and there is no review stage; both recorded so the required events hold
