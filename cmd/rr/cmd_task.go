@@ -217,7 +217,8 @@ func (f *taskFlags) doBuild(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	res, err := e.Build(cmd.Context(), t, flow.BuildIn{Impl: impl, Reviewer: ro, Runtime: f.runtime, Tiers: et.Models, Actor: core.ActorHuman})
+	res, err := e.Build(cmd.Context(), t, flow.BuildIn{Impl: impl, Reviewer: ro, Runtime: f.runtime, Tiers: et.Models, Actor: core.ActorHuman,
+		Preflight: func(ctx context.Context) error { return preflightFor(ctx, r, f.runtime) }})
 	for _, s := range res {
 		fmt.Fprintf(cmd.OutOrStdout(), "step %s: %s\n", s.Step, strings.TrimSpace(s.Commit+" "+s.Blocked))
 	}

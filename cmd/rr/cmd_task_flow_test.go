@@ -84,7 +84,16 @@ func fakeWorkers(t *testing.T) *scripted {
 		return s, s, nil
 	}
 	t.Cleanup(func() { runnerFor = old })
+	noPreflight(t)
 	return s
+}
+
+// noPreflight replaces the host preflight of `rr task build` with one that passes.
+func noPreflight(t *testing.T) {
+	t.Helper()
+	old := preflightFor
+	preflightFor = func(context.Context, resolved, string) error { return nil }
+	t.Cleanup(func() { preflightFor = old })
 }
 
 func writePlan(t *testing.T, body string) string {
@@ -280,7 +289,7 @@ type flaky struct {
 func (f *flaky) Run(ctx context.Context, spec core.WorkerSpec) (core.WorkerReport, error) {
 	if spec.Role == f.role {
 		_, _ = f.scripted.Run(ctx, spec)
-		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network"}, nil
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network", Tokens: 10, Usage: core.Usage{Runtime: "claude", Model: "sonnet"}}, nil
 	}
 	return f.scripted.Run(ctx, spec)
 }
@@ -296,6 +305,7 @@ func TestTaskResearchIsAllOrNothingAndCached(t *testing.T) {
 		return bad, bad, nil
 	}
 	t.Cleanup(func() { runnerFor = old })
+	noPreflight(t)
 	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "pay fee", "--files", payFile)
 	require.NoError(t, err)
 	task := openTask(t, root)

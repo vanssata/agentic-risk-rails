@@ -228,7 +228,7 @@ func TestCollectWorkersInvalid(t *testing.T) {
 	ok := WorkerData{Phase: "review", Tier: core.TierFast, Runtime: "claude"}
 	for name, mut := range map[string]func(*WorkerData){
 		"runtime": func(d *WorkerData) { d.Runtime = "gemini" },
-		"phase":   func(d *WorkerData) { d.Phase = "plan" },
+		"phase":   func(d *WorkerData) { d.Phase = "ship" },
 	} {
 		d := ok
 		mut(&d)

@@ -86,7 +86,7 @@ func Collect(events []core.Event, roots []string) ([]Item, error) {
 // It has no price, so Group counts it as unpriced, never as $0.
 const UnknownModel = "unknown"
 
-var workerPhases = map[string]bool{"research": true, "implement": true, "review": true}
+var workerPhases = map[string]bool{"research": true, "plan": true, "implement": true, "review": true}
 
 // workerItem turns a worker_usage event into an Item. Workers started by rr
 // run without a persisted session (Claude --no-session-persistence, Codex
