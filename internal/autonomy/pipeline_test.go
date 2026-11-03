@@ -101,26 +101,23 @@ func TestPipelineSkippedWhenCeilingDoesNotCover(t *testing.T) {
 }
 
 func TestPipelineFailuresBlockWithoutPR(t *testing.T) {
-	for name, tc := range map[string]struct {
-		set  func(p *Pipeline)
-		want string
-	}{
-		"accept refuses (plan out of scope)": {func(p *Pipeline) {
+	for name, set := range map[string]func(p *Pipeline){
+		"accept refuses (plan out of scope)": func(p *Pipeline) {
 			p.Accept = func(context.Context, string, string) error {
 				return &core.Refusal{Code: "PLAN_OUT_OF_SCOPE", Detail: "x"}
 			}
-		}, "accept"},
-		"factory failed": {func(p *Pipeline) {
+		},
+		"factory failed": func(p *Pipeline) {
 			p.Build = func(context.Context, string) error { return &core.Refusal{Code: "FACTORY_FAILED", Detail: "s1"} }
-		}, "FACTORY_FAILED"},
-		"research incomplete": {func(p *Pipeline) { p.Research = func(context.Context, string) error { return errors.New("scout") } }, "research"},
-		"no evidence": {func(p *Pipeline) {
+		},
+		"research incomplete": func(p *Pipeline) { p.Research = func(context.Context, string) error { return errors.New("scout") } },
+		"no evidence": func(p *Pipeline) {
 			p.Evidence = func(context.Context, string) (Evidence, error) { return Evidence{}, errors.New("x") }
-		}, "evidence"},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := newPipeEnv(t, core.L3)
-			tc.set(p.r.Pipeline)
+			set(p.r.Pipeline)
 			head := strings.TrimSpace(testutil.Git(t, p.root, "rev-parse", "HEAD"))
 			out, err := p.run(t, core.ModeGuarded)
 			require.NoError(t, err)
@@ -130,7 +127,6 @@ func TestPipelineFailuresBlockWithoutPR(t *testing.T) {
 			assert.Equal(t, head, strings.TrimSpace(testutil.Git(t, p.root, "rev-parse", "HEAD")), "back at base")
 			assert.Equal(t, "a", strings.TrimSpace(string(mustRead(t, filepath.Join(p.root, "a.txt")))))
 			assert.Contains(t, strings.Join(p.jr.Types("run1"), " "), "task_blocked")
-			_ = tc.want
 		})
 	}
 }

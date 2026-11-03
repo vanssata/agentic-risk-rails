@@ -114,11 +114,7 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 	if err != nil {
 		return nil, err
 	}
-	gitCheck := requireRealGitDir
-	if d.wt {
-		gitCheck = requireGitEntry
-	}
-	if err := gitCheck(abs); err != nil {
+	if err := d.checkGit(abs); err != nil {
 		return nil, fmt.Errorf("docker runner: %w", err)
 	}
 	args := []string{"run", "--rm", "--init", "--pull", "never", "--name", name, "--network", network, "--cap-drop", "ALL",
@@ -141,25 +137,23 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		if strings.Contains(m[0], ",") {
 			return nil, fmt.Errorf("docker runner: path %q contains a comma", m[0])
 		}
-		opt := "type=bind,src=" + m[0] + ",dst=" + m[1]
-		if i > 0 || d.ro {
-			opt += ",readonly"
-		}
-		args = append(args, "--mount", opt)
+		args = append(args, "--mount", bindOpt(m[0], m[1], i > 0 || d.ro))
 	}
-	if strings.Contains(pol, ",") {
-		return nil, fmt.Errorf("docker runner: path %q contains a comma", pol)
-	}
-	args = append(args, "--mount", "type=bind,src="+pol+",dst="+policyPath+",readonly", "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	args = append(args, "-e", "RR_POLICY_IN_FORCE="+policyPath)
+	files := [][2]string{{pol, policyPath}}
 	if d.ScopeFile != "" {
 		scope, err := outsideRoot(abs, d.ScopeFile)
 		if err != nil {
 			return nil, err
 		}
-		if strings.Contains(scope, ",") {
-			return nil, fmt.Errorf("docker runner: path %q contains a comma", scope)
+		files = append(files, [2]string{scope, scopePath})
+		args = append(args, "-e", "RR_SCOPE_FILE="+scopePath)
+	}
+	for _, f := range files {
+		if strings.Contains(f[0], ",") {
+			return nil, fmt.Errorf("docker runner: path %q contains a comma", f[0])
 		}
-		args = append(args, "--mount", "type=bind,src="+scope+",dst="+scopePath+",readonly", "-e", "RR_SCOPE_FILE="+scopePath)
+		args = append(args, "--mount", bindOpt(f[0], f[1], true))
 	}
 	for _, e := range d.env {
 		args = append(args, "-e", e)
@@ -173,6 +167,22 @@ func (d DockerRunner) argv(root, name, network string, stdin bool, cmd []string)
 		args = append(args, "--mount", "type=bind,src="+d.Sock+",dst="+sockPath, "-e", "RR_HALT_SOCK="+sockPath)
 	}
 	return append(append(args, d.Image), cmd...), nil
+}
+
+// checkGit: the checkout needs a real .git directory, a step worktree a .git file.
+func (d DockerRunner) checkGit(root string) error {
+	if d.wt {
+		return requireGitEntry(root)
+	}
+	return requireRealGitDir(root)
+}
+
+func bindOpt(src, dst string, ro bool) string {
+	opt := "type=bind,src=" + src + ",dst=" + dst
+	if ro {
+		opt += ",readonly"
+	}
+	return opt
 }
 
 // outsideRoot returns the absolute path of a runner-owned file that must not be

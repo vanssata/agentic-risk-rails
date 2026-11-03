@@ -337,7 +337,7 @@ func requireRealGitDir(root string) error {
 // work in the container and the agent cannot commit. A symlink is refused.
 func requireGitEntry(root string) error {
 	fi, err := os.Lstat(filepath.Join(root, ".git"))
-	if err != nil || !(fi.IsDir() || fi.Mode().IsRegular()) {
+	if err != nil || (!fi.IsDir() && !fi.Mode().IsRegular()) {
 		return fmt.Errorf("%s/.git must be a directory or a regular file (err: %w)", root, err)
 	}
 	return nil
@@ -515,7 +515,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if stop {
 		return gated, err
 	}
-	t = triaged(t, w)
+	o, t = gated, triaged(t, w)
 	branch := "rr/" + t.ID
 	_, _ = r.git(ctx, "branch", "-D", "-q", branch) // a rerun of the same task id; absent is fine
 	// A pipeline task stays detached at base until its build is done: the factory's
@@ -543,14 +543,7 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 
 	waveCtx, endWave := r.waveContext(agentCtx, pol.Autonomy.Unattended.MaxWallMinutes)
 	defer endWave()
-	var rep core.WorkerReport
-	var werr error
-	if pipe {
-		rep, werr = r.runPipeline(waveCtx, o.Level, t)
-	} else {
-		rep, werr = r.Worker.Run(waveCtx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
-			Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: pol.Models.Budgets[t.Mode]})
-	}
+	rep, werr := r.work(waveCtx, o.Level, t)
 
 	if reason := r.halter.Halted(); reason != "" {
 		return o, r.haltTask(ctx, reason, files, tracked)
@@ -571,20 +564,38 @@ func (r *Runner) task(ctx, agentCtx context.Context, t Task, base string) (Outco
 	if err := r.log(ctx, "journal_anchor", map[string]any{"task": t.ID, "head": head, "bytes": size, "missing": !ok}); err != nil {
 		return o, err
 	}
-	var ref *core.Refusal
-	if errors.As(werr, &ref) && ref.Code == "BUDGET" { // the flow meter (research, plan, build) stopped the task
+	if ref := r.overBudget(ctx, t, rep, werr); ref != nil {
 		r.discard(ctx, files, tracked, base)
-		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "worker": ref.Detail})
 		return o, ref
 	}
-	// usage unknown (codex prints none; a failed worker may print none) counts as exceeded
-	if b := pol.Models.Budgets[t.Mode]; !pipe && b > 0 && (rep.Tokens <= 0 || rep.Tokens > int64(b)) {
-		r.discard(ctx, files, tracked, base)
-		worker := string(rep.Status) + ": " + firstLine(rep.Body)
-		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
-		return o, &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
-	}
 	return r.deliver(ctx, t, o, rep, w, werr, files, tracked, base)
+}
+
+// work runs the task's worker: one implementer for light, the pipeline for guarded/full.
+func (r *Runner) work(ctx context.Context, lvl core.Level, t Task) (core.WorkerReport, error) {
+	if t.Mode != core.ModeLight {
+		return r.runPipeline(ctx, lvl, t)
+	}
+	return r.Worker.Run(ctx, core.WorkerSpec{Role: "implementer", Tier: t.Tier, MaxTurns: t.MaxTurns, Worktree: r.Root,
+		Brief: "Task id: " + t.ID + "\n\n" + t.Brief + briefTail, Budget: r.eff.Policy.Models.Budgets[t.Mode]})
+}
+
+// overBudget: the flow meter's BUDGET refusal (research, plan, build of a pipeline
+// task), or the light worker's token budget. Usage unknown (codex prints none; a
+// failed worker may print none) counts as exceeded.
+func (r *Runner) overBudget(ctx context.Context, t Task, rep core.WorkerReport, werr error) *core.Refusal {
+	var ref *core.Refusal
+	if errors.As(werr, &ref) && ref.Code == "BUDGET" {
+		_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "worker": ref.Detail})
+		return ref
+	}
+	b := r.eff.Policy.Models.Budgets[t.Mode]
+	if t.Mode != core.ModeLight || b <= 0 || (rep.Tokens > 0 && rep.Tokens <= int64(b)) {
+		return nil
+	}
+	worker := string(rep.Status) + ": " + firstLine(rep.Body)
+	_ = r.log(ctx, "run_budget_exceeded", map[string]any{"what": "tokens", "task": t.ID, "limit": b, "used": rep.Tokens, "worker": worker})
+	return &core.Refusal{Code: "BUDGET", Detail: "token budget of " + string(t.Mode) + " exceeded or usage unknown (worker " + worker + ")"}
 }
 
 // runPipeline: research -> plan -> accept -> build, all under the wave's context
@@ -734,17 +745,7 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	if err := r.restore(ctx, files, tracked); err != nil {
 		return block("restore manifests: " + err.Error())
 	}
-	var changed []string
-	var deleted map[string]bool
-	var err error
-	if pipe { // the factory committed on HEAD; anything left in the tree is not part of the plan
-		if st, serr := r.git(ctx, "status", "--porcelain"); serr != nil || st != "" {
-			return block("tree not clean after the build: " + firstLine(st))
-		}
-		changed, deleted, err = r.rawDiff(ctx, base, "HEAD")
-	} else {
-		changed, deleted, err = r.stage(ctx)
-	}
+	changed, deleted, err := r.collect(ctx, pipe, base)
 	if err != nil {
 		return block(err.Error())
 	}
@@ -770,17 +771,8 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 		return block(why)
 	}
 	title := "rr(" + t.ID + "): " + firstLine(t.Brief)
-	var ev *Evidence
-	if pipe {
-		e, err := r.Pipeline.Evidence(ctx, t.ID)
-		if err != nil {
-			return block("evidence: " + err.Error())
-		}
-		ev = &e
-		if _, err := r.git(ctx, "switch", "-q", "-c", branch); err != nil {
-			return block(err.Error())
-		}
-	} else if _, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title); err != nil {
+	ev, err := r.seal(ctx, t, title, branch)
+	if err != nil {
 		return block(err.Error())
 	}
 	if moved, err := r.beforePush(ctx, pol.Autonomy.KillSwitch.RemoteFile); err != nil {
@@ -802,6 +794,33 @@ func (r *Runner) deliver(ctx context.Context, t Task, o Outcome, rep core.Worker
 	}
 	r.clean(ctx)
 	return o, r.log(ctx, "draft_pr_opened", map[string]any{"task": t.ID, "branch": branch, "number": pr.Number, "url": pr.URL})
+}
+
+// collect lists what the task changed: the staged work of a light task, or the
+// factory's commits of a pipeline task (anything left uncommitted is not part of the plan).
+func (r *Runner) collect(ctx context.Context, pipe bool, base string) ([]string, map[string]bool, error) {
+	if !pipe {
+		return r.stage(ctx)
+	}
+	if st, err := r.git(ctx, "status", "--porcelain"); err != nil || st != "" {
+		return nil, nil, fmt.Errorf("tree not clean after the build: %q (err: %v)", firstLine(st), err) //nolint:errorlint // err may be nil
+	}
+	return r.rawDiff(ctx, base, "HEAD")
+}
+
+// seal makes the PR head: the runner commits a light task; a pipeline task already
+// has the factory's commits and only gets its branch (and the evidence for the PR body).
+func (r *Runner) seal(ctx context.Context, t Task, title, branch string) (*Evidence, error) {
+	if t.Mode == core.ModeLight {
+		_, err := r.git(ctx, "-c", "user.name=rr-runner", "-c", "user.email=rr-runner@localhost", "commit", "-q", "-m", title)
+		return nil, err
+	}
+	ev, err := r.Pipeline.Evidence(ctx, t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: %w", err)
+	}
+	_, err = r.git(ctx, "switch", "-q", "-c", branch)
+	return &ev, err
 }
 
 // trackedAmong lists which rendered files are tracked, so they can be restored.
