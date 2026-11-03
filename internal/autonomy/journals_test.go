@@ -116,7 +116,7 @@ func TestPRBodyShowsTheTriageWeight(t *testing.T) {
 	assert.NotContains(t, b, "declared only")
 	assert.Equal(t, [][]string{{"rr", "rr:L2", "rr:mode:light"}}, e.host.Labels)
 
-	b = prBody(Task{ID: "t1", Mode: core.ModeLight}, core.L2, core.WorkerReport{Status: core.StatusDone}, core.Weight{})
+	b = prBody(Task{ID: "t1", Mode: core.ModeLight}, core.L2, core.WorkerReport{Status: core.StatusDone}, core.Weight{}, nil)
 	assert.Contains(t, b, "- mode: light (from the queue: not triaged)")
 }
 
