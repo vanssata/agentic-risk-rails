@@ -75,7 +75,6 @@ type pipeRun struct {
 	out         []autonomy.Outcome
 	err         error
 	head        string
-	planStubbed bool
 }
 
 // runPipelineQueue drives autonomy.Runner exactly as runQueue wires it (real
@@ -111,18 +110,6 @@ func runPipelineQueue(t *testing.T, ceiling core.Level, plan, edit string, task 
 			return pol, nil
 		}}
 	run := &pipeRun{root: root, state: state, host: host, workers: w, head: head}
-	// flow.Env.Plan is W6-B's: while it is the wave 6 stub, the planner's yaml is
-	// written to a file here so the rest of the flow is still proven.
-	realPlan := r.Pipeline.Plan
-	r.Pipeline.Plan = func(ctx context.Context, id string) (string, error) {
-		f, err := realPlan(ctx, id)
-		if err != nil && strings.Contains(err.Error(), "Plan not implemented") {
-			run.planStubbed = true
-			f = filepath.Join(t.TempDir(), "plan.yaml")
-			return f, os.WriteFile(f, []byte(plan), 0o600)
-		}
-		return f, err
-	}
 	run.out, run.err = r.Run(t.Context(), []autonomy.Task{task})
 	return run
 }

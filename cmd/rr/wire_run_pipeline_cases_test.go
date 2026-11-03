@@ -19,9 +19,7 @@ func TestRunGuardedAtL3FullPipeline(t *testing.T) {
 	assert.Equal(t, "pr", run.out[0].Status, "%+v", run.out[0])
 	assert.Equal(t, core.L3, run.out[0].Level)
 	assert.Positive(t, run.workers.count("-scout"))
-	if !run.planStubbed {
-		assert.Equal(t, 1, run.workers.count("planner"), "a read-only planner worker writes the plan")
-	}
+	assert.Equal(t, 1, run.workers.count("planner"), "a read-only planner worker writes the plan")
 	assert.Equal(t, 1, run.workers.count("implementer"))
 	assert.Equal(t, 2, run.workers.count("reviewer"), "two review stages")
 	assert.Equal(t, []string{"rr/t1"}, run.host.Pushed)
