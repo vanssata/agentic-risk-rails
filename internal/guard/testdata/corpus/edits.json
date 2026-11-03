@@ -103,11 +103,11 @@
   "level": "L1",
   "tool": "Write",
   "paths": [
-   "{root}/src/Mod/.claude/skills/x/SKILL.md"
+   "{root}/src/Mod/.claude/agents/x.md"
   ],
   "edits": [
    {
-    "path": "{root}/src/Mod/.claude/skills/x/SKILL.md",
+    "path": "{root}/src/Mod/.claude/agents/x.md",
     "content": "x"
    }
   ],

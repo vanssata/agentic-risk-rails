@@ -14,7 +14,8 @@ var AlwaysProtected = []string{
 	"riskrails.yaml",
 	".rr/**",
 	".claude/**",
-	"**/.claude/skills/**", // nested skills load once Claude touches that subdirectory [V] (errata #66)
+	"**/.claude/**", // nested: skills load once Claude touches that subdirectory [V]; commands/agents too (errata #66)
+	"**/.codex/**",  // nested: loaded when an agent runs from that subdirectory (errata #66)
 	".codex/**",
 	".gemini/**",
 	".cursor/**",
