@@ -182,3 +182,59 @@ func TestCollectNoDoubleCount(t *testing.T) {
 	assert.EqualValues(t, 15, out)
 	assert.Len(t, items, 2)
 }
+
+func workerEvent(d WorkerData) core.Event {
+	b, _ := json.Marshal(d)
+	return core.Event{Type: EventWorker, Data: b}
+}
+
+func TestCollectWorkers(t *testing.T) {
+	u := func(model string, in, out int64) core.Usage {
+		return core.Usage{Model: model, Input: in, Output: out}
+	}
+	events := []core.Event{
+		workerEvent(WorkerData{Phase: "research", Role: "code-scout", Tier: core.TierFast, Runtime: "claude", Usage: u("claude-haiku-5-5", 1000, 100)}),
+		workerEvent(WorkerData{Phase: "implement", Role: "implementer", Tier: core.TierBalanced, Runtime: "claude", Usage: u("claude-sonnet-5-5", 2000, 500)}),
+		workerEvent(WorkerData{Phase: "review", Role: "reviewer-spec", Tier: core.TierStrong, Runtime: "codex", Usage: u("gpt-6.1-sol", 500, 50)}),
+		workerEvent(WorkerData{Phase: "review", Role: "reviewer-quality", Tier: core.TierStrong, Runtime: "claude", Status: core.StatusDone, Tokens: 9000}), // unknown usage
+	}
+	items, err := Collect(events, nil)
+	require.NoError(t, err)
+	require.Len(t, items, 4)
+	p, err := DefaultPrices()
+	require.NoError(t, err)
+	by := map[string]Row{}
+	for _, r := range Group(items, p, "phase") {
+		by[r.Key] = r
+	}
+	// haiku: 1000*0.1 + 100*0.5 = 150 ; sonnet: 2000*2 + 500*10 = 9000 ; gpt: 500*2 + 50*10 = 1500
+	assert.InDelta(t, 150/1e6, by["research"].USD, 1e-12)
+	assert.InDelta(t, 9000/1e6, by["implement"].USD, 1e-12)
+	assert.InDelta(t, 1500/1e6, by["review"].USD, 1e-12) // the unknown run adds no $0 price
+	assert.Equal(t, 1, by["review"].Unpriced)
+	assert.Zero(t, by["research"].Unpriced)
+	assert.Equal(t, "BALANCED", items[1].Tier) // from data.Tier; Tier.UnmarshalJSON rejects "", so no map fallback
+	var seen bool
+	for _, r := range Group(items, p, "model") {
+		if r.Key == UnknownModel {
+			seen = true
+			assert.Equal(t, 1, r.Unpriced)
+		}
+	}
+	assert.True(t, seen)
+}
+
+func TestCollectWorkersInvalid(t *testing.T) {
+	ok := WorkerData{Phase: "review", Tier: core.TierFast, Runtime: "claude"}
+	for name, mut := range map[string]func(*WorkerData){
+		"runtime": func(d *WorkerData) { d.Runtime = "gemini" },
+		"phase":   func(d *WorkerData) { d.Phase = "plan" },
+	} {
+		d := ok
+		mut(&d)
+		_, err := Collect([]core.Event{workerEvent(d)}, nil)
+		assert.Error(t, err, name)
+	}
+	_, err := Collect([]core.Event{{Type: EventWorker, Data: []byte(`{`)}}, nil)
+	assert.Error(t, err)
+}
