@@ -289,6 +289,9 @@ type WorkerSpec struct {
 	Worktree string     `json:"worktree,omitempty"`
 	MaxTurns int        `json:"max_turns"`
 	Budget   TokenCount `json:"budget"`
+	// Env is extra KEY=VALUE environment for the worker process on top of the
+	// runner's own (e.g. RR_SCOPE_FILE arming the step's scope guard).
+	Env []string `json:"env,omitempty"`
 }
 
 type WorkerReport struct {
@@ -296,6 +299,9 @@ type WorkerReport struct {
 	Body   string       `json:"body"`
 	Tokens int64        `json:"tokens"`
 	Calls  int          `json:"calls"`
+	// Usage is the priced breakdown when the runtime reports it; a zero Usage
+	// (empty Model) means unknown and is never priced as free.
+	Usage Usage `json:"usage"`
 }
 
 type WorkerRunner interface {
