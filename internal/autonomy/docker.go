@@ -446,32 +446,44 @@ func (d DockerRunner) Run(ctx context.Context, spec core.WorkerSpec) (rep core.W
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	return parseReport(d.Runtime, out.String(), errb.String(), runErr), nil
+	return parseReport(d.Runtime, model, out.String(), errb.String(), runErr), nil
 }
 
-func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport {
+// parseReport reads the worker's stdout. Usage carries the model (claude: the one
+// that handled most tokens in modelUsage, errata #63; else the --model value), so
+// the budget and the ledger price it; absent usage stays zero = unknown.
+func parseReport(runtime, model, stdout, stderr string, runErr error) core.WorkerReport {
 	blocked := func(why string) core.WorkerReport {
 		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
 	}
 	if runtime == "codex" {
-		return parseCodex(stdout, stderr, runErr)
+		return parseCodex(model, stdout, stderr, runErr)
 	}
 	var res struct {
-		Result   string         `json:"result"`
-		IsError  bool           `json:"is_error"`
-		NumTurns int            `json:"num_turns"`
-		Usage    map[string]any `json:"usage"`
+		Result     string         `json:"result"`
+		IsError    bool           `json:"is_error"`
+		NumTurns   int            `json:"num_turns"`
+		Usage      map[string]any `json:"usage"`
+		ModelUsage map[string]struct {
+			In  int64 `json:"inputTokens"`
+			Out int64 `json:"outputTokens"`
+		} `json:"modelUsage"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &res); err != nil {
 		return blocked("claude: no JSON result")
 	}
-	var tokens int64
-	for _, k := range []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
-		if v, ok := res.Usage[k].(float64); ok {
-			tokens += int64(v)
+	num := func(k string) int64 { v, _ := res.Usage[k].(float64); return int64(v) }
+	in, out, cr, cw := num("input_tokens"), num("output_tokens"), num("cache_read_input_tokens"), num("cache_creation_input_tokens")
+	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: in + out + cr + cw, Calls: res.NumTurns}
+	if len(res.Usage) > 0 {
+		best, bestN := model, int64(-1)
+		for m, u := range res.ModelUsage {
+			if n := u.In + u.Out; n > bestN || (n == bestN && m < best) {
+				best, bestN = m, n
+			}
 		}
+		rep.Usage = core.Usage{Runtime: "claude", Model: best, Time: time.Now().UTC(), Input: in, Output: out, CacheRead: cr, CacheWrite: cw}
 	}
-	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: tokens, Calls: res.NumTurns}
 	if res.IsError || runErr != nil {
 		rep.Status = core.StatusBlocked
 	}
@@ -483,12 +495,12 @@ func parseReport(runtime, stdout, stderr string, runErr error) core.WorkerReport
 // turn.completed (input_tokens includes cached ones). A stream that does not
 // parse, a turn without both numbers, or no turn.completed at all leaves Tokens
 // at 0 = unknown, which the runner counts as over budget.
-func parseCodex(stdout, stderr string, runErr error) core.WorkerReport {
+func parseCodex(model, stdout, stderr string, runErr error) core.WorkerReport {
 	blocked := func(why string) core.WorkerReport {
 		return core.WorkerReport{Status: core.StatusBlocked, Body: why + ": " + strings.TrimSpace(stderr)}
 	}
 	var msg string
-	var tokens int64
+	var in, cached, out int64
 	var turns int
 	known, failed := true, false
 	dec := json.NewDecoder(strings.NewReader(stdout))
@@ -501,6 +513,7 @@ func parseCodex(stdout, stderr string, runErr error) core.WorkerReport {
 			} `json:"item"`
 			Usage struct {
 				Input  *int64 `json:"input_tokens"`
+				Cached int64  `json:"cached_input_tokens"`
 				Output *int64 `json:"output_tokens"`
 			} `json:"usage"`
 		}
@@ -515,22 +528,24 @@ func parseCodex(stdout, stderr string, runErr error) core.WorkerReport {
 			}
 		case "turn.completed":
 			turns++
-			if ev.Usage.Input == nil || ev.Usage.Output == nil || *ev.Usage.Input < 0 || *ev.Usage.Output < 0 {
+			u := ev.Usage
+			if u.Input == nil || u.Output == nil || *u.Input < 0 || *u.Output < 0 || u.Cached < 0 || u.Cached > *u.Input {
 				known = false
 				continue
 			}
-			tokens += *ev.Usage.Input + *ev.Usage.Output
+			in, cached, out = in+*u.Input, cached+u.Cached, out+*u.Output
 		case "turn.failed":
 			failed = true
 		}
 	}
-	if !known || turns == 0 {
-		tokens = 0
-	}
 	if runErr != nil {
 		return blocked("codex: " + runErr.Error())
 	}
-	rep := core.WorkerReport{Status: statusOf(msg), Body: msg, Tokens: tokens, Calls: turns}
+	rep := core.WorkerReport{Status: statusOf(msg), Body: msg, Calls: turns}
+	if known && turns > 0 {
+		rep.Tokens = in + out
+		rep.Usage = core.Usage{Runtime: "codex", Model: model, Time: time.Now().UTC(), Input: in - cached, Output: out, CacheRead: cached}
+	}
 	if failed {
 		rep.Status = core.StatusBlocked
 	}
