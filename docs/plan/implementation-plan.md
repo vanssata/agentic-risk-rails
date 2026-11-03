@@ -479,4 +479,4 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 | nested `.claude/`/`.codex/` protected; Read deny за host read-only Claude | ✅ |
 | `make check` | ✅ |
 
-**Отворено:** `**/CLAUDE.md`/`**/AGENTS.md` (решение на собственика); Codex read-only не може да откаже четене [U]; паралелен overshoot на бюджета; tokens са отчетени от процеса в контейнера (сверяване с transcript-и не е направено); hook файлове в step worktree-ите; 401 evict в token cache-а; реален L3 run в `vanssata/rr-sandbox` (след потвърждение на собственика).
+**Отворено:** `**/CLAUDE.md`/`**/AGENTS.md` при L≥2 — ro в контейнера и промяна блокира PR-а, при L0/L1 остават редактируеми (решение на собственика, вълна 7); Codex read-only не може да откаже четене [U]; паралелен overshoot на бюджета; tokens са отчетени от процеса в контейнера (сверяване с transcript-и не е направено); hook файлове в step worktree-ите; 401 evict в token cache-а; реален L3 run в `vanssata/rr-sandbox` (след потвърждение на собственика).
