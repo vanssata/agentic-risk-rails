@@ -87,7 +87,7 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 	num := func(k string) int64 { v, _ := res.RawUsage[k].(float64); return int64(v) }
 	in, out, cr, cw := num("input_tokens"), num("output_tokens"), num("cache_read_input_tokens"), num("cache_creation_input_tokens")
 	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: in + out + cr + cw, Calls: res.NumTurns}
-	if len(res.RawUsage) > 0 { // absent usage stays zero = unknown, never free
+	if _, ok := res.RawUsage["input_tokens"]; ok && min(in, out, cr, cw) >= 0 { // absent or broken usage stays zero = unknown, never free
 		rep.Usage = core.Usage{Runtime: "claude", Model: res.mainModel(model), Time: time.Now().UTC(), Input: in, Output: out, CacheRead: cr, CacheWrite: cw}
 	}
 	if res.IsError || runErr != nil { // e.g. --max-turns reached

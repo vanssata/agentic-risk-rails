@@ -290,3 +290,15 @@ func TestParseReportCarriesUsageModel(t *testing.T) {
 	assert.Equal(t, int64(107), rep.Tokens)
 	assert.Equal(t, core.Usage{Runtime: "codex", Model: "gpt-6.1-sol", Time: rep.Usage.Time, Input: 60, Output: 7, CacheRead: 40}, rep.Usage)
 }
+
+// Review round 2: a usage object without token counts, or with negative ones, is
+// unknown (penalised by the budget), never known and free.
+func TestParseReportBrokenUsageIsUnknown(t *testing.T) {
+	for name, out := range map[string]string{
+		"no token keys": `{"result":"STATUS: DONE","usage":{"x":1}}`,
+		"negative":      `{"result":"STATUS: DONE","usage":{"input_tokens":-9000000,"output_tokens":5}}`,
+		"overflow":      `{"result":"STATUS: DONE","usage":{"input_tokens":1e30,"output_tokens":5}}`,
+	} {
+		assert.Empty(t, parseReport("claude", "opus", out, "", nil).Usage.Model, name)
+	}
+}

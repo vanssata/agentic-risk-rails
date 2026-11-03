@@ -58,7 +58,7 @@ func (e Env) budgetCheck(task string) func(context.Context) error {
 			if err := json.Unmarshal(ev.Data, &d); err != nil {
 				return &core.Refusal{Code: "BUDGET", Detail: "unreadable worker_usage: " + err.Error()}
 			}
-			if d.Usage.Model == "" {
+			if d.Usage.Model == "" || d.Tokens < 0 || d.Tokens > maxRunTokens { // a negative or wrapped count is not a known one
 				unknown++
 				used += max(d.Tokens, e.unknownCharge(d.Phase, budget))
 				continue
@@ -76,6 +76,9 @@ func (e Env) budgetCheck(task string) func(context.Context) error {
 		return &core.Refusal{Code: "BUDGET", Detail: detail}
 	}
 }
+
+// maxRunTokens bounds a plausible single worker run; more is a broken or forged report.
+const maxRunTokens = 1_000_000_000_000
 
 // unknownCharge is what a worker run with unknown usage costs: research.budget_per_scout
 // for a scout, otherwise a tenth of the mode's budget.

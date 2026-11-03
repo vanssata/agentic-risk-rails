@@ -466,7 +466,7 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 
 ### 15.1 Статус: вълна 6 (2026-11-03, branch `wave-6`)
 
-**Ревю:** рунд 1 (Sonnet: spec compliance ⇒ SHIP_WITH_FIXES, без BLOCKER/HIGH; adversarial ⇒ SHIP_WITH_FIXES, 1 HIGH) ⇒ поправено от оркестратора. Errata #66–#73.
+**Ревю:** рунд 1 (Sonnet: spec compliance ⇒ SHIP_WITH_FIXES, без BLOCKER/HIGH; adversarial ⇒ SHIP_WITH_FIXES, 1 HIGH) ⇒ поправено от оркестратора; рунд 2 (adversarial върху поправките) ⇒ SHIP_WITH_FIXES, 1 MEDIUM ⇒ поправено. Errata #66–#74.
 
 | Критерий | Статус |
 |---|---|

@@ -475,7 +475,7 @@ func parseReport(runtime, model, stdout, stderr string, runErr error) core.Worke
 	num := func(k string) int64 { v, _ := res.Usage[k].(float64); return int64(v) }
 	in, out, cr, cw := num("input_tokens"), num("output_tokens"), num("cache_read_input_tokens"), num("cache_creation_input_tokens")
 	rep := core.WorkerReport{Status: statusOf(res.Result), Body: res.Result, Tokens: in + out + cr + cw, Calls: res.NumTurns}
-	if len(res.Usage) > 0 {
+	if _, ok := res.Usage["input_tokens"]; ok && min(in, out, cr, cw) >= 0 { // no token count = unknown, never free
 		best, bestN := model, int64(-1)
 		for m, u := range res.ModelUsage {
 			if n := u.In + u.Out; n > bestN || (n == bestN && m < best) {

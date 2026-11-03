@@ -156,3 +156,14 @@ func TestBudgetChargesUnknownUsage(t *testing.T) {
 		})
 	}
 }
+
+// Review round 2: a negative or wrapped token count on a run with a model is
+// treated as unknown (penalised), so it cannot subtract from the spend.
+func TestBudgetNegativeTokensAreUnknown(t *testing.T) {
+	e, task := planEnv(t, core.ModeGuarded, core.L3, 1000)
+	usage(t, e, task, 950, "m")
+	usage(t, e, task, -9_000_000, "m")
+	var ref *core.Refusal
+	require.ErrorAs(t, e.budgetCheck(task)(context.Background()), &ref, "950 + penalty ≥ 1000")
+	assert.Equal(t, "BUDGET", ref.Code)
+}
