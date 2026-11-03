@@ -152,15 +152,18 @@ func TestCLIProber(t *testing.T) {
 model=""
 while [ $# -gt 0 ]; do [ "$1" = "--model" ] && model="$2"; shift; done
 case "$model" in
-  sonnet) echo ok; exit 0;;
+  sonnet) echo '{"result":"ok","modelUsage":{"claude-sonnet-5-5":{}}}'; exit 0;;
+  haiku) echo '{"result":"ok","modelUsage":{"claude-sonnet-5-5":{}}}'; exit 0;;
+  garbled) echo ok; exit 0;;
   fable) echo "There's an issue with the selected model (fable). It may not exist or you may not have access to it." >&2; exit 1;;
   org) echo "model restricted by your organization" >&2; exit 1;;
   *) echo boom >&2; exit 3;;
 esac`)
-	rs, err := CLIProber{Name: "claude", Bin: bin}.Probe(context.Background(), []string{"sonnet", "fable", "org", "weird"})
+	rs, err := CLIProber{Name: "claude", Bin: bin}.Probe(context.Background(), []string{"sonnet", "fable", "org", "weird", "haiku", "garbled"})
 	require.NoError(t, err)
-	assert.Equal(t, []core.ModelState{core.ModelPass, core.ModelFail, core.ModelFail, core.ModelUnknown},
-		[]core.ModelState{rs[0].State, rs[1].State, rs[2].State, rs[3].State})
+	assert.Equal(t, []core.ModelState{core.ModelPass, core.ModelFail, core.ModelFail, core.ModelUnknown, core.ModelFail, core.ModelUnknown},
+		[]core.ModelState{rs[0].State, rs[1].State, rs[2].State, rs[3].State, rs[4].State, rs[5].State})
+	assert.Equal(t, "model_substituted", rs[4].Error, "haiku answered by sonnet")
 }
 
 func TestCLIProberRejects(t *testing.T) {
@@ -174,7 +177,7 @@ func TestCLIProberRejects(t *testing.T) {
 }
 
 func TestCLIProberRunsInTempDir(t *testing.T) {
-	bin := testutil.FakeBin(t, "fakeclaude", `pwd >&2; case "$(pwd)" in "$RR_REPO"*) exit 1;; esac; echo ok`)
+	bin := testutil.FakeBin(t, "fakeclaude", `pwd >&2; case "$(pwd)" in "$RR_REPO"*) exit 1;; esac; echo '{"modelUsage":{"claude-sonnet-5-5":{}}}'`)
 	wd, _ := os.Getwd()
 	t.Setenv("RR_REPO", wd)
 	rs, err := CLIProber{Name: "claude", Bin: bin}.Probe(context.Background(), []string{"sonnet"})

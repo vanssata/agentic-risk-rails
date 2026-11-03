@@ -35,6 +35,11 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, int64(52000), r.Tokens)
 	assert.Equal(t, 11, r.Calls)
 
+	// the worker protocol's last line is part of a valid report (real run, wave 5)
+	withStatus, err := Parse("FACTS:\n- a | f.go:1 | [V]\nCOST: tokens=1 calls=1\nSTATUS: DONE\n")
+	require.NoError(t, err)
+	assert.Len(t, withStatus.Facts, 1)
+
 	for name, bad := range map[string]string{
 		"unknown section": "WAT:\n- x",
 		"bad fact":        "FACTS:\n- only claim",

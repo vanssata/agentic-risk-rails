@@ -55,6 +55,7 @@ func Parse(body string) (Report, error) {
 				if rest != "" {
 					return fail("section header must be alone on its line")
 				}
+			case "STATUS": // the worker protocol line; the runner reads the status, not Parse
 			case "COST":
 				if _, err := fmt.Sscanf(rest, "tokens=%d calls=%d", &r.Tokens, &r.Calls); err != nil || r.Tokens < 0 || r.Calls < 0 {
 					return fail("COST must be tokens=<n> calls=<n>")

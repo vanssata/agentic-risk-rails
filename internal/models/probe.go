@@ -140,9 +140,12 @@ func Classify(kind string, status int, body []byte) (core.ModelState, string) {
 	return core.ModelUnknown, typ
 }
 
-// CLIProber probes a subscription runtime by running `<bin> -p ok --model <m> --max-turns 1`
-// (~100 tokens per model, DES §4.3.3g). Exit 0 ⇒ PASS; the "issue with the
-// selected model" / "restricted by your organization" wording ⇒ FAIL; else UNKNOWN.
+// CLIProber probes a subscription runtime by running `<bin> -p ok --model <m> --max-turns 1
+// --output-format json` (~100 tokens per model, DES §4.3.3g). Exit 0 and a model
+// that answered matching m ⇒ PASS; another model answered ⇒ FAIL model_substituted
+// (claude 2.1.317 runs Sonnet for `--model haiku` on a subscription login); the
+// "issue with the selected model" / "restricted by your organization" wording ⇒
+// FAIL; else UNKNOWN.
 type CLIProber struct {
 	Name string
 	Bin  string
@@ -176,15 +179,17 @@ func (p CLIProber) Probe(ctx context.Context, candidates []string) ([]core.Probe
 	var out []core.ProbeResult
 	for _, m := range candidates {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		c := exec.CommandContext(cctx, p.Bin, "-p", "ok", "--model", m, "--max-turns", "1")
+		c := exec.CommandContext(cctx, p.Bin, "-p", "ok", "--model", m, "--max-turns", "1", "--output-format", "json", "--no-session-persistence")
 		c.Dir = dir
-		o, err := c.CombinedOutput()
+		var stdout, stderr bytes.Buffer
+		c.Stdout, c.Stderr = &stdout, &stderr
+		err := c.Run()
 		cancel()
 		r := core.ProbeResult{Model: m, ProbedAt: now()}
-		low := strings.ToLower(string(o))
+		low := strings.ToLower(stdout.String() + stderr.String())
 		switch {
 		case err == nil:
-			r.State = core.ModelPass
+			r.State, r.Error = answeredBy(stdout.Bytes(), m)
 		case strings.Contains(low, "issue with the selected model") || strings.Contains(low, "restricted by your organization"):
 			r.State, r.Error = core.ModelFail, "model_unavailable"
 		default:
@@ -193,6 +198,23 @@ func (p CLIProber) Probe(ctx context.Context, candidates []string) ([]core.Probe
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// answeredBy is PASS when a model in the result's modelUsage is m or carries
+// the alias m in its ID; unparsable output is UNKNOWN, never PASS.
+func answeredBy(out []byte, m string) (core.ModelState, string) {
+	var res struct {
+		ModelUsage map[string]json.RawMessage `json:"modelUsage"`
+	}
+	if json.Unmarshal(out, &res) != nil || len(res.ModelUsage) == 0 {
+		return core.ModelUnknown, "no_model_usage"
+	}
+	for id := range res.ModelUsage {
+		if id == m || strings.Contains(id, m) {
+			return core.ModelPass, ""
+		}
+	}
+	return core.ModelFail, "model_substituted"
 }
 
 // ProfileProber is the install profile of a subscription runtime (DES §4.3.3b):
