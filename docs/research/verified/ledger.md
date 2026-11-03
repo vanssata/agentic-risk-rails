@@ -61,3 +61,17 @@ gpt-6.1-sol | 2 | 2 (assumed) | 0.10 | 10
 
 ## COST
 tokens=n/a calls=0
+
+# WAVE 5 — OpenAI prices (2026-11-03)
+
+## FACTS
+- Standard tier, short context (≤272K input), USD/1M — columns Input | Output | Cached input | 30m write | 12h write | https://developers.openai.com/api/docs/pricing (raw HTML fetched 2026-11-03) | [V]
+  - gpt-6-astra $10.00 $50.00 $1.00 $12.50 $25.00
+  - gpt-6.1-sol $2.00 $10.00 $0.10 $2.50 $5.00 (cache_write was 2 in prices.json: corrected to 2.5)
+  - gpt-6-luna $0.10 $0.50 $0.01 $0.125 $0.25
+  - gpt-5.6-sol $4.00 $20.00 $0.40 $5.00 $10.00
+- Long context (>272K input) costs more (e.g. gpt-6-astra 20 / 2 / 75); Batch and Flex are half of Standard; Priority ("Fast") is 2x; regional processing +10% for models released on or after 2026-03-05 | same URL (agent summary) | [U]
+
+## GAPS
+- That the Codex CLI on a subscription login is billed at these API prices is [U]: no Codex-specific price page was found. The ledger shows API-equivalent cost.
+- Long-context, batch/flex and priority rates are not modelled; Codex usage carries no cache-write split, so cache_write is not applied to Codex items.
