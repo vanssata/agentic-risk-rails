@@ -58,7 +58,9 @@ func (c ClaudeRunner) Run(ctx context.Context, spec core.WorkerSpec) (core.Worke
 		bin = "claude"
 	}
 	if c.readOnly {
-		mode = "plan"
+		// not "plan": claude 2.1.317 runs `--model haiku` as Sonnet in plan mode
+		// (errata #63). Read-only is the tool allowlist below, not the mode.
+		mode = "default"
 	}
 	args := []string{"-p", "--output-format", "json", "--model", model, "--permission-mode", mode, "--no-session-persistence"}
 	if spec.MaxTurns > 0 {

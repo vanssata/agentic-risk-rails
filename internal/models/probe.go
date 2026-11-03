@@ -143,7 +143,7 @@ func Classify(kind string, status int, body []byte) (core.ModelState, string) {
 // CLIProber probes a subscription runtime by running `<bin> -p ok --model <m> --max-turns 1
 // --output-format json` (~100 tokens per model, DES §4.3.3g). Exit 0 and a model
 // that answered matching m ⇒ PASS; another model answered ⇒ FAIL model_substituted
-// (claude 2.1.317 runs Sonnet for `--model haiku` on a subscription login); the
+// (seen with claude 2.1.317: `--model haiku` in plan mode runs Sonnet); the
 // "issue with the selected model" / "restricted by your organization" wording ⇒
 // FAIL; else UNKNOWN.
 type CLIProber struct {
