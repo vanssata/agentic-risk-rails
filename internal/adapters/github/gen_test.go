@@ -58,7 +58,7 @@ func TestRRVersionIsInstallable(t *testing.T) {
 	files, err := gen{}.Render(context.Background(), input(t, t.TempDir()))
 	require.NoError(t, err)
 	for _, f := range files[2:] {
-		assert.Contains(t, string(f.Content), "cmd/rr@v0.4.3\n")
+		assert.Contains(t, string(f.Content), "cmd/rr@v0.5.0\n")
 	}
 }
 
