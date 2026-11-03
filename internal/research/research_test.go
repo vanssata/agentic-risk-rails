@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/core/fakes"
 	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
@@ -39,13 +40,16 @@ func TestParse(t *testing.T) {
 	withStatus, err := Parse("FACTS:\n- a | f.go:1 | [V]\nCOST: tokens=1 calls=1\nSTATUS: DONE\n")
 	require.NoError(t, err)
 	assert.Len(t, withStatus.Facts, 1)
+	// a self-reported COST that is not a number is ignored (the runner measures usage)
+	loose, err := Parse("FACTS:\n- a | f.go:1 | [V]\nCOST: tokens=~3k calls=unknown\nSTATUS: DONE\n")
+	require.NoError(t, err)
+	assert.Zero(t, loose.Tokens)
 
 	for name, bad := range map[string]string{
 		"unknown section": "WAT:\n- x",
 		"bad fact":        "FACTS:\n- only claim",
 		"bad tag":         "FACTS:\n- a | b | [X]",
 		"bullet outside":  "- x",
-		"bad cost":        "COST: lots",
 	} {
 		_, err := Parse(bad)
 		assert.Error(t, err, name)
@@ -301,10 +305,11 @@ func TestParseHardening(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "a | b claim", r.Facts[0].Claim)
 	assert.Equal(t, []string{"src"}, r.Facts[0].Sources)
-	_, err = Parse("COST: tokens=-1 calls=2")
-	assert.Error(t, err)
-	_, err = Parse("COST: tokens=1 calls=-2")
-	assert.Error(t, err)
+	for _, cost := range []string{"COST: tokens=-1 calls=2", "COST: tokens=1 calls=-2"} {
+		r, err = Parse(cost)
+		require.NoError(t, err, "a self-reported COST is ignored, never trusted")
+		assert.Zero(t, r.Tokens+int64(r.Calls))
+	}
 	_, err = Parse(strings.Repeat("x", MaxReportBytes+1))
 	assert.Error(t, err)
 }
@@ -320,4 +325,27 @@ func TestCacheReadHandling(t *testing.T) {
 		assert.False(t, Valid(e, Inv{Root: "/repo", Changed: []string{"src/a.php"}}), role+" abs+line READ, deletion")
 		assert.False(t, Valid(e, Inv{Root: "/repo", Changed: []string{"lib/x.go"}}), role+" ./dir READ")
 	}
+}
+
+// Real run, wave 5: tokens come from the runner, and NEEDS_CONTEXT is a GAP, not a failure.
+func TestRunMeasuredTokensAndNeedsContext(t *testing.T) {
+	spec := core.StrictDefaults().Research
+	w := &fakes.WorkerRunner{Reports: []core.WorkerReport{
+		{Status: core.StatusDone, Body: "FACTS:\n- a b c | s | [V]\nCOST: tokens=~2k calls=?\nSTATUS: DONE", Tokens: 900, Calls: 4},
+		{Status: core.StatusNeedsContext, Body: "GAPS:\n- no lockfile\nno dependencies to read\nSTATUS: NEEDS_CONTEXT", Tokens: 300, Calls: 2},
+	}}
+	req := Request{SHA: sha1, Question: "q", Goal: "g", Mode: core.ModeGuarded, Inv: Inv{Now: time.Now()}}
+	res, err := Run(context.Background(), w, t.TempDir(), spec, req)
+	require.NoError(t, err)
+	require.Empty(t, res.Errors)
+	require.Len(t, res.Reports, 2)
+	var tokens int64
+	var gaps []string
+	for _, r := range res.Reports {
+		tokens += r.Tokens
+		gaps = append(gaps, r.Gaps...)
+	}
+	assert.Equal(t, int64(1200), tokens)
+	require.Len(t, gaps, 1)
+	assert.Contains(t, gaps[0], "NEEDS_CONTEXT: no dependencies to read")
 }
