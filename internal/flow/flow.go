@@ -495,7 +495,7 @@ func (e Env) Close(ctx context.Context, in CloseIn) error {
 // Light has an inline plan and no review stage (recorded, so the required events hold).
 func (e Env) process(ctx context.Context, task string, actor core.Actor, mode core.Mode, events []core.Event) (map[string]any, error) {
 	has := map[string]bool{}
-	last := ""
+	last, accepted := "", ""
 	for _, ev := range events {
 		has[ev.Type] = true
 		if ev.Type == "plan_accepted" {
@@ -506,15 +506,18 @@ func (e Env) process(ctx context.Context, task string, actor core.Actor, mode co
 			_ = json.Unmarshal(ev.Data, &d)
 			if d.Plan == "written" && d.SHA != "" { // an inline or light accept never satisfies a heavier mode
 				has["plan_written"] = true
+				accepted, last = d.SHA, "" // a newly accepted plan needs its own review
 			}
 		}
 		if ev.Type == "review_verdict" {
 			var d struct {
 				Verdict string `json:"verdict"`
 				Stage   string `json:"stage"`
+				PlanSHA string `json:"plan_sha"`
 			}
 			_ = json.Unmarshal(ev.Data, &d)
-			if d.Stage == "factory" || d.Stage == "human" { // the factory's per-step verdicts do not count
+			// the factory's per-step verdicts do not count; a factory verdict counts only for the accepted plan it built
+			if (d.Stage == "factory" && d.PlanSHA == accepted) || d.Stage == "human" {
 				last = d.Verdict
 			}
 		}

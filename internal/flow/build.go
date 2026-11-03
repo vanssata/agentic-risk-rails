@@ -53,6 +53,11 @@ func checkPlan(raw []byte, scope, protected []string) (plan.Plan, error) {
 	for _, s := range p.Steps {
 		for _, f := range append(append([]string{}, s.Files...), s.Tests...) {
 			f = filepath.ToSlash(filepath.Clean(f))
+			for _, c := range strings.Split(f, "/") { // nested git dirs re-point git; .rr is rr's state anywhere
+				if c == ".git" || c == ".rr" {
+					return p, fmt.Errorf("step %q: %q is inside a %s directory", s.ID, f, c)
+				}
+			}
 			for _, pr := range protected {
 				if globs.Match(pr, f) {
 					return p, fmt.Errorf("step %q: %q is a protected path (%s)", s.ID, f, pr)
@@ -132,7 +137,7 @@ func (e Env) Accept(ctx context.Context, task, planFile string, actor core.Actor
 
 // acceptedPlan loads the state copy of the plan named by the last written
 // plan_accepted and checks its sha. Anything missing or changed refuses.
-func (e Env) acceptedPlan(ctx context.Context, task string, actor core.Actor, events []core.Event, scope []string) (plan.Plan, error) {
+func (e Env) acceptedPlan(ctx context.Context, task string, actor core.Actor, events []core.Event, scope []string) (plan.Plan, string, error) {
 	want := ""
 	for _, ev := range events {
 		if ev.Type != "plan_accepted" {
@@ -147,20 +152,20 @@ func (e Env) acceptedPlan(ctx context.Context, task string, actor core.Actor, ev
 		}
 	}
 	if want == "" {
-		return plan.Plan{}, e.refuse(ctx, task, actor, "PLAN_MISSING", "no accepted written plan (rr task accept --plan <file>)")
+		return plan.Plan{}, "", e.refuse(ctx, task, actor, "PLAN_MISSING", "no accepted written plan (rr task accept --plan <file>)")
 	}
 	raw, err := os.ReadFile(e.PlanPath(task))
 	if err != nil {
-		return plan.Plan{}, e.refuse(ctx, task, actor, "PLAN_TAMPERED", "the accepted plan is unreadable: "+err.Error())
+		return plan.Plan{}, "", e.refuse(ctx, task, actor, "PLAN_TAMPERED", "the accepted plan is unreadable: "+err.Error())
 	}
 	if sum(raw) != want {
-		return plan.Plan{}, e.refuse(ctx, task, actor, "PLAN_TAMPERED", "the plan changed after plan_accepted")
+		return plan.Plan{}, "", e.refuse(ctx, task, actor, "PLAN_TAMPERED", "the plan changed after plan_accepted")
 	}
 	p, err := checkPlan(raw, scope, e.protected())
 	if err != nil {
-		return p, e.refuse(ctx, task, actor, "PLAN_INVALID", err.Error())
+		return p, "", e.refuse(ctx, task, actor, "PLAN_INVALID", err.Error())
 	}
-	return p, nil
+	return p, want, nil
 }
 
 // reviewTier is DES §7.1: BALANCED reviewers for guarded, STRONG from full up.
@@ -199,7 +204,7 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 	if err != nil {
 		return nil, err
 	}
-	p, err := e.acceptedPlan(ctx, task, in.Actor, events, d.Scope)
+	p, planSHA, err := e.acceptedPlan(ctx, task, in.Actor, events, d.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +246,7 @@ func (e Env) Build(ctx context.Context, task string, in BuildIn) ([]factory.Resu
 	for _, r := range results {
 		steps = append(steps, map[string]any{"step": r.Step, "commit": r.Commit, "rounds": r.Rounds, "human": r.Human, "blocked": r.Blocked})
 	}
-	data := map[string]any{"by": core.ActorAutonomy, "stage": "factory", "verdict": verdict, "steps": steps}
+	data := map[string]any{"by": core.ActorAutonomy, "stage": "factory", "verdict": verdict, "plan_sha": planSHA, "steps": steps}
 	if reason != "" {
 		data["reason"] = reason
 	}

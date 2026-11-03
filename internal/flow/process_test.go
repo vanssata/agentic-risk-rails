@@ -16,13 +16,14 @@ func TestCheckPlanRefusesProtectedPaths(t *testing.T) {
 	var e Env
 	e.Policy.Policy.Enforcement.ProtectedPaths = []string{".env*", "config/secrets/**"}
 	for _, f := range []string{"riskrails.yaml", ".rr/run/x.plan.yaml", ".claude/settings.json", ".github/workflows/ci.yml",
-		".githooks/pre-commit", ".env.local", "config/secrets/a.yaml"} {
+		".githooks/pre-commit", ".env.local", "config/secrets/a.yaml", "sub/.git/config", "a/.rr/x"} {
 		t.Run(f, func(t *testing.T) {
 			_, err := checkPlan([]byte("steps:\n  - {id: a, files: ["+f+"]}\n"), []string{"**"}, e.protected())
-			require.ErrorContains(t, err, "protected path")
+			require.Error(t, err)
+			assert.Regexp(t, "protected path|inside a", err.Error())
 		})
 	}
-	_, err := checkPlan([]byte("steps:\n  - {id: a, files: [src/A.php], tests: [.rr/t.php]}\n"), []string{"**"}, e.protected())
+	_, err := checkPlan([]byte("steps:\n  - {id: a, files: [src/A.php], tests: [riskrails.yaml]}\n"), []string{"**"}, e.protected())
 	require.ErrorContains(t, err, "protected path", "tests are checked too")
 	_, err = checkPlan([]byte("steps:\n  - {id: a, files: [src/A.php]}\n"), []string{"**"}, e.protected())
 	require.NoError(t, err)
@@ -41,7 +42,10 @@ func TestProcessCountsOnlyGateEvents(t *testing.T) {
 		events []core.Event
 		code   string
 	}{
-		"complete":                   {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "factory", "verdict": "PASS"})}, ""},
+		"complete":                     {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "factory", "verdict": "PASS", "plan_sha": "abc"})}, ""},
+		"factory PASS of another plan": {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "factory", "verdict": "PASS", "plan_sha": "old"})}, "REVIEW_MISSING"},
+		"plan re-accepted after PASS": {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "human", "verdict": "PASS"}),
+			ev(t, "plan_accepted", map[string]any{"plan": "written", "sha": "def"})}, "REVIEW_MISSING"},
 		"human verdict":              {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "human", "verdict": "PASS"})}, ""},
 		"killed after a step PASS":   {[]core.Event{written, ev(t, "review_verdict", map[string]any{"step": "s", "stage": "reviewer-quality", "verdict": "PASS"})}, "REVIEW_MISSING"},
 		"factory FAIL after step OK": {[]core.Event{written, ev(t, "review_verdict", map[string]any{"stage": "factory", "verdict": "FAIL"})}, "REVIEW_MISSING"},

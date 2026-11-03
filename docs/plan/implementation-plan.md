@@ -433,3 +433,17 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 | W5-C flow | `internal/flow/**`, `cmd/rr/cmd_task.go`, `cmd/rr/wire.go`, `cmd/rr/wire_workers.go`, `skills/**`, `e2e/**` | `Env.Research` (скаути по mode, cache, merge brief ≤3k в state, `research_scouts_done`/`research_merged`); `Env.Accept` (`plan.Check`, файловете на плана ⊆ scope на задачата, hash и копие в state, `plan_accepted {plan: written, sha}`); `Env.Build` (factory върху приетия план, worktrees в state, `review_verdict {stage: factory}` = PASS само ако всички стъпки са committed без Human); декоратор на `WorkerRunner`, който журналира `worker_usage`; `rr task research|accept --plan|build`; skills `rr-build`/`rr-ship` описват потока; e2e с fake runners |
 
 **Acceptance на вълната:** e2e: full задача върху `testdata/php-symfony` с fake runners ⇒ 5 скаута, brief ≤3k, план приет, factory с двата review етапа, close минава, `rr cost` показва research/implement/review; guarded без план или с план извън scope ⇒ отказ; `make check` зелен; после реален run (4).
+
+### 14.1 Статус: вълна 5 (2026-11-03, branch `wave-5`)
+
+**Ревю:** рунд 1 (Sonnet: spec compliance + adversarial) ⇒ SHIP_WITH_FIXES; fix рунд 1 (W5-A, W5-C) + оркестратор; рунд 2 (Sonnet adversarial) ⇒ SHIP_WITH_FIXES ⇒ поправено от оркестратора. Errata #55–#61.
+
+| Критерий | Статус |
+|---|---|
+| `rr task research|accept --plan|build` + close за guarded/full | ✅ cmd + e2e (fake runners) |
+| full: 5 скаута, brief ≤3k, два review етапа (STRONG за full), cost по research/implement/review | ✅ `TestTaskFullFlowResearchAcceptBuildClose` (вкл. `rr cost`) |
+| Claude + Codex работници | ✅ unit; `RR_CONTRACT=1` веднъж (W5-A, с основните логини на собственика — занапред само `~/.claude-rr`/`~/.codex-rr`) |
+| реален P2 run в rr-sandbox | ⏳ след потвърждение на собственика |
+| `make check` | ✅ |
+
+**Отворено (вълна 6 / собственика):** бюджетите по mode не се налагат (само max-turns при Claude и timeout при Codex); скаутите четат без hook (могат да видят `.env`/ignored файлове, а ignored файлове не инвалидират cache-а); nested `.claude/`/`.github/` в подпапки не са protected за плана (guard-ът е anchored по същия начин); дали Codex hook-ът чете `RR_SCOPE_FILE` е [U] (post-hoc `checkScope` е границата); цена за `gpt-5.6-sol` липсва в `prices.json` (показва се unpriced); `worker_usage` без step; factory в контейнера при L≥2.
