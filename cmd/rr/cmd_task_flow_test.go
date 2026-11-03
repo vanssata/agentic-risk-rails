@@ -80,7 +80,9 @@ func fakeWorkers(t *testing.T) *scripted {
 	t.Helper()
 	s := &scripted{}
 	old := runnerFor
-	runnerFor = func(string, map[core.Tier]string) (core.WorkerRunner, factory.ReadOnlyRunner, error) { return s, s, nil }
+	runnerFor = func(string, map[core.Tier]string) (core.WorkerRunner, factory.ReadOnlyRunner, error) {
+		return s, s, nil
+	}
 	t.Cleanup(func() { runnerFor = old })
 	return s
 }
@@ -205,6 +207,57 @@ func TestTaskResearchLightHasNoScouts(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Empty(t, w.roles())
 	assert.Contains(t, out, "no research")
+}
+
+// flaky blocks one scout role while armed.
+type flaky struct {
+	*scripted
+	role string
+}
+
+func (f *flaky) Run(ctx context.Context, spec core.WorkerSpec) (core.WorkerReport, error) {
+	if spec.Role == f.role {
+		_, _ = f.scripted.Run(ctx, spec)
+		return core.WorkerReport{Status: core.StatusBlocked, Body: "no network"}, nil
+	}
+	return f.scripted.Run(ctx, spec)
+}
+
+func (f *flaky) ReadOnly() core.WorkerRunner { return f }
+
+func TestTaskResearchIsAllOrNothingAndCached(t *testing.T) {
+	root := taskRepo(t)
+	w := &scripted{}
+	bad := &flaky{w, "tech-docs-scout"}
+	old := runnerFor
+	runnerFor = func(string, map[core.Tier]string) (core.WorkerRunner, factory.ReadOnlyRunner, error) {
+		return bad, bad, nil
+	}
+	t.Cleanup(func() { runnerFor = old })
+	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "pay fee", "--files", payFile)
+	require.NoError(t, err)
+	task := openTask(t, root)
+
+	_, err = runPolicyRR(t, "task", "research", "--root", root)
+	require.ErrorContains(t, err, "research incomplete")
+	assert.NoFileExists(t, filepath.Join(root, ".rr/run", task+".research.md"))
+	var done map[string]any
+	for _, ev := range eventTypes(t, root, task) {
+		assert.NotEqual(t, "research_merged", ev.Type)
+		if ev.Type == "research_scouts_done" {
+			require.NoError(t, json.Unmarshal(ev.Data, &done))
+		}
+	}
+	assert.NotEmpty(t, done["errors"])
+
+	// the scouts that worked are cached: the rerun asks only the rest
+	bad.role = ""
+	before := len(w.roles())
+	out, err := runPolicyRR(t, "task", "research", "--root", root)
+	require.NoError(t, err, out)
+	assert.Equal(t, 2, len(w.roles())-before, "tech-docs and history (never cached) run again")
+	assert.Contains(t, out, "(3 cached)")
+	assert.FileExists(t, filepath.Join(root, ".rr/run", task+".research.md"))
 }
 
 func TestTaskBuildRuntimeNotInProject(t *testing.T) {

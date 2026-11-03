@@ -170,8 +170,12 @@ func (f *taskFlags) doAccept(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if mode, err := verify.TaskMode(events); err != nil || mode != core.ModeLight {
-		return fmt.Errorf("refusing: a %s task needs a written plan: rr task accept --plan <file> (%v)", mode, err)
+	mode, err := verify.TaskMode(events)
+	if err != nil {
+		return err
+	}
+	if mode != core.ModeLight {
+		return fmt.Errorf("refusing: a %s task needs a written plan: rr task accept --plan <file>", mode)
 	}
 	return e.Note(cmd.Context(), t, "plan_accepted", core.ActorHuman, map[string]any{"plan": "written"})
 }

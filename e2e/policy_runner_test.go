@@ -49,7 +49,7 @@ func TestGuardedTaskUnderCodex(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out, "PLAN_MISSING")
 
-	p.mustRR("task", "accept")
+	p.mustRR("task", "accept", "--plan", p.planFile("steps:\n  - id: fee\n    files: ["+payFile+"]\n"))
 	out, code = p.rr("task", "close")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out, "REVIEW_MISSING")
