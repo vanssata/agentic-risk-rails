@@ -463,3 +463,20 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 | W6-C host | `internal/factory/**`, `internal/research/**`, `internal/hosting/**`, `docs/research/verified/workers.md` | `Preflight` (errata #65): trust на repo-то в `$CLAUDE_CONFIG_DIR/.claude.json`, функционална проба на OS sandbox-а на runtime-а (не `LookPath`), writable tool caches (напр. `GOCACHE`) за Codex `workspace-write`; factory подава `spec.Step`; read-only скаути/reviewers на хоста не четат `secret_reads`/`no_read` (Claude: deny правила; Codex: проучи, иначе [U] в GAPS); ignored файлове инвалидират research cache-а (без `.rr/`); проучи [V] дали Claude/Codex зареждат nested `.claude/`/`.codex/` от подпапки ⇒ ако да, `CORE_CHANGE_REQUESTS` за `core.AlwaysProtected`; refresh на GitHub App token-а преди изтичане (run > 1 ч) |
 
 **Acceptance на вълната:** e2e: `rr run` с fake docker/hosting върху `testdata/php-symfony`: guarded при ceiling L3 ⇒ скаути, planner, `plan_accepted {by: autonomy}`, factory с два review етапа, close, draft PR `rr:L3`; същата задача при ceiling L2 ⇒ пропусната (L1); full при L4 ⇒ STRONG review; план извън scope ⇒ задачата е blocked, без PR; надвишен бюджет ⇒ `BUDGET` преди следващия работник (и в `rr task build`, и в `rr run`); preflight отказва недоверен repo / неработещ sandbox с ясна поправка; `make check` зелен. После реален run в `vanssata/rr-sandbox` (L3 guarded) само след потвърждение на собственика.
+
+### 15.1 Статус: вълна 6 (2026-11-03, branch `wave-6`)
+
+**Ревю:** рунд 1 (Sonnet: spec compliance ⇒ SHIP_WITH_FIXES, без BLOCKER/HIGH; adversarial ⇒ SHIP_WITH_FIXES, 1 HIGH) ⇒ поправено от оркестратора. Errata #66–#73.
+
+| Критерий | Статус |
+|---|---|
+| guarded L3 / full L4 през `rr run`: скаути, planner, `plan_accepted {by: autonomy}`, factory с два review етапа (STRONG за full), close, draft PR `rr:L3`/`rr:L4` | ✅ e2e `TestRunGuardedAtL3FullPipeline`, `TestRunFullAtL4ReviewsWithStrong` (fake docker/hosting, реален `flow.Env`) |
+| ceiling L2 ⇒ пропусната; план извън scope ⇒ blocked без PR | ✅ |
+| всеки работник в `DockerRunner` (read-only за скаути/planner/reviewers) | ✅ unit (argv); реален docker — не е пускан |
+| бюджет преди всеки работник, в `rr task build` и `rr run` | ✅ `TestTaskBuildBudgetRefusesBeforeNextWorker`, `TestPipelineBudgetRefusalStopsTheRun`, `TestBudgetChargesUnknownUsage` |
+| preflight (trust, sandbox проба, GOCACHE) | ✅ unit с fake exec; реална bwrap проба на този хост ✓ |
+| `worker_usage` при отменен ctx и със step; фаза `plan` в `rr cost` | ✅ |
+| nested `.claude/`/`.codex/` protected; Read deny за host read-only Claude | ✅ |
+| `make check` | ✅ |
+
+**Отворено:** `**/CLAUDE.md`/`**/AGENTS.md` (решение на собственика); Codex read-only не може да откаже четене [U]; паралелен overshoot на бюджета; tokens са отчетени от процеса в контейнера (сверяване с transcript-и не е направено); hook файлове в step worktree-ите; 401 evict в token cache-а; реален L3 run в `vanssata/rr-sandbox` (след потвърждение на собственика).
