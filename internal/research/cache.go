@@ -20,13 +20,16 @@ var shaRe = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // Entry is one cached scout result: <dir>/<sha>/<role>-<qhash>.json.
 type Entry struct {
-	SHA      string    `json:"sha"`
-	Role     string    `json:"role"`
-	QHash    string    `json:"qhash"`
-	Body     string    `json:"body"`
-	Read     []string  `json:"read"`
-	LockHash string    `json:"lock_hash"`
-	At       time.Time `json:"at"`
+	SHA      string   `json:"sha"`
+	Role     string   `json:"role"`
+	QHash    string   `json:"qhash"`
+	Body     string   `json:"body"`
+	Read     []string `json:"read"`
+	LockHash string   `json:"lock_hash"`
+	// Files: sha256 of every regular file in Read at Put time (HashRead). A VCS diff
+	// never lists an ignored file, so a scout's READ of one is checked by content (DES §5.5).
+	Files map[string]string `json:"files,omitempty"`
+	At    time.Time         `json:"at"`
 }
 
 // Inv is what changed since the entry's sha, supplied by the caller. Changed must come from
@@ -111,13 +114,13 @@ func Get(dir, sha, role, qhash string, inv Inv) (Entry, bool, error) {
 func Valid(e Entry, inv Inv) bool {
 	switch e.Role {
 	case "code", "test":
-		return len(e.Read) > 0 && !touches(e, inv)
+		return len(e.Read) > 0 && !touches(e, inv) && !filesChanged(e, inv)
 	case "tech-docs":
 		return e.LockHash == inv.LockHash
 	case "prior-art":
 		return inv.Now.Sub(e.At) < PriorArtTTL
 	case "project-docs":
-		if len(e.Read) == 0 || touches(e, inv) {
+		if len(e.Read) == 0 || touches(e, inv) || filesChanged(e, inv) {
 			return false
 		}
 		for _, c := range inv.Changed {
@@ -128,6 +131,45 @@ func Valid(e Entry, inv Inv) bool {
 		return true
 	}
 	return false // history is always fresh
+}
+
+// HashRead returns path -> sha256 for the READ paths that are regular files inside root
+// (a directory, a symlink, a missing or unreadable path is skipped).
+func HashRead(root string, read []string) map[string]string {
+	out := map[string]string{}
+	for _, r := range read {
+		r = normRead(r, root)
+		if h, ok := hashFile(root, r); ok {
+			out[r] = h
+		}
+	}
+	return out
+}
+
+func hashFile(root, rel string) (string, bool) {
+	if root == "" || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	p := filepath.Join(root, rel)
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:]), true
+}
+
+// filesChanged: a file the entry hashed changed, vanished, or cannot be checked (no Root).
+func filesChanged(e Entry, inv Inv) bool {
+	for rel, want := range e.Files {
+		if got, ok := hashFile(inv.Root, rel); !ok || got != want {
+			return true
+		}
+	}
+	return false
 }
 
 // normRead strips :line, a leading ./ and the repo root from a path.

@@ -83,19 +83,19 @@ func TestAppInstallationTokenForOneRepo(t *testing.T) {
 	k, keyPath := appKey(t)
 	var body string
 	srv := appServer(t, &k.PublicKey, &body)
-	tok, err := appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/shop")
+	tok, _, err := appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/shop")
 	require.NoError(t, err)
 	assert.Equal(t, "ghs_test", tok)
 	assert.JSONEq(t, `{"repositories":["shop"],"permissions":{"contents":"write","pull_requests":"write","administration":"write","metadata":"read"}}`,
 		body, "the token reaches only the pinned repo, with only what the runner uses, whatever else the App was granted")
 
-	_, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/other")
+	_, _, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", keyPath, "acme/other")
 	assert.Error(t, err, "no installation on that repo")
-	_, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.wrong", keyPath, "acme/shop")
+	_, _, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.wrong", keyPath, "acme/shop")
 	assert.Error(t, err, "GitHub refuses a JWT for another app")
 	bad := filepath.Join(t.TempDir(), "bad.pem")
 	require.NoError(t, os.WriteFile(bad, []byte("not a key"), 0o600))
-	_, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", bad, "acme/shop")
+	_, _, err = appToken(t.Context(), srv.Client(), srv.URL, "Iv1.abc", bad, "acme/shop")
 	assert.Error(t, err)
 }
 

@@ -172,7 +172,7 @@ func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step,
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
 	defer func() { _ = os.Remove(scope) }()
-	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
+	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Step: st.ID, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
 		Env: []string{EnvScope + "=" + scope, EnvWorker + "=1"}})
 	if err != nil {
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)

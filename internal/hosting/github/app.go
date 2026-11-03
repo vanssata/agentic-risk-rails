@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,7 +42,44 @@ func TokenFor(ctx context.Context, remote, baseURL string) (string, error) {
 	if !strings.HasPrefix(baseURL, "https://") {
 		return "", errors.New("github: API base URL must be https")
 	}
-	return appToken(ctx, &http.Client{Timeout: 30 * time.Second}, baseURL, id, key, remote)
+	return tokens.get(id+"\x00"+key+"\x00"+baseURL+"\x00"+remote, func() (string, time.Time, error) {
+		return appToken(ctx, &http.Client{Timeout: 30 * time.Second}, baseURL, id, key, remote)
+	})
+}
+
+// refreshBefore: an installation token (valid 1 hour) with less left is minted again.
+const refreshBefore = 5 * time.Minute
+
+// tokenCache keeps installation tokens per App/key/remote until shortly before they expire,
+// so a run longer than an hour keeps working and short calls do not mint a token each.
+type tokenCache struct {
+	mu  sync.Mutex
+	m   map[string]cachedToken
+	now func() time.Time
+}
+
+type cachedToken struct {
+	tok string
+	exp time.Time
+}
+
+var tokens = &tokenCache{m: map[string]cachedToken{}, now: time.Now}
+
+func (c *tokenCache) get(key string, mint func() (string, time.Time, error)) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if t, ok := c.m[key]; ok && t.exp.Sub(c.now()) > refreshBefore {
+		return t.tok, nil
+	}
+	delete(c.m, key)
+	tok, exp, err := mint()
+	if err != nil {
+		return "", err
+	}
+	if !exp.IsZero() { // unknown expiry: use it once, never cache
+		c.m[key] = cachedToken{tok, exp}
+	}
+	return tok, nil
 }
 
 // runnerPermissions narrow the installation token to what rr uses, whatever else
@@ -51,32 +89,34 @@ var runnerPermissions = map[string]string{"contents": "write", "pull_requests": 
 
 // appToken signs an App JWT, finds the App's installation on remote and mints an
 // installation token for that repository only (valid 1 hour).
-func appToken(ctx context.Context, hc *http.Client, base, id, keyPath, remote string) (string, error) {
+func appToken(ctx context.Context, hc *http.Client, base, id, keyPath, remote string) (string, time.Time, error) {
 	owner, repo, ok := strings.Cut(remote, "/")
 	if !ok || owner == "" || repo == "" || strings.Contains(repo, "/") {
-		return "", fmt.Errorf("github: remote %q is not owner/repo", remote)
+		return "", time.Time{}, fmt.Errorf("github: remote %q is not owner/repo", remote)
 	}
 	jwt, err := appJWT(id, keyPath, time.Now())
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	var inst struct {
 		ID int64 `json:"id"`
 	}
 	if err := appCall(ctx, hc, http.MethodGet, base+"/repos/"+owner+"/"+repo+"/installation", jwt, nil, &inst); err != nil {
-		return "", fmt.Errorf("github: App installation on %s: %w", remote, err)
+		return "", time.Time{}, fmt.Errorf("github: App installation on %s: %w", remote, err)
 	}
 	body, _ := json.Marshal(map[string]any{"repositories": []string{repo}, "permissions": runnerPermissions})
 	var tok struct {
-		Token string `json:"token"`
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
 	}
 	if err := appCall(ctx, hc, http.MethodPost, fmt.Sprintf("%s/app/installations/%d/access_tokens", base, inst.ID), jwt, body, &tok); err != nil {
-		return "", fmt.Errorf("github: App installation token: %w", err)
+		return "", time.Time{}, fmt.Errorf("github: App installation token: %w", err)
 	}
 	if tok.Token == "" {
-		return "", errors.New("github: App installation token: empty")
+		return "", time.Time{}, errors.New("github: App installation token: empty")
 	}
-	return tok.Token, nil
+	exp, _ := time.Parse(time.RFC3339, tok.ExpiresAt) // unparsable = zero = not cached
+	return tok.Token, exp, nil
 }
 
 // appJWT: RS256, iat 60 s in the past (clock drift), exp 9 minutes ahead (max 10).
