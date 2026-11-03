@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
-	"github.com/vanssata/agentic-risk-rails/internal/flow"
 	"github.com/vanssata/agentic-risk-rails/internal/plan"
 )
 
@@ -171,7 +170,7 @@ func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step,
 	}
 	defer func() { _ = os.Remove(scope) }()
 	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
-		Env: []string{flow.EnvScope + "=" + scope}})
+		Env: []string{EnvScope + "=" + scope}})
 	if err != nil {
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
@@ -230,3 +229,7 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
 }
+
+// EnvScope arms the guard hook of a worker with the step's files; it must
+// equal flow.EnvScope (flow imports factory, so it cannot be imported here).
+const EnvScope = "RR_SCOPE_FILE"
