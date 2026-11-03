@@ -26,3 +26,18 @@ Pinned: codex-cli 0.166.0, claude 2.1.317. Date 2026-11-03. [V] verified by comm
 
 ## COST
 Contract run: a few cents (one claude haiku call, three small gpt-5.6-sol calls).
+
+# WAVE 5 — Claude sandbox on the owner's host (2026-11-03)
+
+## FACTS
+- claude 2.1.317 is the latest (`npm view @anthropic-ai/claude-code`: latest/next 2.1.317, stable 2.1.311) | command | [V]
+- `sandbox.enabled: true` ⇒ every Bash fails: `apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN)`; apply-seccomp (inside bwrap) does unshare(CLONE_NEWUSER) then writes setgroups/uid_map | reproduced + binary strings | [V]
+- cause: Ubuntu `/etc/apparmor.d/bwrap-userns-restrict` (package apparmor) stacks every child of /usr/bin/bwrap under `unpriv_bwrap`, which has `audit deny capability,`; the sysctl `apparmor_restrict_unprivileged_userns` (0 here) does not matter | file content + `bwrap … unshare -U -r` ⇒ label `bwrap//&unpriv_bwrap`, uid_map EPERM | [V]
+- upstream: https://github.com/anthropics/claude-code/issues/43454 (open; since 2.1.92; audit line `apparmor="DENIED" … profile="unpriv_bwrap" comm="apply-seccomp" capname="sys_admin"`) | GitHub API | [V]
+- `sandbox.network.allowAllUnixSockets: true` skips apply-seccomp ⇒ Bash works and filesystem denyWrite still holds on 2.1.317 | reproduced | [V]
+- but then sandboxed commands reach any unix socket: `curl --unix-socket /var/run/docker.sock …/version` succeeded (owner is in group docker ⇒ host root); only an explicit denyRead+denyWrite on the socket path blocked it (curl exit 7). The host has many more user-reachable sockets (ssh-agent /run/user/1000/gcr/ssh, D-Bus /run/user/1000/bus, JetBrains IPC under ~/.cache) | reproduced | [V]
+- sandbox.filesystem paths in project `.claude/settings.json`: `x` and `./x` are relative to the project and enforced; `/x` is an absolute path (not project-relative, unlike permission rules); via `--settings` a relative path was NOT enforced | reproduced | [V]
+- trust: Claude ignores project `permissions.allow` until `projects["<repo path>"].hasTrustDialogAccepted` in `$CLAUDE_CONFIG_DIR/.claude.json`; worktrees inherit the main repo's path | reproduced | [V]
+
+## GAPS
+- whether Claude can be pointed at a separately profiled bwrap binary [U]; `sandbox.allowNestedUserNamespaces` (≥2.1.305) untested for this error [U]
