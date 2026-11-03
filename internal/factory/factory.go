@@ -65,7 +65,7 @@ func (r Result) OK() bool { return r.Commit != "" }
 // step's files are denied.
 func ScopeContext(gc core.GuardContext, worktree string, st plan.Step) core.GuardContext {
 	gc.Root = worktree
-	gc.StepFiles = append([]string{}, st.Files...) // non-nil even when empty: armed
+	gc.StepFiles = owned(st) // non-nil even when empty: armed
 	return gc
 }
 
@@ -173,7 +173,7 @@ func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step,
 	}
 	defer func() { _ = os.Remove(scope) }()
 	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
-		Env: []string{EnvScope + "=" + scope}})
+		Env: []string{EnvScope + "=" + scope, EnvWorker + "=1"}})
 	if err != nil {
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
@@ -192,7 +192,7 @@ func (f *Factory) writeScope(st plan.Step) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	raw, err := json.Marshal(append([]string{}, st.Files...))
+	raw, err := json.Marshal(owned(st))
 	if err != nil {
 		return "", err
 	}
@@ -204,11 +204,16 @@ func (f *Factory) writeScope(st plan.Step) (string, error) {
 	return p, os.WriteFile(p, raw, 0o400)
 }
 
+// owned is what a step may change: its files and its tests (DES §2.3).
+func owned(st plan.Step) []string {
+	return append(append([]string{}, st.Files...), st.Tests...)
+}
+
 func briefOf(st plan.Step) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STEP %s\n%s\n\nFILES (only these may change):\n- %s\n", st.ID, st.Brief, strings.Join(st.Files, "\n- "))
 	if len(st.Tests) > 0 {
-		fmt.Fprintf(&b, "\nTESTS:\n- %s\n", strings.Join(st.Tests, "\n- "))
+		fmt.Fprintf(&b, "\nTEST FILES (may also change):\n- %s\n", strings.Join(st.Tests, "\n- "))
 	}
 	b.WriteString("\nDo not run git commit; rr commits. End your report with a line `STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT`.\n")
 	return b.String()

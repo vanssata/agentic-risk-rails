@@ -76,7 +76,7 @@ func TestWorkerScopeFile(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, res[0].OK(), res[0].Blocked)
 	require.NotEmpty(t, got)
-	require.Len(t, got[0].Env, 1)
+	require.Len(t, got[0].Env, 2)
 	p := strings.TrimPrefix(got[0].Env[0], "RR_SCOPE_FILE=")
 	assert.True(t, filepath.IsAbs(p))
 	assert.Equal(t, os.FileMode(0o400), perm)
