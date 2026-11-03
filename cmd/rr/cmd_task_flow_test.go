@@ -207,7 +207,7 @@ func TestTaskFullFlowResearchAcceptBuildClose(t *testing.T) {
 }
 
 // factoryFix1Merged: set true once W5-A uses Config.ReviewTier and sets RR_WORKER=1 (assertions are red before).
-const factoryFix1Merged = false
+const factoryFix1Merged = true
 
 func hasEnvKey(env []string, key string) bool {
 	for _, kv := range env {

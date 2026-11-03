@@ -28,3 +28,14 @@ func TestCheckRefusesBadTests(t *testing.T) {
 	assert.Equal(t, []string{"a_test.go"}, p.Steps[0].Tests)
 	assert.Equal(t, []string{"a.go"}, p.Steps[0].Files)
 }
+
+// Step tests are writable, so unordered steps must not share a test file.
+func TestCheckRefusesSharedTestsWithoutAfter(t *testing.T) {
+	a, b := s("a", []string{"a.go"}), s("b", []string{"b.go"})
+	a.Tests, b.Tests = []string{"x_test.go"}, []string{"x_test.go"}
+	err := Check(Plan{Steps: []Step{a, b}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "share")
+	b.After = []string{"a"}
+	require.NoError(t, Check(Plan{Steps: []Step{a, b}}))
+}

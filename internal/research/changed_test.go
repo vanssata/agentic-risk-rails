@@ -57,3 +57,13 @@ func TestRunDirtyTreeIsNotCached(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.CacheHits, "a clean run is cached")
 }
+
+func TestChangedSinceIgnoresRRState(t *testing.T) {
+	root := testutil.GitRepo(t, map[string]string{"a.txt": "a\n"})
+	sha := strings.TrimSpace(testutil.Git(t, root, "rev-parse", "HEAD"))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rr/run"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".rr/run/t.research.md"), []byte("x"), 0o644))
+	got, err := ChangedSince(context.Background(), root, sha)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}

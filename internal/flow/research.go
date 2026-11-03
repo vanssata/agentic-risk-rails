@@ -88,11 +88,9 @@ func (e Env) Research(ctx context.Context, task string, runner core.WorkerRunner
 	if err != nil {
 		return Researched{}, err
 	}
-	tr, err := verify.LoadTrust(e.state(), task, events)
-	if err != nil {
-		return Researched{}, err
-	}
-	changed, err := verify.TaskChanged(ctx, e.Root, tr, true)
+	// Changed since the SHA, not since the task baseline: a dirty tree is
+	// never cached and invalidates entries that read a changed path (M3).
+	changed, err := research.ChangedSince(ctx, e.Root, sha)
 	if err != nil {
 		return Researched{}, err
 	}

@@ -139,7 +139,9 @@ func unorderedOverlap(p Plan, reach []map[int]bool) error {
 			if reach[i][j] || reach[j][i] {
 				continue
 			}
-			if f := shared(p.Steps[i].Files, p.Steps[j].Files); f != "" {
+			a := append(append([]string{}, p.Steps[i].Files...), p.Steps[i].Tests...)
+			b := append(append([]string{}, p.Steps[j].Files...), p.Steps[j].Tests...)
+			if f := shared(a, b); f != "" {
 				return fmt.Errorf("plan: steps %q and %q share %q: add after", p.Steps[i].ID, p.Steps[j].ID, f)
 			}
 		}
