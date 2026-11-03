@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,7 @@ func Run(ctx context.Context, runner core.WorkerRunner, cacheDir string, spec co
 func scout(ctx context.Context, runner core.WorkerRunner, dir string, tier core.Tier, role, qh string, budget int64, req Request) (Report, bool, error) {
 	if e, ok, err := Get(dir, req.SHA, role, qh, req.Inv); err == nil && ok {
 		if r, err := Parse(e.Body); err == nil {
+			r.Tokens, r.Calls = 0, 0 // a cache hit costs nothing now
 			return r, true, nil
 		}
 	}
@@ -103,6 +105,11 @@ func scout(ctx context.Context, runner core.WorkerRunner, dir string, tier core.
 	if err != nil {
 		return Report{}, false, &ScoutError{Role: role, Err: err}
 	}
+	if rep.Status == core.StatusNeedsContext {
+		// an explicit "nothing to find without more context" is a GAP for Phase 2
+		// (DES §5.6), never cached; BLOCKED or a garbled report still fails
+		return Report{Gaps: []string{role + " scout NEEDS_CONTEXT: " + reason(rep.Body)}, Tokens: rep.Tokens, Calls: rep.Calls}, false, nil
+	}
 	if rep.Status != core.StatusDone && rep.Status != core.StatusDoneWithConcerns {
 		return Report{}, false, &ScoutError{Role: role, Status: rep.Status}
 	}
@@ -110,11 +117,32 @@ func scout(ctx context.Context, runner core.WorkerRunner, dir string, tier core.
 	if err != nil {
 		return Report{}, false, &ScoutError{Role: role, Err: err}
 	}
+	r.Tokens, r.Calls = rep.Tokens, rep.Calls // measured by the runner, not self-reported
 	now := req.Inv.Now
 	if now.IsZero() {
 		now = time.Now()
 	}
+	if len(req.Inv.Changed) > 0 {
+		// the scout read a tree that differs from SHA: caching it under SHA would poison later runs
+		return r, false, nil
+	}
 	// a cache write failure only costs a later miss
 	_ = Put(dir, Entry{SHA: req.SHA, Role: role, QHash: qh, Body: rep.Body, Read: r.Read, LockHash: req.Inv.LockHash, At: now})
 	return r, false, nil
+}
+
+// reason is the last line of a report before its STATUS line, at most 200 bytes.
+func reason(body string) string {
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" || strings.HasPrefix(l, "STATUS:") {
+			continue
+		}
+		if len(l) > 200 {
+			l = l[:200]
+		}
+		return l
+	}
+	return "no reason given"
 }

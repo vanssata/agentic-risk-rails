@@ -139,7 +139,9 @@ func unorderedOverlap(p Plan, reach []map[int]bool) error {
 			if reach[i][j] || reach[j][i] {
 				continue
 			}
-			if f := shared(p.Steps[i].Files, p.Steps[j].Files); f != "" {
+			a := append(append([]string{}, p.Steps[i].Files...), p.Steps[i].Tests...)
+			b := append(append([]string{}, p.Steps[j].Files...), p.Steps[j].Tests...)
+			if f := shared(a, b); f != "" {
 				return fmt.Errorf("plan: steps %q and %q share %q: add after", p.Steps[i].ID, p.Steps[j].ID, f)
 			}
 		}
@@ -167,7 +169,10 @@ func normalize(p Plan) (Plan, error) {
 	for i, s := range p.Steps {
 		out.Steps[i] = s
 		out.Steps[i].Files = make([]string, len(s.Files))
-		for j, f := range s.Files {
+		if s.Tests != nil {
+			out.Steps[i].Tests = make([]string, len(s.Tests))
+		}
+		for j, f := range append(append([]string{}, s.Files...), s.Tests...) {
 			c := path.Clean(filepath.ToSlash(f))
 			switch {
 			case f == "" || c == ".":
@@ -184,7 +189,11 @@ func normalize(p Plan) (Plan, error) {
 					return p, fmt.Errorf("plan: step %q: %q escapes the repository", s.ID, f)
 				}
 			}
-			out.Steps[i].Files[j] = c
+			if j < len(s.Files) {
+				out.Steps[i].Files[j] = c
+			} else {
+				out.Steps[i].Tests[j-len(s.Files)] = c
+			}
 		}
 	}
 	return out, nil

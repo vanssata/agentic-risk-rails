@@ -30,7 +30,7 @@ type Report struct {
 const MaxReportBytes = 256 << 10
 
 // Parse reads the §5.4 schema line by line. Blank lines are ignored; an unknown
-// section, a bullet outside a section or a malformed FACTS/COST line is an error.
+// section, a bullet outside a section or a malformed FACTS line is an error.
 func Parse(body string) (Report, error) {
 	var r Report
 	if len(body) > MaxReportBytes {
@@ -55,9 +55,12 @@ func Parse(body string) (Report, error) {
 				if rest != "" {
 					return fail("section header must be alone on its line")
 				}
+			case "STATUS": // the worker protocol line; the runner reads the status, not Parse
 			case "COST":
+				// self-reported and often not a number (real run, wave 5): the runner's
+				// measured usage is what counts, so a malformed COST is ignored
 				if _, err := fmt.Sscanf(rest, "tokens=%d calls=%d", &r.Tokens, &r.Calls); err != nil || r.Tokens < 0 || r.Calls < 0 {
-					return fail("COST must be tokens=<n> calls=<n>")
+					r.Tokens, r.Calls = 0, 0
 				}
 			default:
 				return fail("unknown section " + strconv.Quote(name))
@@ -99,7 +102,9 @@ func parseFact(item string) (Fact, string) {
 	}
 	tag := strings.TrimSpace(parts[n-1])
 	if tag != "[V]" && tag != "[U]" {
-		return Fact{}, "FACTS tag must be [V] or [U]"
+		// e.g. "[V] for Hello, [U] for Farewell" (real run, wave 5): whatever is
+		// not plainly verified counts as unverified, it never fails the report
+		tag = "[U]"
 	}
 	return Fact{strings.TrimSpace(strings.Join(parts[:n-2], " | ")), []string{strings.TrimSpace(parts[n-2])}, tag}, ""
 }

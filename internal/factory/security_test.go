@@ -192,9 +192,10 @@ printf '%s\n' '{"result":"VERDICT: PASS\nSTATUS: DONE"}'`)
 	require.NoError(t, err)
 	assert.Equal(t, core.StatusDone, got.Status)
 	args, _ := os.ReadFile(filepath.Join(wt, "args.txt"))
-	for _, want := range []string{"--permission-mode plan", "--tools Read,Grep,Glob", "--disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash", "--setting-sources user", "--strict-mcp-config"} {
+	for _, want := range []string{"--permission-mode default", "--tools Read,Grep,Glob", "--disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash", "--setting-sources user", "--strict-mcp-config"} {
 		assert.Contains(t, string(args), want)
 	}
+	assert.NotContains(t, string(args), "--permission-mode plan", "plan mode swaps the haiku alias for Sonnet")
 	_, _ = r.Run(context.Background(), core.WorkerSpec{Tier: core.TierBalanced, Worktree: wt})
 	args, _ = os.ReadFile(filepath.Join(wt, "args.txt"))
 	assert.NotContains(t, string(args), "--tools", "the plain runner is not restricted")

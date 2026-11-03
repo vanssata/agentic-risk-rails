@@ -203,7 +203,7 @@ func TestTaskHumanGatesRefuseAnAgentShell(t *testing.T) {
 	root := taskRepo(t)
 	_, err := runPolicyRR(t, "task", "start", "--root", root, "--goal", "tweak", "--files", light, "--declare", lightDecl)
 	require.NoError(t, err)
-	for _, env := range []string{"CLAUDECODE", "RR_LEVEL"} {
+	for _, env := range []string{"CLAUDECODE", "RR_LEVEL", "RR_WORKER"} {
 		t.Run(env, func(t *testing.T) {
 			t.Setenv(env, "1")
 			for _, args := range [][]string{{"close"}, {"accept"}, {"review", "--verdict", "PASS"}} {
@@ -237,6 +237,8 @@ func TestTaskGuardedNeedsPlanAndReview(t *testing.T) {
 	assert.Equal(t, "PLAN_MISSING", ref.Code)
 
 	_, err = runPolicyRR(t, "task", "accept", "--root", root)
+	require.ErrorContains(t, err, "needs a written plan")
+	_, err = runPolicyRR(t, "task", "accept", "--root", root, "--plan", writePlan(t, goodPlan))
 	require.NoError(t, err)
 	_, err = runPolicyRR(t, "task", "close", "--root", root)
 	require.ErrorAs(t, err, &ref)

@@ -417,3 +417,33 @@ FILES / TESTS (команда + резултат) / ASSUMPTIONS / CONFLICTS / GA
 **GitHub App:** `rr-sandbox-app` (Contents/Pull requests/Administration RW; токенът се стеснява до тези права) ⇒ draft PR #4 от `rr-sandbox-app[bot]`, CI зелен; собственикът вече може да одобри.
 
 **Отворено:** refresh на App токена при run > 1 час; Codex hook в контейнера остава [U] (#44), но вече не е единствената граница за protected paths.
+
+## 14. Вълна 5 — P2 wiring (2026-11-03, branch `wave-5`)
+
+Цел: P2 критерият от DES §13 (full задача: ≤5 скаута, brief ≤3k, два review етапа, cost в ledger) да е изпълним от `rr`, без нов код в research/plan библиотеките (errata #45).
+
+**Решения на собственика:** (1) стъпки в `rr task`: `rr task research` → `rr task accept --plan <file>` → `rr task build` → `rr task close`; човешкият gate на плана при L0/L1 остава; (2) работници Claude + Codex (`CodexRunner` до `ClaudeRunner`), според `project.runtimes`/`--runtime`; (3) factory в контейнера на runner-а при L≥2 = вълна 6; (4) реален run на P2 критерия в `vanssata/rr-sandbox` (логини `~/.claude-rr`/`~/.codex-rr`) след merge и след потвърждение на собственика.
+
+**Core (оркестратор, преди агентите):** `WorkerSpec.Env` (напр. `RR_SCOPE_FILE` за scope guard-а на стъпката); `WorkerReport.Usage` (празен Model = неизвестен, никога безплатен); `ledger.EventWorker = "worker_usage"` + `ledger.WorkerData`; stub `factory.CodexRunner` (fail-closed).
+
+| Агент | OWNS | Обхват |
+|---|---|---|
+| W5-A workers | `internal/factory/**`, `docs/research/verified/workers.md` | `CodexRunner` (`codex exec --json`, read-only за reviewers/scouts, model по tier, timeout, process group, `STATUS:` протокол, usage); `ClaudeRunner` попълва `Usage`; двата подават `spec.Env`; factory пише scope файла на стъпката извън worktree-а и подава `RR_SCOPE_FILE` на implementer-а; contract тестове с `RR_CONTRACT=1` |
+| W5-B ledger | `internal/ledger/**`, `cmd/rr/cmd_cost.go` | `worker_usage` в `Collect` (phase/tier/model, неизвестен usage се показва като такъв, не като 0); `rr cost` по phase; тестове |
+| W5-C flow | `internal/flow/**`, `cmd/rr/cmd_task.go`, `cmd/rr/wire.go`, `cmd/rr/wire_workers.go`, `skills/**`, `e2e/**` | `Env.Research` (скаути по mode, cache, merge brief ≤3k в state, `research_scouts_done`/`research_merged`); `Env.Accept` (`plan.Check`, файловете на плана ⊆ scope на задачата, hash и копие в state, `plan_accepted {plan: written, sha}`); `Env.Build` (factory върху приетия план, worktrees в state, `review_verdict {stage: factory}` = PASS само ако всички стъпки са committed без Human); декоратор на `WorkerRunner`, който журналира `worker_usage`; `rr task research|accept --plan|build`; skills `rr-build`/`rr-ship` описват потока; e2e с fake runners |
+
+**Acceptance на вълната:** e2e: full задача върху `testdata/php-symfony` с fake runners ⇒ 5 скаута, brief ≤3k, план приет, factory с двата review етапа, close минава, `rr cost` показва research/implement/review; guarded без план или с план извън scope ⇒ отказ; `make check` зелен; после реален run (4).
+
+### 14.1 Статус: вълна 5 (2026-11-03, branch `wave-5`)
+
+**Ревю:** рунд 1 (Sonnet: spec compliance + adversarial) ⇒ SHIP_WITH_FIXES; fix рунд 1 (W5-A, W5-C) + оркестратор; рунд 2 (Sonnet adversarial) ⇒ SHIP_WITH_FIXES ⇒ поправено от оркестратора. Errata #55–#61.
+
+| Критерий | Статус |
+|---|---|
+| `rr task research|accept --plan|build` + close за guarded/full | ✅ cmd + e2e (fake runners) |
+| full: 5 скаута, brief ≤3k, два review етапа (STRONG за full), cost по research/implement/review | ✅ `TestTaskFullFlowResearchAcceptBuildClose` (вкл. `rr cost`) |
+| Claude + Codex работници | ✅ unit; `RR_CONTRACT=1` веднъж (W5-A, с основните логини на собственика — занапред само `~/.claude-rr`/`~/.codex-rr`) |
+| реален P2 run в rr-sandbox | ✅ 2026-11-03, task `20261103-201059-…` (full, L1): 5 скаута (Haiku), brief ~2.7k, план с 2 паралелни стъпки, build с Codex (`gpt-6.1-sol`, review `gpt-6-astra` STRONG, двата етапа PASS в рунд 1), close зелен, `rr cost` по phase. Намерени errata #62–#65 |
+| `make check` | ✅ |
+
+**Отворено (вълна 6 / собственика):** preflight на `rr task build` (errata #65: Claude trust, Claude sandbox на хоста, tool caches); прекъснат работник (отменен от спряна вълна) не оставя `worker_usage` ⇒ токените му липсват; цени за `gpt-6-astra` (и `gpt-5.6-sol`) липсват в `prices.json`; бюджетите по mode не се налагат (само max-turns при Claude и timeout при Codex); скаутите четат без hook (могат да видят `.env`/ignored файлове, а ignored файлове не инвалидират cache-а); nested `.claude/`/`.github/` в подпапки не са protected за плана (guard-ът е anchored по същия начин); дали Codex hook-ът чете `RR_SCOPE_FILE` е [U] (post-hoc `checkScope` е границата); цена за `gpt-5.6-sol` липсва в `prices.json` (показва се unpriced); `worker_usage` без step; factory в контейнера при L≥2.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,14 +21,17 @@ import (
 const MaxReviewRounds = 3
 
 type Config struct {
-	Task      string
-	Root      string             // integration checkout; step commits are cherry-picked here
-	WorkDir   string             // parent directory of the step worktrees
-	Tier      core.Tier          // tier of the mode: implementers and rounds 1-2
-	Effective map[core.Tier]bool // tiers available; round 3 goes up only if the next tier is here
-	Parallel  int                // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
-	MaxTurns  int                // per worker, DES §6: 30
-	Budget    core.TokenCount
+	Task    string
+	Root    string    // integration checkout; step commits are cherry-picked here
+	WorkDir string    // parent directory of the step worktrees
+	Tier    core.Tier // tier of the mode: implementers and rounds 1-2
+	// ReviewTier is the tier of review rounds 1-2 (DES §7.1: STRONG for full+);
+	// empty = Tier. Wave 5 fix: honoured by the factory after the W5-A fix round.
+	ReviewTier core.Tier
+	Effective  map[core.Tier]bool // tiers available; round 3 goes up only if the next tier is here
+	Parallel   int                // steps per wave in flight (DES §6: 3 BALANCED, 6 FAST)
+	MaxTurns   int                // per worker, DES §6: 30
+	Budget     core.TokenCount
 }
 
 // ReadOnlyRunner yields a runner that cannot modify the worktree. The factory
@@ -61,7 +65,7 @@ func (r Result) OK() bool { return r.Commit != "" }
 // step's files are denied.
 func ScopeContext(gc core.GuardContext, worktree string, st plan.Step) core.GuardContext {
 	gc.Root = worktree
-	gc.StepFiles = append([]string{}, st.Files...) // non-nil even when empty: armed
+	gc.StepFiles = owned(st) // non-nil even when empty: armed
 	return gc
 }
 
@@ -163,7 +167,13 @@ func (f *Factory) runWave(parent context.Context, wi int, wave []plan.Step) ([]R
 // work runs one worker, journals its report and re-checks the scope before any
 // other worker may start in the worktree. blocked is non-empty on a violation.
 func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step, role string, w worktree, brief string) (rep core.WorkerReport, blocked string, err error) {
-	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
+	scope, err := f.writeScope(st)
+	if err != nil {
+		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
+	}
+	defer func() { _ = os.Remove(scope) }()
+	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
+		Env: []string{EnvScope + "=" + scope, EnvWorker + "=1"}})
 	if err != nil {
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
@@ -174,11 +184,36 @@ func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step,
 	return rep, blocked, err
 }
 
+// writeScope writes the step's files as a read-only JSON array that arms the
+// scope guard (RR_SCOPE_FILE). It lives in WorkDir/@scope: outside every
+// worktree (step ids cannot contain "@") so the worker cannot rewrite it.
+func (f *Factory) writeScope(st plan.Step) (string, error) {
+	dir := filepath.Join(f.WorkDir, "@scope")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(owned(st))
+	if err != nil {
+		return "", err
+	}
+	p, err := filepath.Abs(filepath.Join(dir, st.ID+".json"))
+	if err != nil {
+		return "", err
+	}
+	_ = os.Remove(p)
+	return p, os.WriteFile(p, raw, 0o400)
+}
+
+// owned is what a step may change: its files and its tests (DES §2.3).
+func owned(st plan.Step) []string {
+	return append(append([]string{}, st.Files...), st.Tests...)
+}
+
 func briefOf(st plan.Step) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "STEP %s\n%s\n\nFILES (only these may change):\n- %s\n", st.ID, st.Brief, strings.Join(st.Files, "\n- "))
 	if len(st.Tests) > 0 {
-		fmt.Fprintf(&b, "\nTESTS:\n- %s\n", strings.Join(st.Tests, "\n- "))
+		fmt.Fprintf(&b, "\nTEST FILES (may also change):\n- %s\n", strings.Join(st.Tests, "\n- "))
 	}
 	b.WriteString("\nDo not run git commit; rr commits. End your report with a line `STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT`.\n")
 	return b.String()
@@ -202,3 +237,11 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
 }
+
+// EnvScope arms the guard hook of a worker with the step's files; it must
+// equal flow.EnvScope (flow imports factory, so it cannot be imported here).
+const EnvScope = "RR_SCOPE_FILE"
+
+// EnvWorker is set to "1" in the environment of every worker rr starts, so
+// that host-side human gates (`rr task accept|build|close`) refuse inside it.
+const EnvWorker = "RR_WORKER"

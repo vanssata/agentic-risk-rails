@@ -110,7 +110,7 @@ func (f *Factory) integrate(ctx context.Context, st plan.Step, sha string) (inte
 		return "", "", err
 	}
 	root := worktree{dir: f.Root, gitdir: strings.TrimSpace(gd)}
-	bad, err := attrPaths(ctx, root, st.Files...)
+	bad, err := attrPaths(ctx, root, owned(st)...)
 	if err != nil {
 		return "", "", err
 	}
@@ -144,7 +144,7 @@ func (f *Factory) verify(ctx context.Context, w worktree, st plan.Step, reviewed
 	if why, err := f.checkScope(ctx, w, st); err != nil || why != "" {
 		return why, err
 	}
-	tree, err := stage(ctx, w, st.Files)
+	tree, err := stage(ctx, w, owned(st))
 	why := ""
 	switch {
 	case errors.Is(err, errNotRegular):
@@ -181,20 +181,23 @@ func scopeViolation(ctx context.Context, w worktree, st plan.Step) (string, erro
 			return why, nil
 		}
 	}
-	if out := outside(changed, st.Files); len(out) > 0 {
+	if out := outside(changed, owned(st)); len(out) > 0 {
 		return "worker changed files outside the step: " + strings.Join(out, ", "), nil
 	}
 	return "", nil
 }
 
-// steersClaude: ignored paths a `claude -p` would read as configuration.
+// steersClaude: ignored paths a `claude -p` or `codex exec` would read as
+// configuration (.codex/ holds config.toml, hooks.json and rules).
 func steersClaude(p string) bool {
 	p = strings.TrimSuffix(filepath.ToSlash(p), "/")
-	if p == ".claude" || strings.HasPrefix(p, ".claude/") || strings.Contains(p, "/.claude/") {
-		return true
+	for _, d := range []string{".claude", ".codex"} {
+		if p == d || strings.HasPrefix(p, d+"/") || strings.Contains(p, "/"+d+"/") {
+			return true
+		}
 	}
 	switch path.Base(p) {
-	case ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md":
+	case ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md":
 		return true
 	}
 	return false
