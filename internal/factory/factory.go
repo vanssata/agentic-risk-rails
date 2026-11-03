@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vanssata/agentic-risk-rails/internal/core"
+	"github.com/vanssata/agentic-risk-rails/internal/flow"
 	"github.com/vanssata/agentic-risk-rails/internal/plan"
 )
 
@@ -163,7 +165,13 @@ func (f *Factory) runWave(parent context.Context, wi int, wave []plan.Step) ([]R
 // work runs one worker, journals its report and re-checks the scope before any
 // other worker may start in the worktree. blocked is non-empty on a violation.
 func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step, role string, w worktree, brief string) (rep core.WorkerReport, blocked string, err error) {
-	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget})
+	scope, err := f.writeScope(st)
+	if err != nil {
+		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
+	}
+	defer func() { _ = os.Remove(scope) }()
+	rep, err = run.Run(ctx, core.WorkerSpec{Role: role, Tier: f.Tier, Brief: brief, Worktree: w.dir, MaxTurns: f.MaxTurns, Budget: f.Budget,
+		Env: []string{flow.EnvScope + "=" + scope}})
 	if err != nil {
 		return rep, "", fmt.Errorf("factory: %s of step %s: %w", role, st.ID, err)
 	}
@@ -172,6 +180,26 @@ func (f *Factory) work(ctx context.Context, run core.WorkerRunner, st plan.Step,
 	}
 	blocked, err = f.checkScope(ctx, w, st)
 	return rep, blocked, err
+}
+
+// writeScope writes the step's files as a read-only JSON array that arms the
+// scope guard (RR_SCOPE_FILE). It lives in WorkDir/@scope: outside every
+// worktree (step ids cannot contain "@") so the worker cannot rewrite it.
+func (f *Factory) writeScope(st plan.Step) (string, error) {
+	dir := filepath.Join(f.WorkDir, "@scope")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(append([]string{}, st.Files...))
+	if err != nil {
+		return "", err
+	}
+	p, err := filepath.Abs(filepath.Join(dir, st.ID+".json"))
+	if err != nil {
+		return "", err
+	}
+	_ = os.Remove(p)
+	return p, os.WriteFile(p, raw, 0o400)
 }
 
 func briefOf(st plan.Step) string {
