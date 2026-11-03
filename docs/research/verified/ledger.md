@@ -47,3 +47,17 @@ gpt-6.1-sol | 2 | 2 (assumed) | 0.10 | 10
 
 ## CONFLICT
 - DES §7.1 said Sonnet 5.5 cache read 0.05x and "output [U] about 5x input": confirmed for Sonnet/Opus 5.5 (output = 5x input: 10/2, 20/4). Haiku 5.5 output is also 5x (0.5/0.1). No conflict; the [U] is now [V]. Note DES lists Haiku/Sonnet/Opus input as $0.10/$2/$4 - matches.
+
+# WAVE 5
+
+## FACTS
+- prices.json covers claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5 and gpt-6.1-sol (prices verified above). The runner model IDs of the claude-*-5-5 family match these keys exactly. | local prices.json | [V]
+- A model id not in prices.json is never priced as free: `Prices.Cost` returns ok=false and `Group` counts it in `Unpriced` (TestUnpricedModel). | local code | [V]
+- Worker runs with unknown usage are put in model bucket `unknown`, which is unpriced and shown as "unpriced or unknown: total incomplete". | local code | [V]
+- rr-started workers run with `--no-session-persistence` (Claude) / ephemeral (Codex), so they have no transcript and worker_usage cannot double count ledger_session. | wave 5 plan, not re-checked against the CLIs here | [U]
+
+## GAPS
+- The local Codex config (~/.codex/config.toml) sets model "gpt-5.6-sol", which is NOT in prices.json (only gpt-6.1-sol). Its runs show as unpriced, not free. Its price is unverified [U], so it was not added; the owner should verify and add it.
+
+## COST
+tokens=n/a calls=0

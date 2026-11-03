@@ -69,7 +69,7 @@ func init() {
 					for _, r := range res[d] {
 						note := ""
 						if r.Unpriced > 0 {
-							note = fmt.Sprintf("  (%d unpriced)", r.Unpriced)
+							note = fmt.Sprintf("  (%d unpriced or unknown: total incomplete)", r.Unpriced)
 						}
 						fmt.Fprintf(out, "  %-20s in=%d out=%d cache_read=%d cache_write=%d  $%.4f%s\n",
 							r.Key, r.Input, r.Output, r.CacheRead, r.CacheWrite, r.USD, note)

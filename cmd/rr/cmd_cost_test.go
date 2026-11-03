@@ -13,6 +13,7 @@ import (
 	"github.com/vanssata/agentic-risk-rails/internal/core"
 	"github.com/vanssata/agentic-risk-rails/internal/journal"
 	"github.com/vanssata/agentic-risk-rails/internal/ledger"
+	"github.com/vanssata/agentic-risk-rails/internal/testutil"
 )
 
 func TestCostCommand(t *testing.T) {
@@ -50,4 +51,27 @@ func TestCostCommand(t *testing.T) {
 		_, err = runRR("cost", "--task", bad, "--root", root)
 		assert.ErrorContains(t, err, "invalid --task", bad)
 	}
+}
+
+func TestCostWorkers(t *testing.T) {
+	root := t.TempDir()
+	j := journal.New(root)
+	w := func(d ledger.WorkerData) core.Event {
+		b, _ := json.Marshal(d)
+		return core.Event{Type: ledger.EventWorker, Data: b}
+	}
+	for _, e := range []core.Event{
+		{Type: "task_started"},
+		w(ledger.WorkerData{Phase: "research", Role: "code-scout", Tier: core.TierFast, Runtime: "claude", Usage: core.Usage{Model: "claude-haiku-5-5", Input: 1000, Output: 100}}),
+		w(ledger.WorkerData{Phase: "implement", Role: "implementer", Tier: core.TierBalanced, Runtime: "claude", Usage: core.Usage{Model: "claude-sonnet-5-5", Input: 2000, Output: 500}}),
+		w(ledger.WorkerData{Phase: "review", Role: "reviewer-spec", Tier: core.TierStrong, Runtime: "codex", Usage: core.Usage{Model: "gpt-6.1-sol", Input: 500, Output: 50}}),
+		w(ledger.WorkerData{Phase: "review", Role: "reviewer-quality", Tier: core.TierStrong, Runtime: "claude", Status: core.StatusDone, Tokens: 9000}),
+	} {
+		e.Task, e.Actor, e.Schema = "t2", core.ActorAgent, 1
+		_, err := j.Append(context.Background(), e)
+		require.NoError(t, err)
+	}
+	out, err := runRR("cost", "--task", "t2", "--root", root)
+	require.NoError(t, err)
+	testutil.Golden(t, "cost_workers.golden", []byte(out))
 }

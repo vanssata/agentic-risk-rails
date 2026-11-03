@@ -1,0 +1,13 @@
+by phase:
+  implement            in=2000 out=500 cache_read=0 cache_write=0  $0.0090
+  research             in=1000 out=100 cache_read=0 cache_write=0  $0.0001
+  review               in=500 out=50 cache_read=0 cache_write=0  $0.0015  (1 unpriced or unknown: total incomplete)
+by tier:
+  BALANCED             in=2000 out=500 cache_read=0 cache_write=0  $0.0090
+  FAST                 in=1000 out=100 cache_read=0 cache_write=0  $0.0001
+  STRONG               in=500 out=50 cache_read=0 cache_write=0  $0.0015  (1 unpriced or unknown: total incomplete)
+by model:
+  claude-haiku-5-5     in=1000 out=100 cache_read=0 cache_write=0  $0.0001
+  claude-sonnet-5-5    in=2000 out=500 cache_read=0 cache_write=0  $0.0090
+  gpt-6.1-sol          in=500 out=50 cache_read=0 cache_write=0  $0.0015
+  unknown              in=0 out=0 cache_read=0 cache_write=0  $0.0000  (1 unpriced or unknown: total incomplete)

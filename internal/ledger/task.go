@@ -12,7 +12,8 @@ import (
 
 // Collect turns the journal events of one task into attributed usage. Phase
 // comes from ledger_session events, tier from the model via the task's
-// tiers_effective (unknown models get tier "?"). For Claude transcripts the
+// tiers_effective (unknown models get tier "?"). worker_usage events (workers
+// started by rr) carry their own phase, tier and usage and need no transcript. For Claude transcripts the
 // sidechain files in <transcript>/subagents/ are read too. Transcript paths
 // must be absolute, clean, *.jsonl and lie under one of roots; a session path
 // listed twice counts once, and a Claude message id counts once per task.
@@ -42,6 +43,14 @@ func Collect(events []core.Event, roots []string) ([]Item, error) {
 		items = append(items, it)
 	}
 	for _, e := range events {
+		if e.Type == EventWorker {
+			it, err := workerItem(e.Data)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, it)
+			continue
+		}
 		if e.Type != EventSession {
 			continue
 		}
@@ -71,6 +80,36 @@ func Collect(events []core.Event, roots []string) ([]Item, error) {
 		}
 	}
 	return items, nil
+}
+
+// UnknownModel is the model bucket of a worker run that reported no usage.
+// It has no price, so Group counts it as unpriced, never as $0.
+const UnknownModel = "unknown"
+
+var workerPhases = map[string]bool{"research": true, "implement": true, "review": true}
+
+// workerItem turns a worker_usage event into an Item. Workers started by rr
+// run without a persisted session (Claude --no-session-persistence, Codex
+// ephemeral), so they have no transcript and cannot be counted twice.
+func workerItem(data json.RawMessage) (Item, error) {
+	var d WorkerData
+	if err := json.Unmarshal(data, &d); err != nil {
+		return Item{}, fmt.Errorf("worker_usage data: %w", err)
+	}
+	if d.Runtime != "claude" && d.Runtime != "codex" {
+		return Item{}, fmt.Errorf("worker_usage: unknown runtime %q", d.Runtime)
+	}
+	if !workerPhases[d.Phase] {
+		return Item{}, fmt.Errorf("worker_usage: unknown phase %q", d.Phase)
+	}
+	u := d.Usage
+	if u.Runtime == "" {
+		u.Runtime = d.Runtime
+	}
+	if u.Model == "" {
+		u.Model = UnknownModel
+	}
+	return Item{Usage: u, Phase: d.Phase, Tier: string(d.Tier)}, nil
 }
 
 // checkPath refuses transcript paths that are not absolute, clean .jsonl
